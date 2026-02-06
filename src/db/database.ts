@@ -503,6 +503,395 @@ export class IndexDatabase implements IIndexWriter {
     return row.count;
   }
 
+  // ============================================
+  // Read-only query methods for the browse API
+  // ============================================
+
+  /**
+   * Get statistics about the indexed database
+   */
+  getStats(): { files: number; definitions: number; imports: number; usages: number } {
+    const files = (this.db.prepare('SELECT COUNT(*) as count FROM files').get() as { count: number }).count;
+    const definitions = this.getDefinitionCount();
+    const imports = this.getReferenceCount();
+    const usages = this.getUsageCount();
+    return { files, definitions, imports, usages };
+  }
+
+  /**
+   * Get all indexed files
+   */
+  getAllFiles(): Array<{ id: number; path: string; language: string; sizeBytes: number }> {
+    const stmt = this.db.prepare(`
+      SELECT id, path, language, size_bytes as sizeBytes
+      FROM files
+      ORDER BY path
+    `);
+    return stmt.all() as Array<{ id: number; path: string; language: string; sizeBytes: number }>;
+  }
+
+  /**
+   * Get all definitions with optional filters
+   */
+  getAllDefinitions(filters?: { kind?: string; exported?: boolean }): Array<{
+    id: number;
+    fileId: number;
+    name: string;
+    kind: string;
+    isExported: boolean;
+    isDefault: boolean;
+    line: number;
+    column: number;
+    extendsName: string | null;
+  }> {
+    let sql = `
+      SELECT
+        id,
+        file_id as fileId,
+        name,
+        kind,
+        is_exported as isExported,
+        is_default as isDefault,
+        line,
+        column,
+        extends_name as extendsName
+      FROM definitions
+      WHERE 1=1
+    `;
+    const params: (string | number)[] = [];
+
+    if (filters?.kind) {
+      sql += ' AND kind = ?';
+      params.push(filters.kind);
+    }
+    if (filters?.exported !== undefined) {
+      sql += ' AND is_exported = ?';
+      params.push(filters.exported ? 1 : 0);
+    }
+
+    sql += ' ORDER BY name';
+
+    const stmt = this.db.prepare(sql);
+    const rows = stmt.all(...params) as Array<{
+      id: number;
+      fileId: number;
+      name: string;
+      kind: string;
+      isExported: number;
+      isDefault: number;
+      line: number;
+      column: number;
+      extendsName: string | null;
+    }>;
+
+    return rows.map(row => ({
+      ...row,
+      isExported: row.isExported === 1,
+      isDefault: row.isDefault === 1,
+    }));
+  }
+
+  /**
+   * Get definitions for a specific file
+   */
+  getFileDefinitions(fileId: number): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    isExported: boolean;
+    isDefault: boolean;
+    line: number;
+    column: number;
+    endLine: number;
+    endColumn: number;
+    extendsName: string | null;
+    implementsNames: string[] | null;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        name,
+        kind,
+        is_exported as isExported,
+        is_default as isDefault,
+        line,
+        column,
+        end_line as endLine,
+        end_column as endColumn,
+        extends_name as extendsName,
+        implements_names as implementsNames
+      FROM definitions
+      WHERE file_id = ?
+      ORDER BY line
+    `);
+    const rows = stmt.all(fileId) as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      isExported: number;
+      isDefault: number;
+      line: number;
+      column: number;
+      endLine: number;
+      endColumn: number;
+      extendsName: string | null;
+      implementsNames: string | null;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      isExported: row.isExported === 1,
+      isDefault: row.isDefault === 1,
+      line: row.line,
+      column: row.column,
+      endLine: row.endLine,
+      endColumn: row.endColumn,
+      extendsName: row.extendsName,
+      implementsNames: row.implementsNames ? JSON.parse(row.implementsNames) : null,
+    }));
+  }
+
+  /**
+   * Get imports for a specific file
+   */
+  getFileImports(fileId: number): Array<{
+    id: number;
+    toFileId: number | null;
+    type: string;
+    source: string;
+    isExternal: boolean;
+    isTypeOnly: boolean;
+    line: number;
+    column: number;
+    toFilePath: string | null;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT
+        i.id,
+        i.to_file_id as toFileId,
+        i.type,
+        i.source,
+        i.is_external as isExternal,
+        i.is_type_only as isTypeOnly,
+        i.line,
+        i.column,
+        tf.path as toFilePath
+      FROM imports i
+      LEFT JOIN files tf ON i.to_file_id = tf.id
+      WHERE i.from_file_id = ?
+      ORDER BY i.line
+    `);
+    const rows = stmt.all(fileId) as Array<{
+      id: number;
+      toFileId: number | null;
+      type: string;
+      source: string;
+      isExternal: number;
+      isTypeOnly: number;
+      line: number;
+      column: number;
+      toFilePath: string | null;
+    }>;
+
+    return rows.map(row => ({
+      ...row,
+      isExternal: row.isExternal === 1,
+      isTypeOnly: row.isTypeOnly === 1,
+    }));
+  }
+
+  /**
+   * Get file details by ID
+   */
+  getFileById(id: number): {
+    id: number;
+    path: string;
+    language: string;
+    sizeBytes: number;
+    modifiedAt: string;
+    contentHash: string;
+  } | null {
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        path,
+        language,
+        size_bytes as sizeBytes,
+        modified_at as modifiedAt,
+        content_hash as contentHash
+      FROM files
+      WHERE id = ?
+    `);
+    const row = stmt.get(id) as {
+      id: number;
+      path: string;
+      language: string;
+      sizeBytes: number;
+      modifiedAt: string;
+      contentHash: string;
+    } | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Get definition details by ID
+   */
+  getDefinitionById(id: number): {
+    id: number;
+    fileId: number;
+    filePath: string;
+    name: string;
+    kind: string;
+    isExported: boolean;
+    isDefault: boolean;
+    line: number;
+    column: number;
+    endLine: number;
+    endColumn: number;
+    extendsName: string | null;
+    implementsNames: string[] | null;
+    extendsInterfaces: string[] | null;
+  } | null {
+    const stmt = this.db.prepare(`
+      SELECT
+        d.id,
+        d.file_id as fileId,
+        f.path as filePath,
+        d.name,
+        d.kind,
+        d.is_exported as isExported,
+        d.is_default as isDefault,
+        d.line,
+        d.column,
+        d.end_line as endLine,
+        d.end_column as endColumn,
+        d.extends_name as extendsName,
+        d.implements_names as implementsNames,
+        d.extends_interfaces as extendsInterfaces
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      WHERE d.id = ?
+    `);
+    const row = stmt.get(id) as {
+      id: number;
+      fileId: number;
+      filePath: string;
+      name: string;
+      kind: string;
+      isExported: number;
+      isDefault: number;
+      line: number;
+      column: number;
+      endLine: number;
+      endColumn: number;
+      extendsName: string | null;
+      implementsNames: string | null;
+      extendsInterfaces: string | null;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      fileId: row.fileId,
+      filePath: row.filePath,
+      name: row.name,
+      kind: row.kind,
+      isExported: row.isExported === 1,
+      isDefault: row.isDefault === 1,
+      line: row.line,
+      column: row.column,
+      endLine: row.endLine,
+      endColumn: row.endColumn,
+      extendsName: row.extendsName,
+      implementsNames: row.implementsNames ? JSON.parse(row.implementsNames) : null,
+      extendsInterfaces: row.extendsInterfaces ? JSON.parse(row.extendsInterfaces) : null,
+    };
+  }
+
+  /**
+   * Get import dependency graph data for D3 visualization
+   */
+  getImportGraph(): {
+    nodes: Array<{ id: number; name: string; kind: string }>;
+    links: Array<{ source: number; target: number; type: string }>;
+  } {
+    // Get all files as nodes
+    const nodesStmt = this.db.prepare(`
+      SELECT id, path as name, 'file' as kind
+      FROM files
+    `);
+    const nodes = nodesStmt.all() as Array<{ id: number; name: string; kind: string }>;
+
+    // Get all internal imports as links
+    const linksStmt = this.db.prepare(`
+      SELECT DISTINCT from_file_id as source, to_file_id as target, type
+      FROM imports
+      WHERE to_file_id IS NOT NULL
+    `);
+    const links = linksStmt.all() as Array<{ source: number; target: number; type: string }>;
+
+    return { nodes, links };
+  }
+
+  /**
+   * Get class hierarchy graph data for D3 visualization
+   */
+  getClassHierarchy(): {
+    nodes: Array<{ id: number; name: string; kind: string; extendsName: string | null }>;
+    links: Array<{ source: number; target: number; type: string }>;
+  } {
+    // Get all classes and interfaces as nodes
+    const nodesStmt = this.db.prepare(`
+      SELECT id, name, kind, extends_name as extendsName
+      FROM definitions
+      WHERE kind IN ('class', 'interface')
+    `);
+    const nodes = nodesStmt.all() as Array<{ id: number; name: string; kind: string; extendsName: string | null }>;
+
+    // Build a map of name -> id for linking
+    const nameToId = new Map<string, number>();
+    for (const node of nodes) {
+      nameToId.set(node.name, node.id);
+    }
+
+    // Create links for extends relationships
+    const links: Array<{ source: number; target: number; type: string }> = [];
+    for (const node of nodes) {
+      if (node.extendsName && nameToId.has(node.extendsName)) {
+        links.push({
+          source: node.id,
+          target: nameToId.get(node.extendsName)!,
+          type: 'extends',
+        });
+      }
+    }
+
+    // Also add implements relationships
+    const implStmt = this.db.prepare(`
+      SELECT id, implements_names
+      FROM definitions
+      WHERE implements_names IS NOT NULL
+    `);
+    const implRows = implStmt.all() as Array<{ id: number; implements_names: string }>;
+    for (const row of implRows) {
+      const implements_ = JSON.parse(row.implements_names) as string[];
+      for (const iface of implements_) {
+        if (nameToId.has(iface)) {
+          links.push({
+            source: row.id,
+            target: nameToId.get(iface)!,
+            type: 'implements',
+          });
+        }
+      }
+    }
+
+    return { nodes, links };
+  }
+
   close(): void {
     this.db.close();
   }

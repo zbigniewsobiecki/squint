@@ -1,0 +1,130 @@
+import { Command, Flags } from '@oclif/core';
+import chalk from 'chalk';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { exec } from 'node:child_process';
+import { IndexDatabase } from '../db/database.js';
+import { createServer, startServer } from '../web/server.js';
+
+export default class Browse extends Command {
+  static override description = 'Launch interactive code browser for indexed database';
+
+  static override examples = [
+    '<%= config.bin %> browse',
+    '<%= config.bin %> browse -d ./my-index.db',
+    '<%= config.bin %> browse -p 8080',
+    '<%= config.bin %> browse --no-open',
+  ];
+
+  static override flags = {
+    database: Flags.string({
+      char: 'd',
+      description: 'Path to the index database',
+      default: 'index.db',
+    }),
+    port: Flags.integer({
+      char: 'p',
+      description: 'Server port',
+      default: 3000,
+    }),
+    'no-open': Flags.boolean({
+      description: 'Do not automatically open browser',
+      default: false,
+    }),
+  };
+
+  public async run(): Promise<void> {
+    const { flags } = await this.parse(Browse);
+
+    const dbPath = path.resolve(flags.database);
+
+    // Check if database exists
+    try {
+      await fs.access(dbPath);
+    } catch {
+      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
+    }
+
+    // Open database
+    this.log(chalk.blue(`Opening database: ${dbPath}`));
+    let db: IndexDatabase;
+    try {
+      db = new IndexDatabase(dbPath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.error(chalk.red(`Failed to open database: ${message}`));
+    }
+
+    // Get stats to verify database is valid
+    try {
+      const stats = db.getStats();
+      this.log(chalk.gray(`  ${stats.files} files, ${stats.definitions} definitions, ${stats.imports} imports, ${stats.usages} usages`));
+    } catch (error) {
+      db.close();
+      const message = error instanceof Error ? error.message : String(error);
+      this.error(chalk.red(`Database appears to be invalid or empty: ${message}`));
+    }
+
+    // Create and start server
+    const port = flags.port;
+    const server = createServer(db, port);
+
+    try {
+      await startServer(server, port);
+    } catch (error) {
+      db.close();
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('EADDRINUSE')) {
+        this.error(chalk.red(`Port ${port} is already in use. Try a different port with -p <port>`));
+      }
+      this.error(chalk.red(`Failed to start server: ${message}`));
+    }
+
+    const url = `http://localhost:${port}`;
+    this.log(chalk.green.bold(`\nServer running at ${url}`));
+    this.log(chalk.gray('Press Ctrl+C to stop\n'));
+
+    // Open browser unless --no-open flag is set
+    if (!flags['no-open']) {
+      this.openBrowser(url);
+    }
+
+    // Handle graceful shutdown
+    const shutdown = () => {
+      this.log(chalk.blue('\nShutting down...'));
+      server.close(() => {
+        db.close();
+        this.log(chalk.green('Server stopped.'));
+        process.exit(0);
+      });
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+
+    // Keep the process running
+    await new Promise(() => {
+      // Never resolves - waits for SIGINT/SIGTERM
+    });
+  }
+
+  private openBrowser(url: string): void {
+    const platform = process.platform;
+    let command: string;
+
+    if (platform === 'darwin') {
+      command = `open "${url}"`;
+    } else if (platform === 'win32') {
+      command = `start "" "${url}"`;
+    } else {
+      // Linux and others
+      command = `xdg-open "${url}"`;
+    }
+
+    exec(command, (error) => {
+      if (error) {
+        this.log(chalk.yellow(`Could not open browser automatically. Please open ${url} manually.`));
+      }
+    });
+  }
+}

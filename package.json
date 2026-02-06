@@ -21,9 +21,10 @@
     "bin": "ats",
     "dirname": "ats",
     "commands": {
-      "strategy": "single",
-      "target": "./dist/commands/parse.js"
+      "strategy": "pattern",
+      "target": "./dist/commands"
     },
+    "default": "parse",
     "topicSeparator": " "
   },
   "files": [
