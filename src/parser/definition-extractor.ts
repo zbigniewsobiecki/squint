@@ -16,6 +16,9 @@ export interface Definition {
   isDefault: boolean;
   position: { row: number; column: number };
   endPosition: { row: number; column: number };
+  extends?: string;        // Parent class name (classes only)
+  implements?: string[];   // Implemented interfaces (classes only)
+  extendsAll?: string[];   // Extended interfaces (interfaces only, can be multiple)
 }
 
 interface ExportedName {
@@ -125,6 +128,89 @@ function getVariableKind(varDecl: SyntaxNode): 'const' | 'variable' {
 }
 
 /**
+ * Extract class inheritance info (extends and implements)
+ */
+function extractClassInheritance(classNode: SyntaxNode): { extends?: string; implements?: string[] } {
+  const result: { extends?: string; implements?: string[] } = {};
+
+  // Look for class_heritage child
+  for (let i = 0; i < classNode.childCount; i++) {
+    const child = classNode.child(i);
+    if (child?.type === 'class_heritage') {
+      // Process heritage clauses
+      for (let j = 0; j < child.childCount; j++) {
+        const clause = child.child(j);
+        if (clause?.type === 'extends_clause') {
+          // Get the identifier from extends clause
+          // Structure: extends_clause -> identifier (or generic_type)
+          for (let k = 0; k < clause.childCount; k++) {
+            const typeNode = clause.child(k);
+            if (typeNode?.type === 'identifier' || typeNode?.type === 'type_identifier') {
+              result.extends = typeNode.text;
+              break;
+            } else if (typeNode?.type === 'generic_type') {
+              // For generic types like Base<T>, get the base name
+              const nameNode = typeNode.childForFieldName('name');
+              if (nameNode) {
+                result.extends = nameNode.text;
+              }
+              break;
+            }
+          }
+        } else if (clause?.type === 'implements_clause') {
+          // Get all type identifiers from implements clause
+          const interfaces: string[] = [];
+          for (let k = 0; k < clause.childCount; k++) {
+            const typeNode = clause.child(k);
+            if (typeNode?.type === 'type_identifier') {
+              interfaces.push(typeNode.text);
+            } else if (typeNode?.type === 'generic_type') {
+              const nameNode = typeNode.childForFieldName('name');
+              if (nameNode) {
+                interfaces.push(nameNode.text);
+              }
+            }
+          }
+          if (interfaces.length > 0) {
+            result.implements = interfaces;
+          }
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Extract interface extends info (can extend multiple interfaces)
+ */
+function extractInterfaceExtends(interfaceNode: SyntaxNode): string[] {
+  const result: string[] = [];
+
+  // Look for extends_type_clause child
+  for (let i = 0; i < interfaceNode.childCount; i++) {
+    const child = interfaceNode.child(i);
+    if (child?.type === 'extends_type_clause') {
+      // Get all type identifiers from extends clause
+      for (let j = 0; j < child.childCount; j++) {
+        const typeNode = child.child(j);
+        if (typeNode?.type === 'type_identifier') {
+          result.push(typeNode.text);
+        } else if (typeNode?.type === 'generic_type') {
+          const nameNode = typeNode.childForFieldName('name');
+          if (nameNode) {
+            result.push(nameNode.text);
+          }
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
  * Extract all top-level definitions from the AST
  */
 export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
@@ -157,6 +243,7 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
         if (nameNode) {
           const name = nameNode.text;
           const exportInfo = exportedNames.get(name);
+          const inheritance = extractClassInheritance(node);
           definitions.push({
             name,
             kind: 'class',
@@ -164,6 +251,8 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
             isDefault: directDefault || (exportInfo?.isDefault ?? false),
             position: { row: node.startPosition.row, column: node.startPosition.column },
             endPosition: { row: node.endPosition.row, column: node.endPosition.column },
+            ...(inheritance.extends && { extends: inheritance.extends }),
+            ...(inheritance.implements && { implements: inheritance.implements }),
           });
         }
         break;
@@ -215,6 +304,7 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
         if (nameNode) {
           const name = nameNode.text;
           const exportInfo = exportedNames.get(name);
+          const extendsAll = extractInterfaceExtends(node);
           definitions.push({
             name,
             kind: 'interface',
@@ -222,6 +312,7 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
             isDefault: directDefault || (exportInfo?.isDefault ?? false),
             position: { row: node.startPosition.row, column: node.startPosition.column },
             endPosition: { row: node.endPosition.row, column: node.endPosition.column },
+            ...(extendsAll.length > 0 && { extendsAll }),
           });
         }
         break;

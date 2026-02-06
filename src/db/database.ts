@@ -11,6 +11,21 @@ export interface FileInsert {
   modifiedAt: string;
 }
 
+export interface CallsiteResult {
+  usageId: number;
+  symbolId: number;
+  definitionId: number | null;
+  filePath: string;
+  line: number;
+  column: number;
+  symbolName: string;
+  localName: string;
+  argumentCount: number;
+  isMethodCall: boolean;
+  isConstructorCall: boolean;
+  receiverName: string | null;
+}
+
 const SCHEMA = `
 -- Metadata about the indexing run
 CREATE TABLE metadata (
@@ -40,6 +55,9 @@ CREATE TABLE definitions (
   column INTEGER NOT NULL,
   end_line INTEGER NOT NULL,
   end_column INTEGER NOT NULL,
+  extends_name TEXT,          -- Parent class name (for classes)
+  implements_names TEXT,      -- JSON array of interface names (for classes)
+  extends_interfaces TEXT,    -- JSON array of parent interfaces (for interfaces)
   FOREIGN KEY (file_id) REFERENCES files(id)
 );
 
@@ -77,6 +95,10 @@ CREATE TABLE usages (
   line INTEGER NOT NULL,
   column INTEGER NOT NULL,
   context TEXT NOT NULL,
+  argument_count INTEGER,
+  is_method_call INTEGER,
+  is_constructor_call INTEGER,
+  receiver_name TEXT,
   FOREIGN KEY (symbol_id) REFERENCES symbols(id)
 );
 
@@ -84,11 +106,13 @@ CREATE TABLE usages (
 CREATE INDEX idx_files_path ON files(path);
 CREATE INDEX idx_definitions_file ON definitions(file_id);
 CREATE INDEX idx_definitions_name ON definitions(name);
+CREATE INDEX idx_definitions_extends ON definitions(extends_name);
 CREATE INDEX idx_imports_from_file ON imports(from_file_id);
 CREATE INDEX idx_imports_to_file ON imports(to_file_id);
 CREATE INDEX idx_symbols_reference ON symbols(reference_id);
 CREATE INDEX idx_symbols_definition ON symbols(definition_id);
 CREATE INDEX idx_usages_symbol ON usages(symbol_id);
+CREATE INDEX idx_usages_context ON usages(context);
 `;
 
 export function computeHash(content: string): string {
@@ -110,6 +134,9 @@ export interface IIndexWriter {
   getDefinitionCount(): number;
   getReferenceCount(): number;
   getUsageCount(): number;
+  getCallsites(definitionId: number): CallsiteResult[];
+  getCallsitesForFile(fileId: number): CallsiteResult[];
+  getCallsiteCount(): number;
   close(): void;
 }
 
@@ -158,8 +185,8 @@ export class IndexDatabase implements IIndexWriter {
 
   insertDefinition(fileId: number, def: Definition): number {
     const stmt = this.db.prepare(`
-      INSERT INTO definitions (file_id, name, kind, is_exported, is_default, line, column, end_line, end_column)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO definitions (file_id, name, kind, is_exported, is_default, line, column, end_line, end_column, extends_name, implements_names, extends_interfaces)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       fileId,
@@ -170,7 +197,10 @@ export class IndexDatabase implements IIndexWriter {
       def.position.row + 1, // Convert to 1-based line numbers
       def.position.column,
       def.endPosition.row + 1,
-      def.endPosition.column
+      def.endPosition.column,
+      def.extends ?? null,
+      def.implements ? JSON.stringify(def.implements) : null,
+      def.extendsAll ? JSON.stringify(def.extendsAll) : null
     );
     return result.lastInsertRowid as number;
   }
@@ -212,14 +242,18 @@ export class IndexDatabase implements IIndexWriter {
 
   insertUsage(symbolId: number, usage: SymbolUsage): void {
     const stmt = this.db.prepare(`
-      INSERT INTO usages (symbol_id, line, column, context)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO usages (symbol_id, line, column, context, argument_count, is_method_call, is_constructor_call, receiver_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       symbolId,
       usage.position.row + 1,
       usage.position.column,
-      usage.context
+      usage.context,
+      usage.callsite?.argumentCount ?? null,
+      usage.callsite?.isMethodCall !== undefined ? (usage.callsite.isMethodCall ? 1 : 0) : null,
+      usage.callsite?.isConstructorCall !== undefined ? (usage.callsite.isConstructorCall ? 1 : 0) : null,
+      usage.callsite?.receiverName ?? null
     );
   }
 
@@ -251,6 +285,220 @@ export class IndexDatabase implements IIndexWriter {
 
   getUsageCount(): number {
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM usages');
+    const row = stmt.get() as { count: number };
+    return row.count;
+  }
+
+  /**
+   * Find all classes that extend a given class
+   */
+  getSubclasses(className: string): Definition[] {
+    const stmt = this.db.prepare(`
+      SELECT
+        d.name,
+        d.kind,
+        d.is_exported,
+        d.is_default,
+        d.line,
+        d.column,
+        d.end_line,
+        d.end_column,
+        d.extends_name,
+        d.implements_names,
+        d.extends_interfaces
+      FROM definitions d
+      WHERE d.extends_name = ?
+    `);
+    const rows = stmt.all(className) as Array<{
+      name: string;
+      kind: string;
+      is_exported: number;
+      is_default: number;
+      line: number;
+      column: number;
+      end_line: number;
+      end_column: number;
+      extends_name: string | null;
+      implements_names: string | null;
+      extends_interfaces: string | null;
+    }>;
+
+    return rows.map((row) => ({
+      name: row.name,
+      kind: row.kind as Definition['kind'],
+      isExported: row.is_exported === 1,
+      isDefault: row.is_default === 1,
+      position: { row: row.line - 1, column: row.column },
+      endPosition: { row: row.end_line - 1, column: row.end_column },
+      ...(row.extends_name && { extends: row.extends_name }),
+      ...(row.implements_names && { implements: JSON.parse(row.implements_names) as string[] }),
+      ...(row.extends_interfaces && { extendsAll: JSON.parse(row.extends_interfaces) as string[] }),
+    }));
+  }
+
+  /**
+   * Find all classes that implement a given interface
+   */
+  getImplementations(interfaceName: string): Definition[] {
+    const stmt = this.db.prepare(`
+      SELECT
+        d.name,
+        d.kind,
+        d.is_exported,
+        d.is_default,
+        d.line,
+        d.column,
+        d.end_line,
+        d.end_column,
+        d.extends_name,
+        d.implements_names,
+        d.extends_interfaces
+      FROM definitions d
+      WHERE d.implements_names LIKE ?
+    `);
+    // Use LIKE with JSON pattern to find interface name in the array
+    const pattern = `%"${interfaceName}"%`;
+    const rows = stmt.all(pattern) as Array<{
+      name: string;
+      kind: string;
+      is_exported: number;
+      is_default: number;
+      line: number;
+      column: number;
+      end_line: number;
+      end_column: number;
+      extends_name: string | null;
+      implements_names: string | null;
+      extends_interfaces: string | null;
+    }>;
+
+    return rows.map((row) => ({
+      name: row.name,
+      kind: row.kind as Definition['kind'],
+      isExported: row.is_exported === 1,
+      isDefault: row.is_default === 1,
+      position: { row: row.line - 1, column: row.column },
+      endPosition: { row: row.end_line - 1, column: row.end_column },
+      ...(row.extends_name && { extends: row.extends_name }),
+      ...(row.implements_names && { implements: JSON.parse(row.implements_names) as string[] }),
+      ...(row.extends_interfaces && { extendsAll: JSON.parse(row.extends_interfaces) as string[] }),
+    }));
+  }
+
+  getCallsites(definitionId: number): CallsiteResult[] {
+    const stmt = this.db.prepare(`
+      SELECT
+        u.id as usage_id,
+        u.symbol_id,
+        s.definition_id,
+        f.path as file_path,
+        u.line,
+        u.column,
+        s.name as symbol_name,
+        s.local_name,
+        u.argument_count,
+        u.is_method_call,
+        u.is_constructor_call,
+        u.receiver_name
+      FROM usages u
+      JOIN symbols s ON u.symbol_id = s.id
+      JOIN imports i ON s.reference_id = i.id
+      JOIN files f ON i.from_file_id = f.id
+      WHERE s.definition_id = ?
+        AND (u.context = 'call_expression' OR u.context = 'new_expression')
+        AND u.argument_count IS NOT NULL
+    `);
+    const rows = stmt.all(definitionId) as Array<{
+      usage_id: number;
+      symbol_id: number;
+      definition_id: number | null;
+      file_path: string;
+      line: number;
+      column: number;
+      symbol_name: string;
+      local_name: string;
+      argument_count: number;
+      is_method_call: number;
+      is_constructor_call: number;
+      receiver_name: string | null;
+    }>;
+
+    return rows.map((row) => ({
+      usageId: row.usage_id,
+      symbolId: row.symbol_id,
+      definitionId: row.definition_id,
+      filePath: row.file_path,
+      line: row.line,
+      column: row.column,
+      symbolName: row.symbol_name,
+      localName: row.local_name,
+      argumentCount: row.argument_count,
+      isMethodCall: row.is_method_call === 1,
+      isConstructorCall: row.is_constructor_call === 1,
+      receiverName: row.receiver_name,
+    }));
+  }
+
+  getCallsitesForFile(fileId: number): CallsiteResult[] {
+    const stmt = this.db.prepare(`
+      SELECT
+        u.id as usage_id,
+        u.symbol_id,
+        s.definition_id,
+        f.path as file_path,
+        u.line,
+        u.column,
+        s.name as symbol_name,
+        s.local_name,
+        u.argument_count,
+        u.is_method_call,
+        u.is_constructor_call,
+        u.receiver_name
+      FROM usages u
+      JOIN symbols s ON u.symbol_id = s.id
+      JOIN imports i ON s.reference_id = i.id
+      JOIN files f ON i.from_file_id = f.id
+      WHERE i.from_file_id = ?
+        AND (u.context = 'call_expression' OR u.context = 'new_expression')
+        AND u.argument_count IS NOT NULL
+    `);
+    const rows = stmt.all(fileId) as Array<{
+      usage_id: number;
+      symbol_id: number;
+      definition_id: number | null;
+      file_path: string;
+      line: number;
+      column: number;
+      symbol_name: string;
+      local_name: string;
+      argument_count: number;
+      is_method_call: number;
+      is_constructor_call: number;
+      receiver_name: string | null;
+    }>;
+
+    return rows.map((row) => ({
+      usageId: row.usage_id,
+      symbolId: row.symbol_id,
+      definitionId: row.definition_id,
+      filePath: row.file_path,
+      line: row.line,
+      column: row.column,
+      symbolName: row.symbol_name,
+      localName: row.local_name,
+      argumentCount: row.argument_count,
+      isMethodCall: row.is_method_call === 1,
+      isConstructorCall: row.is_constructor_call === 1,
+      receiverName: row.receiver_name,
+    }));
+  }
+
+  getCallsiteCount(): number {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM usages
+      WHERE (context = 'call_expression' OR context = 'new_expression')
+        AND argument_count IS NOT NULL
+    `);
     const row = stmt.get() as { count: number };
     return row.count;
   }

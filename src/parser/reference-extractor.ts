@@ -1,9 +1,17 @@
 import type { SyntaxNode } from 'tree-sitter';
 import path from 'node:path';
 
+export interface CallsiteMetadata {
+  argumentCount: number;
+  isMethodCall: boolean;      // true for obj.foo(), false for foo()
+  isConstructorCall: boolean; // true for new Foo()
+  receiverName?: string;      // 'obj' in obj.foo()
+}
+
 export interface SymbolUsage {
   position: { row: number; column: number };
   context: string; // Parent node type: 'call_expression', 'member_expression', etc.
+  callsite?: CallsiteMetadata;  // Present when context is 'call_expression' or 'new_expression'
 }
 
 export interface ImportedSymbol {
@@ -145,23 +153,93 @@ function isValidUsage(node: SyntaxNode): boolean {
   return true;
 }
 
+interface UsageInfo {
+  context: string;
+  callsite?: CallsiteMetadata;
+}
+
 /**
- * Get the context (parent node type) for a usage
+ * Count the number of arguments in an arguments node
  */
-function getUsageContext(node: SyntaxNode): string {
+function countArguments(argsNode: SyntaxNode): number {
+  let count = 0;
+  for (let i = 0; i < argsNode.childCount; i++) {
+    const child = argsNode.child(i);
+    if (child) {
+      // Skip punctuation: (, ), ,
+      const type = child.type;
+      if (type !== '(' && type !== ')' && type !== ',') {
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * Get the context (parent node type) for a usage, with optional callsite metadata
+ */
+function getUsageContext(node: SyntaxNode): UsageInfo {
   const parent = node.parent;
-  if (!parent) return 'unknown';
+  if (!parent) return { context: 'unknown' };
+
+  // Check for new_expression (constructor call): new Foo()
+  if (parent.type === 'new_expression') {
+    const argsNode = parent.childForFieldName('arguments');
+    return {
+      context: 'new_expression',
+      callsite: {
+        argumentCount: argsNode ? countArguments(argsNode) : 0,
+        isMethodCall: false,
+        isConstructorCall: true,
+      },
+    };
+  }
+
+  // Direct function call: foo()
+  if (parent.type === 'call_expression') {
+    const functionNode = parent.childForFieldName('function');
+    // Make sure this identifier is the function being called, not an argument
+    if (functionNode && functionNode.id === node.id) {
+      const argsNode = parent.childForFieldName('arguments');
+      return {
+        context: 'call_expression',
+        callsite: {
+          argumentCount: argsNode ? countArguments(argsNode) : 0,
+          isMethodCall: false,
+          isConstructorCall: false,
+        },
+      };
+    }
+    return { context: 'call_expression' };
+  }
 
   // For member expressions, look at what the member expression is used for
   if (parent.type === 'member_expression') {
     const grandparent = parent.parent;
+
+    // Method call: obj.foo() - the identifier is the object, not the method
     if (grandparent?.type === 'call_expression') {
-      return 'call_expression';
+      // Check if this identifier is the object of the member expression
+      const objectNode = parent.childForFieldName('object');
+      if (objectNode && objectNode.id === node.id) {
+        const argsNode = grandparent.childForFieldName('arguments');
+        return {
+          context: 'call_expression',
+          callsite: {
+            argumentCount: argsNode ? countArguments(argsNode) : 0,
+            isMethodCall: true,
+            isConstructorCall: false,
+            receiverName: node.text,
+          },
+        };
+      }
+      return { context: 'call_expression' };
     }
-    return 'member_expression';
+    return { context: 'member_expression' };
   }
 
-  return parent.type;
+  return { context: parent.type };
 }
 
 /**
@@ -180,13 +258,18 @@ export function findSymbolUsages(
       node.text === symbolName
     ) {
       if (isValidUsage(node)) {
-        usages.push({
+        const usageInfo = getUsageContext(node);
+        const usage: SymbolUsage = {
           position: {
             row: node.startPosition.row,
             column: node.startPosition.column,
           },
-          context: getUsageContext(node),
-        });
+          context: usageInfo.context,
+        };
+        if (usageInfo.callsite) {
+          usage.callsite = usageInfo.callsite;
+        }
+        usages.push(usage);
       }
     }
 

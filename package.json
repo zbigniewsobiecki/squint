@@ -14,8 +14,8 @@
     "prepack": "npm run build",
     "start": "node ./bin/run.js",
     "dev": "node ./bin/dev.js",
-    "test": "vitest",
-    "test:watch": "vitest --watch"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "oclif": {
     "bin": "ats",
