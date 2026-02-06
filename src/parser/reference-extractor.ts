@@ -1,5 +1,6 @@
 import type { SyntaxNode } from 'tree-sitter';
 import path from 'node:path';
+import fs from 'node:fs';
 
 export interface CallsiteMetadata {
   argumentCount: number;
@@ -34,6 +35,72 @@ export interface FileReference {
 const EXTENSIONS_TO_TRY = ['.ts', '.tsx', '.js', '.jsx'];
 const INDEX_FILES = ['index.ts', 'index.tsx', 'index.js', 'index.jsx'];
 
+// Cache for package.json imports field lookups
+const packageJsonCache = new Map<string, { imports: Record<string, string>; dir: string } | null>();
+
+/**
+ * Find the nearest package.json with an imports field
+ */
+function findPackageJsonImports(startDir: string): { imports: Record<string, string>; dir: string } | null {
+  if (packageJsonCache.has(startDir)) {
+    return packageJsonCache.get(startDir) ?? null;
+  }
+
+  let dir = startDir;
+  while (dir !== path.dirname(dir)) {
+    const pkgPath = path.join(dir, 'package.json');
+    try {
+      const content = fs.readFileSync(pkgPath, 'utf-8');
+      const pkg = JSON.parse(content);
+      if (pkg.imports && typeof pkg.imports === 'object') {
+        const result = { imports: pkg.imports, dir };
+        packageJsonCache.set(startDir, result);
+        return result;
+      }
+    } catch {
+      // not found, continue up the tree
+    }
+    dir = path.dirname(dir);
+  }
+
+  packageJsonCache.set(startDir, null);
+  return null;
+}
+
+/**
+ * Resolve a subpath import (#...) using package.json imports field
+ */
+function resolveSubpathImport(
+  source: string,
+  imports: Record<string, string>,
+  pkgDir: string
+): string | null {
+  // Sort by specificity (longer patterns first)
+  const patterns = Object.keys(imports).sort((a, b) => b.length - a.length);
+
+  for (const pattern of patterns) {
+    if (pattern.includes('*')) {
+      // Wildcard pattern: #core/* -> ./src/modules/core/*
+      const prefix = pattern.slice(0, pattern.indexOf('*'));
+      if (source.startsWith(prefix)) {
+        const suffix = source.slice(prefix.length);
+        const target = imports[pattern];
+        if (typeof target === 'string') {
+          const resolved = target.replace('*', suffix);
+          return path.resolve(pkgDir, resolved);
+        }
+      }
+    } else if (source === pattern) {
+      // Exact match
+      const target = imports[pattern];
+      if (typeof target === 'string') {
+        return path.resolve(pkgDir, target);
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Resolve an import path to an absolute path if it exists in the known files set
  */
@@ -42,12 +109,35 @@ export function resolveImportPath(
   fromFile: string,
   knownFiles: Set<string>
 ): string | undefined {
+  const fromDir = path.dirname(fromFile);
+
+  // Handle subpath imports (#...)
+  if (source.startsWith('#')) {
+    const pkgInfo = findPackageJsonImports(fromDir);
+    if (pkgInfo) {
+      const resolved = resolveSubpathImport(source, pkgInfo.imports, pkgInfo.dir);
+      if (resolved) {
+        // Try exact match first
+        if (knownFiles.has(resolved)) return resolved;
+        // Try with extensions
+        for (const ext of EXTENSIONS_TO_TRY) {
+          if (knownFiles.has(resolved + ext)) return resolved + ext;
+        }
+        // Try index files
+        for (const ext of EXTENSIONS_TO_TRY) {
+          const indexPath = path.join(resolved, 'index' + ext);
+          if (knownFiles.has(indexPath)) return indexPath;
+        }
+      }
+    }
+    return undefined;
+  }
+
   // External packages can't be resolved
   if (!source.startsWith('.') && !source.startsWith('/')) {
     return undefined;
   }
 
-  const fromDir = path.dirname(fromFile);
   const resolved = path.resolve(fromDir, source);
 
   // Try exact match first
@@ -480,7 +570,7 @@ function extractDynamicImport(
   if (!firstArg || firstArg.type !== 'string') return null;
 
   const source = firstArg.text.slice(1, -1);
-  const isExternal = !source.startsWith('.') && !source.startsWith('/');
+  const isExternal = !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
 
   return {
     type: 'dynamic-import',
@@ -524,7 +614,7 @@ function extractRequireCall(
   if (!firstArg || firstArg.type !== 'string') return null;
 
   const source = firstArg.text.slice(1, -1);
-  const isExternal = !source.startsWith('.') && !source.startsWith('/');
+  const isExternal = !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
 
   // Try to find what variable this require is assigned to
   const imports: ImportedSymbol[] = [];
@@ -607,7 +697,7 @@ export function extractReferences(
     if (node.type === 'import_statement') {
       const source = extractSourceString(node);
       if (source) {
-        const isExternal = !source.startsWith('.') && !source.startsWith('/');
+        const isExternal = !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
         const isTypeOnly = isTypeOnlyImport(node);
         const imports = extractImportedSymbols(node, rootNode);
 
@@ -628,7 +718,7 @@ export function extractReferences(
       const source = extractSourceString(node);
       if (source) {
         // This is a re-export
-        const isExternal = !source.startsWith('.') && !source.startsWith('/');
+        const isExternal = !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
         const imports = extractReExportedSymbols(node, rootNode);
 
         // Determine if it's export-all or re-export

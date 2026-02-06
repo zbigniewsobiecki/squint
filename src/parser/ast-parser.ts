@@ -58,7 +58,9 @@ export function parseContent(
   metadata: { sizeBytes: number; modifiedAt: string }
 ): ParsedFile {
   const parser = getParser(filePath);
-  const tree = parser.parse(content);
+  // Buffer size: file size × 2 (for UTF-16) + 1MB overhead, minimum 1MB
+  const bufferSize = Math.max(1024 * 1024, content.length * 2 + 1024 * 1024);
+  const tree = parser.parse(content, undefined, { bufferSize });
   const language = getLanguageFromExtension(filePath);
   const references = extractReferences(tree.rootNode, filePath, knownFiles);
   const definitions = extractDefinitions(tree.rootNode);

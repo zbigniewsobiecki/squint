@@ -531,6 +531,36 @@ export class IndexDatabase implements IIndexWriter {
   }
 
   /**
+   * Get all indexed files with import statistics
+   */
+  getAllFilesWithStats(): Array<{
+    id: number;
+    path: string;
+    importedByCount: number;
+    importsCount: number;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT
+        f.id,
+        f.path,
+        (SELECT COUNT(DISTINCT i.from_file_id)
+         FROM imports i
+         WHERE i.to_file_id = f.id AND i.is_external = 0) as importedByCount,
+        (SELECT COUNT(DISTINCT i.to_file_id)
+         FROM imports i
+         WHERE i.from_file_id = f.id AND i.is_external = 0 AND i.to_file_id IS NOT NULL) as importsCount
+      FROM files f
+      ORDER BY f.path
+    `);
+    return stmt.all() as Array<{
+      id: number;
+      path: string;
+      importedByCount: number;
+      importsCount: number;
+    }>;
+  }
+
+  /**
    * Get all definitions with optional filters
    */
   getAllDefinitions(filters?: { kind?: string; exported?: boolean }): Array<{
@@ -700,6 +730,29 @@ export class IndexDatabase implements IIndexWriter {
       isExternal: row.isExternal === 1,
       isTypeOnly: row.isTypeOnly === 1,
     }));
+  }
+
+  /**
+   * Get files that import a specific file
+   */
+  getFilesImportedBy(fileId: number): Array<{
+    id: number;
+    path: string;
+    line: number;
+    column: number;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT
+        f.id,
+        f.path,
+        i.line,
+        i.column
+      FROM imports i
+      JOIN files f ON i.from_file_id = f.id
+      WHERE i.to_file_id = ? AND i.is_external = 0
+      ORDER BY f.path
+    `);
+    return stmt.all(fileId) as Array<{ id: number; path: string; line: number; column: number }>;
   }
 
   /**
@@ -890,6 +943,252 @@ export class IndexDatabase implements IIndexWriter {
     }
 
     return { nodes, links };
+  }
+
+  /**
+   * Get files that have no incoming imports (orphan files)
+   */
+  getOrphanFiles(options?: { includeIndex?: boolean; includeTests?: boolean }): Array<{ id: number; path: string }> {
+    const conditions: string[] = ['i.to_file_id IS NULL'];
+
+    // Filter out index files by default
+    if (!options?.includeIndex) {
+      conditions.push(`f.path NOT LIKE '%/index.ts'`);
+      conditions.push(`f.path NOT LIKE '%/index.tsx'`);
+      conditions.push(`f.path NOT LIKE '%/index.js'`);
+      conditions.push(`f.path NOT LIKE '%/index.jsx'`);
+      conditions.push(`f.path NOT LIKE '%/index.mjs'`);
+      conditions.push(`f.path NOT LIKE '%/index.cjs'`);
+    }
+
+    // Filter out test files by default
+    if (!options?.includeTests) {
+      conditions.push(`f.path NOT LIKE '%.test.ts'`);
+      conditions.push(`f.path NOT LIKE '%.test.tsx'`);
+      conditions.push(`f.path NOT LIKE '%.test.js'`);
+      conditions.push(`f.path NOT LIKE '%.test.jsx'`);
+      conditions.push(`f.path NOT LIKE '%.spec.ts'`);
+      conditions.push(`f.path NOT LIKE '%.spec.tsx'`);
+      conditions.push(`f.path NOT LIKE '%.spec.js'`);
+      conditions.push(`f.path NOT LIKE '%.spec.jsx'`);
+      conditions.push(`f.path NOT LIKE '%/__tests__/%'`);
+      conditions.push(`f.path NOT LIKE '%/test/%'`);
+      conditions.push(`f.path NOT LIKE '%/tests/%'`);
+    }
+
+    const sql = `
+      SELECT f.id, f.path
+      FROM files f
+      LEFT JOIN imports i ON f.id = i.to_file_id AND i.is_external = 0
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY f.path
+    `;
+
+    const stmt = this.db.prepare(sql);
+    return stmt.all() as Array<{ id: number; path: string }>;
+  }
+
+  /**
+   * Get files in optimal reading order using topological sort (Kahn's algorithm).
+   * Files with no internal imports (leaves) come first, then files that only depend on those, etc.
+   * Cycles are detected and grouped together.
+   */
+  getFilesInReadingOrder(options?: { excludeTests?: boolean }): Array<{
+    id: number;
+    path: string;
+    depth: number;
+    cycleGroup?: number;
+  }> {
+    // Get all files
+    const filesStmt = this.db.prepare('SELECT id, path FROM files');
+    const allFiles = filesStmt.all() as Array<{ id: number; path: string }>;
+
+    // Filter test files if requested
+    let files = allFiles;
+    if (options?.excludeTests) {
+      files = allFiles.filter(f => {
+        const p = f.path;
+        return !p.includes('.test.') &&
+               !p.includes('.spec.') &&
+               !p.includes('/__tests__/') &&
+               !p.includes('/test/') &&
+               !p.includes('/tests/');
+      });
+    }
+
+    const fileIds = new Set(files.map(f => f.id));
+    const fileMap = new Map(files.map(f => [f.id, f.path]));
+
+    // Build adjacency list: for each file, which files does it import (depend on)
+    // A file "depends on" the files it imports
+    const importsStmt = this.db.prepare(`
+      SELECT DISTINCT from_file_id, to_file_id
+      FROM imports
+      WHERE to_file_id IS NOT NULL AND is_external = 0
+    `);
+    const importRows = importsStmt.all() as Array<{ from_file_id: number; to_file_id: number }>;
+
+    // dependsOn[A] = set of files that A imports (A depends on these)
+    const dependsOn = new Map<number, Set<number>>();
+    // dependedBy[A] = set of files that import A (these depend on A)
+    const dependedBy = new Map<number, Set<number>>();
+
+    for (const fileId of fileIds) {
+      dependsOn.set(fileId, new Set());
+      dependedBy.set(fileId, new Set());
+    }
+
+    for (const row of importRows) {
+      // Only consider imports between files in our filtered set
+      if (fileIds.has(row.from_file_id) && fileIds.has(row.to_file_id)) {
+        dependsOn.get(row.from_file_id)!.add(row.to_file_id);
+        dependedBy.get(row.to_file_id)!.add(row.from_file_id);
+      }
+    }
+
+    // Kahn's algorithm for topological sort
+    // In-degree = number of internal imports (files this file depends on)
+    const inDegree = new Map<number, number>();
+    for (const fileId of fileIds) {
+      inDegree.set(fileId, dependsOn.get(fileId)!.size);
+    }
+
+    // Queue starts with leaves (files with no internal imports)
+    const queue: number[] = [];
+    for (const fileId of fileIds) {
+      if (inDegree.get(fileId) === 0) {
+        queue.push(fileId);
+      }
+    }
+
+    const result: Array<{ id: number; path: string; depth: number; cycleGroup?: number }> = [];
+    const processed = new Set<number>();
+    let currentDepth = 0;
+
+    // Process level by level to track depth
+    while (queue.length > 0) {
+      const levelSize = queue.length;
+      const nextLevel: number[] = [];
+
+      for (let i = 0; i < levelSize; i++) {
+        const fileId = queue[i];
+        if (processed.has(fileId)) continue;
+
+        processed.add(fileId);
+        result.push({
+          id: fileId,
+          path: fileMap.get(fileId)!,
+          depth: currentDepth,
+        });
+
+        // For each file that depends on this file, decrement its in-degree
+        for (const dependentId of dependedBy.get(fileId)!) {
+          const newDegree = inDegree.get(dependentId)! - 1;
+          inDegree.set(dependentId, newDegree);
+          if (newDegree === 0 && !processed.has(dependentId)) {
+            nextLevel.push(dependentId);
+          }
+        }
+      }
+
+      queue.length = 0;
+      queue.push(...nextLevel);
+      if (nextLevel.length > 0) {
+        currentDepth++;
+      }
+    }
+
+    // Handle cycles: files remaining after queue is empty are in cycles
+    const remaining = [...fileIds].filter(id => !processed.has(id));
+    if (remaining.length > 0) {
+      // Find connected components among remaining files (cycle groups)
+      const visited = new Set<number>();
+      let cycleGroupNum = 0;
+
+      for (const startId of remaining) {
+        if (visited.has(startId)) continue;
+
+        // BFS to find all files in this cycle group
+        const cycleQueue = [startId];
+        const cycleGroup: number[] = [];
+
+        while (cycleQueue.length > 0) {
+          const fileId = cycleQueue.shift()!;
+          if (visited.has(fileId)) continue;
+          visited.add(fileId);
+          cycleGroup.push(fileId);
+
+          // Add connected files (both directions)
+          for (const depId of dependsOn.get(fileId)!) {
+            if (!visited.has(depId) && remaining.includes(depId)) {
+              cycleQueue.push(depId);
+            }
+          }
+          for (const depById of dependedBy.get(fileId)!) {
+            if (!visited.has(depById) && remaining.includes(depById)) {
+              cycleQueue.push(depById);
+            }
+          }
+        }
+
+        // Add all files in this cycle group
+        for (const fileId of cycleGroup) {
+          result.push({
+            id: fileId,
+            path: fileMap.get(fileId)!,
+            depth: currentDepth,
+            cycleGroup: cycleGroupNum,
+          });
+        }
+        cycleGroupNum++;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Get all symbols (definitions) with optional filters
+   */
+  getSymbols(filters?: { kind?: string; fileId?: number }): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    line: number;
+  }> {
+    let sql = `
+      SELECT
+        d.id,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        d.line
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      WHERE 1=1
+    `;
+    const params: (string | number)[] = [];
+
+    if (filters?.kind) {
+      sql += ' AND d.kind = ?';
+      params.push(filters.kind);
+    }
+    if (filters?.fileId !== undefined) {
+      sql += ' AND d.file_id = ?';
+      params.push(filters.fileId);
+    }
+
+    sql += ' ORDER BY f.path, d.line';
+
+    const stmt = this.db.prepare(sql);
+    return stmt.all(...params) as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      line: number;
+    }>;
   }
 
   close(): void {
