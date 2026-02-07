@@ -1,8 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { IndexDatabase } from '../../db/database.js';
+import { withDatabase, SharedFlags } from '../_shared/index.js';
 
 interface CoverageResult {
   aspect: string;
@@ -34,11 +32,7 @@ export default class Understood extends Command {
   ];
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
+    database: SharedFlags.database,
     kind: Flags.string({
       char: 'k',
       description: 'Filter to specific symbol kind',
@@ -47,38 +41,14 @@ export default class Understood extends Command {
       char: 'f',
       description: 'Filter to symbols in path',
     }),
-    aspect: Flags.string({
-      char: 'a',
-      description: 'Show only specific aspect',
-    }),
-    json: Flags.boolean({
-      description: 'Output as JSON',
-      default: false,
-    }),
+    aspect: SharedFlags.aspect,
+    json: SharedFlags.json,
   };
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(Understood);
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
-    try {
+    await withDatabase(flags.database, this, async (db) => {
       // Get coverage data
       const coverage = db.getAspectCoverage({
         kind: flags.kind,
@@ -123,9 +93,7 @@ export default class Understood extends Command {
       } else {
         this.outputPlainText(output);
       }
-    } finally {
-      db.close();
-    }
+    });
   }
 
   private outputPlainText(output: UnderstoodOutput): void {

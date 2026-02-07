@@ -1,8 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { IndexDatabase, ReadySymbolInfo, DependencyWithMetadata } from '../../db/database.js';
+import { ReadySymbolInfo, DependencyWithMetadata } from '../../db/database.js';
+import { withDatabase, SharedFlags, truncate } from '../_shared/index.js';
 
 interface ReadySymbolWithDeps extends ReadySymbolInfo {
   dependencies?: DependencyWithMetadata[];
@@ -33,11 +32,7 @@ export default class Ready extends Command {
   ];
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
+    database: SharedFlags.database,
     aspect: Flags.string({
       char: 'a',
       description: 'The metadata key (aspect) to check',
@@ -56,10 +51,7 @@ export default class Ready extends Command {
       char: 'f',
       description: 'Filter to symbols in path',
     }),
-    json: Flags.boolean({
-      description: 'Output as JSON',
-      default: false,
-    }),
+    json: SharedFlags.json,
     verbose: Flags.boolean({
       char: 'v',
       description: 'Show dependency metadata inline',
@@ -70,25 +62,7 @@ export default class Ready extends Command {
   public async run(): Promise<void> {
     const { flags } = await this.parse(Ready);
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
-    try {
+    await withDatabase(flags.database, this, async (db) => {
       const result = db.getReadyToUnderstandSymbols(flags.aspect, {
         limit: flags.limit,
         kind: flags.kind,
@@ -122,9 +96,7 @@ export default class Ready extends Command {
       } else {
         this.outputPlainText(output);
       }
-    } finally {
-      db.close();
-    }
+    });
   }
 
   private outputPlainText(output: ReadyOutput): void {
@@ -168,7 +140,7 @@ export default class Ready extends Command {
         for (const dep of symbol.dependencies) {
           const status = dep.hasAspect ? chalk.green('✓') : chalk.gray('○');
           const value = dep.aspectValue
-            ? chalk.gray(this.truncate(dep.aspectValue, 50))
+            ? chalk.gray(truncate(dep.aspectValue, 50))
             : '';
           this.log(`      ${status} ${chalk.cyan(dep.name)}: ${value}`);
         }
@@ -186,10 +158,5 @@ export default class Ready extends Command {
 
     // Print hint
     this.log(chalk.gray(`Hint: Use 'ats symbols set ${output.aspect} <value> --name <symbol>' to mark`));
-  }
-
-  private truncate(str: string, maxLen: number): string {
-    if (str.length <= maxLen) return str;
-    return str.slice(0, maxLen - 3) + '...';
   }
 }

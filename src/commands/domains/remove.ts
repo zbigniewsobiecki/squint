@@ -1,8 +1,6 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { IndexDatabase } from '../../db/database.js';
+import { withDatabase, SharedFlags } from '../_shared/index.js';
 
 export default class Remove extends Command {
   static override description = 'Remove a domain from the registry';
@@ -17,11 +15,7 @@ export default class Remove extends Command {
   };
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
+    database: SharedFlags.database,
     force: Flags.boolean({
       char: 'f',
       description: 'Remove even if symbols still use this domain',
@@ -32,25 +26,7 @@ export default class Remove extends Command {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(Remove);
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
-    try {
+    await withDatabase(flags.database, this, async (db) => {
       // Remove the domain
       const result = db.removeDomain(args.name, flags.force);
 
@@ -68,8 +44,6 @@ export default class Remove extends Command {
       if (result.symbolsUsingDomain > 0) {
         this.log(chalk.yellow(`Warning: ${result.symbolsUsingDomain} symbol(s) still use this domain`));
       }
-    } finally {
-      db.close();
-    }
+    });
   }
 }

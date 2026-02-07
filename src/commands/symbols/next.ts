@@ -1,8 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { IndexDatabase, ReadySymbolInfo, DependencyWithMetadata } from '../../db/database.js';
+import { ReadySymbolInfo, DependencyWithMetadata } from '../../db/database.js';
+import { withDatabase, SharedFlags, readSourceAsString } from '../_shared/index.js';
 
 interface UnannotatedRelationship {
   toDefinitionId: number;
@@ -32,11 +31,7 @@ export default class Next extends Command {
   ];
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
+    database: SharedFlags.database,
     aspect: Flags.string({
       char: 'a',
       description: 'The metadata key (aspect) to check',
@@ -47,10 +42,7 @@ export default class Next extends Command {
       description: 'Number of symbols to show',
       default: 1,
     }),
-    json: Flags.boolean({
-      description: 'Output as JSON',
-      default: false,
-    }),
+    json: SharedFlags.json,
     'max-lines': Flags.integer({
       char: 'm',
       description: 'Maximum lines of source code to show (0 = unlimited)',
@@ -61,25 +53,7 @@ export default class Next extends Command {
   public async run(): Promise<void> {
     const { flags } = await this.parse(Next);
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
-    try {
+    await withDatabase(flags.database, this, async (db) => {
       const result = db.getReadyToUnderstandSymbols(flags.aspect, {
         limit: flags.count,
       });
@@ -100,7 +74,7 @@ export default class Next extends Command {
       const symbols: NextSymbolInfo[] = [];
 
       for (const symbol of result.symbols) {
-        const sourceCode = await this.readSourceCode(symbol.filePath, symbol.line, symbol.endLine);
+        const sourceCode = await readSourceAsString(symbol.filePath, symbol.line, symbol.endLine);
         const dependencies = db.getDependenciesWithMetadata(symbol.id, flags.aspect);
         const unannotatedRels = db.getUnannotatedRelationships({ fromDefinitionId: symbol.id, limit: 10 });
         const unannotatedRelationships: UnannotatedRelationship[] = unannotatedRels.map(rel => ({
@@ -142,20 +116,7 @@ export default class Next extends Command {
           this.outputSymbol(symbols[i], i + 1, symbols.length, totalRemaining, flags.aspect, flags['max-lines']);
         }
       }
-    } finally {
-      db.close();
-    }
-  }
-
-  private async readSourceCode(filePath: string, startLine: number, endLine: number): Promise<string> {
-    try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const lines = content.split('\n');
-      // Convert to 0-based indexing for array access
-      return lines.slice(startLine - 1, endLine).join('\n');
-    } catch {
-      return '<source code not available>';
-    }
+    });
   }
 
   private outputSymbol(

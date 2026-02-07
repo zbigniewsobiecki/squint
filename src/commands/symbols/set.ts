@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { IndexDatabase } from '../../db/database.js';
+import { withDatabase, openDatabase, SymbolResolver, SharedFlags } from '../_shared/index.js';
 
 interface BatchEntry {
   name?: string;
@@ -36,19 +37,9 @@ export default class Set extends Command {
   };
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
-    name: Flags.string({
-      char: 'n',
-      description: 'Symbol name',
-    }),
-    file: Flags.string({
-      char: 'f',
-      description: 'Disambiguate by file path',
-    }),
+    database: SharedFlags.database,
+    name: SharedFlags.symbolName,
+    file: SharedFlags.symbolFile,
     id: Flags.integer({
       description: 'Set by definition ID directly',
     }),
@@ -60,10 +51,7 @@ export default class Set extends Command {
       char: 'i',
       description: 'Read batch input from file instead of stdin',
     }),
-    json: Flags.boolean({
-      description: 'Output as JSON (for batch mode)',
-      default: false,
-    }),
+    json: SharedFlags.json,
   };
 
   public async run(): Promise<void> {
@@ -84,34 +72,16 @@ export default class Set extends Command {
       this.error('Either provide --name or --id to identify the symbol');
     }
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
-    try {
-      // Resolve the definition
-      const definition = this.resolveDefinition(db, flags.name, flags.id, flags.file);
+    await withDatabase(flags.database, this, async (db) => {
+      const resolver = new SymbolResolver(db, this);
+      const definition = resolver.resolve(flags.name, flags.id, flags.file);
 
       if (!definition) {
-        return; // Error already shown in resolveDefinition
+        return; // Disambiguation message already shown
       }
 
       // Set the metadata
-      db.setDefinitionMetadata(definition.id, args.key, args.value);
+      db.setDefinitionMetadata(definition.id, args.key, args.value!);
 
       // Get the definition name for output
       const defDetails = db.getDefinitionById(definition.id);
@@ -121,22 +91,13 @@ export default class Set extends Command {
 
       // Warn about unregistered domains
       if (args.key === 'domain') {
-        this.warnUnregisteredDomains(db, args.value);
+        this.warnUnregisteredDomains(db, args.value!);
       }
-    } finally {
-      db.close();
-    }
+    });
   }
 
   private async runBatchMode(key: string, flags: { database: string; json: boolean; 'input-file'?: string; batch?: boolean }): Promise<void> {
     const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
 
     // Read input from file or stdin
     let input = '';
@@ -172,16 +133,9 @@ export default class Set extends Command {
       this.error(chalk.red(`Failed to parse JSON: ${message}`));
     }
 
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
+    const db = await openDatabase(dbPath, this);
     const results: BatchResult[] = [];
+    const resolver = new SymbolResolver(db, this);
 
     try {
       for (const entry of entries) {
@@ -200,7 +154,7 @@ export default class Set extends Command {
 
         try {
           // Resolve the definition (silently)
-          const definition = this.resolveDefinitionSilent(db, entry.name, entry.id, entry.file);
+          const definition = resolver.resolveSilent(entry.name, entry.id, entry.file);
 
           if (!definition) {
             results.push({ symbol: symbolId, success: false, error: 'Symbol not found or ambiguous' });
@@ -210,8 +164,7 @@ export default class Set extends Command {
           // Set the metadata
           db.setDefinitionMetadata(definition.id, key, entry.value);
 
-          const defDetails = db.getDefinitionById(definition.id);
-          results.push({ symbol: defDetails?.name ?? symbolId, success: true });
+          results.push({ symbol: definition.name, success: true });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           results.push({ symbol: symbolId, success: false, error: message });
@@ -225,7 +178,7 @@ export default class Set extends Command {
     if (key === 'domain' && !flags.json) {
       let db2: IndexDatabase | null = null;
       try {
-        db2 = new IndexDatabase(dbPath);
+        db2 = await openDatabase(dbPath, this);
         // Collect all domains from successful entries
         const allDomainsSet: globalThis.Set<string> = new globalThis.Set();
         for (const entry of entries) {
@@ -288,89 +241,6 @@ export default class Set extends Command {
       // Ensure stdin is flowing
       process.stdin.resume();
     });
-  }
-
-  private resolveDefinitionSilent(
-    db: IndexDatabase,
-    name: string | undefined,
-    id: number | undefined,
-    filePath: string | undefined
-  ): { id: number } | null {
-    // Direct ID lookup
-    if (id !== undefined) {
-      const def = db.getDefinitionById(id);
-      if (!def) return null;
-      return { id };
-    }
-
-    // Name lookup
-    if (!name) return null;
-
-    let matches = db.getDefinitionsByName(name);
-    if (matches.length === 0) return null;
-
-    // Filter by file if specified
-    if (filePath) {
-      const resolvedPath = path.resolve(filePath);
-      matches = matches.filter(m => m.filePath === resolvedPath || m.filePath.endsWith(filePath));
-      if (matches.length === 0) return null;
-    }
-
-    // Ambiguous
-    if (matches.length > 1) return null;
-
-    return { id: matches[0].id };
-  }
-
-  private resolveDefinition(
-    db: IndexDatabase,
-    name: string | undefined,
-    id: number | undefined,
-    filePath: string | undefined
-  ): { id: number } | null {
-    // Direct ID lookup
-    if (id !== undefined) {
-      const def = db.getDefinitionById(id);
-      if (!def) {
-        this.error(chalk.red(`No definition found with ID ${id}`));
-      }
-      return { id };
-    }
-
-    // Name lookup
-    if (!name) {
-      this.error(chalk.red('Symbol name is required'));
-    }
-
-    let matches = db.getDefinitionsByName(name);
-
-    if (matches.length === 0) {
-      this.error(chalk.red(`No symbol found with name "${name}"`));
-    }
-
-    // Filter by file if specified
-    if (filePath) {
-      const resolvedPath = path.resolve(filePath);
-      matches = matches.filter(m => m.filePath === resolvedPath || m.filePath.endsWith(filePath));
-
-      if (matches.length === 0) {
-        this.error(chalk.red(`No symbol "${name}" found in file "${filePath}"`));
-      }
-    }
-
-    // Disambiguation needed
-    if (matches.length > 1) {
-      this.log(chalk.yellow(`Multiple symbols found with name "${name}":`));
-      this.log('');
-      for (const match of matches) {
-        this.log(`  ${chalk.cyan('--id')} ${match.id}\t${match.kind}\t${match.filePath}:${match.line}`);
-      }
-      this.log('');
-      this.log(chalk.gray('Use --id or --file to disambiguate'));
-      return null;
-    }
-
-    return { id: matches[0].id };
   }
 
   /**

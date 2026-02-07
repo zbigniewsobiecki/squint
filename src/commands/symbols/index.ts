@@ -1,8 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import fs from 'node:fs/promises';
 import path from 'node:path';
-import { IndexDatabase } from '../../db/database.js';
+import { withDatabase, SharedFlags } from '../_shared/index.js';
 
 export default class Symbols extends Command {
   static override description = 'List all symbols in the index';
@@ -21,11 +20,7 @@ export default class Symbols extends Command {
   ];
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
+    database: SharedFlags.database,
     kind: Flags.string({
       description: 'Filter by kind (function, class, variable, type, interface, enum)',
     }),
@@ -53,25 +48,7 @@ export default class Symbols extends Command {
   public async run(): Promise<void> {
     const { flags } = await this.parse(Symbols);
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
-    try {
+    await withDatabase(flags.database, this, async (db) => {
       // Handle --domains flag: list all unique domains
       if (flags.domains) {
         const domains = db.getAllDomains();
@@ -160,8 +137,6 @@ export default class Symbols extends Command {
         this.log('');
         this.log(chalk.gray(`Found ${symbols.length} symbol(s)`));
       }
-    } finally {
-      db.close();
-    }
+    });
   }
 }

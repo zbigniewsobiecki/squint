@@ -799,12 +799,48 @@ export interface InternalSymbolUsage {
 }
 
 /**
+ * Check if a usage is in a type context (type reference rather than value reference).
+ * Type contexts include: type annotations, generic type arguments, extends/implements clauses.
+ */
+function isTypeContext(context: string): boolean {
+  const typeContexts = [
+    'type_annotation',
+    'type_arguments',
+    'generic_type',
+    'type_identifier',
+    'extends_clause',
+    'extends_type_clause',
+    'implements_clause',
+    'type_alias_declaration',
+    'constraint',
+    'intersection_type',
+    'union_type',
+    'mapped_type',
+    'conditional_type',
+    'indexed_access_type',
+    'type_query',
+    'predefined_type',
+    'parenthesized_type',
+    'optional_type',
+    'readonly_type',
+    'tuple_type',
+    'array_type',
+    'function_type',
+    'constructor_type',
+    'index_signature',
+  ];
+  return typeContexts.includes(context);
+}
+
+/**
  * Extract internal usages of definitions within the same file.
  * This captures calls to local functions, classes, etc. that are not imported.
+ * @param includeTypeUsages - If true, also include type usages (not just call usages)
  */
 export function extractInternalUsages(
   rootNode: SyntaxNode,
-  definitions: Definition[]
+  definitions: Definition[],
+  includeTypeUsages = true
 ): InternalSymbolUsage[] {
   const results: InternalSymbolUsage[] = [];
 
@@ -822,15 +858,77 @@ export function extractInternalUsages(
       return !isDefinitionSite;
     });
 
-    // Only include if there are actual usages (with call sites)
+    // Include call usages
     const callUsages = filteredUsages.filter(u => u.callsite);
-    if (callUsages.length > 0) {
+
+    // Optionally include type usages
+    let typeUsages: SymbolUsage[] = [];
+    if (includeTypeUsages) {
+      typeUsages = filteredUsages.filter(u => !u.callsite && isTypeContext(u.context));
+    }
+
+    const allUsages = [...callUsages, ...typeUsages];
+    if (allUsages.length > 0) {
       results.push({
         definitionName: def.name,
-        usages: callUsages,
+        usages: allUsages,
       });
     }
   }
 
+  return results;
+}
+
+/**
+ * Extract type references from type alias declarations.
+ * This captures dependencies like User in `type Foo = Omit<User, 'password'>`.
+ */
+export function extractTypeAliasReferences(
+  rootNode: SyntaxNode
+): Array<{ typeName: string; referencedTypes: string[]; position: { row: number; column: number } }> {
+  const results: Array<{ typeName: string; referencedTypes: string[]; position: { row: number; column: number } }> = [];
+
+  function walk(node: SyntaxNode): void {
+    if (node.type === 'type_alias_declaration') {
+      const nameNode = node.childForFieldName('name');
+      const valueNode = node.childForFieldName('value');
+
+      if (nameNode && valueNode) {
+        const typeName = nameNode.text;
+        const referencedTypes = new Set<string>();
+
+        // Extract all type_identifier nodes from the value
+        function collectTypeIdentifiers(n: SyntaxNode): void {
+          if (n.type === 'type_identifier') {
+            // Exclude the declaration name itself
+            if (n.text !== typeName) {
+              referencedTypes.add(n.text);
+            }
+          }
+          for (let i = 0; i < n.childCount; i++) {
+            const child = n.child(i);
+            if (child) collectTypeIdentifiers(child);
+          }
+        }
+
+        collectTypeIdentifiers(valueNode);
+
+        if (referencedTypes.size > 0) {
+          results.push({
+            typeName,
+            referencedTypes: Array.from(referencedTypes),
+            position: { row: node.startPosition.row, column: node.startPosition.column },
+          });
+        }
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child) walk(child);
+    }
+  }
+
+  walk(rootNode);
   return results;
 }

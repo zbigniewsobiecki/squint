@@ -1,9 +1,8 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { LLMist } from 'llmist';
 import { IndexDatabase, ReadySymbolInfo } from '../../db/database.js';
+import { openDatabase, SharedFlags, readSourceAsString } from '../_shared/index.js';
 import { parseCombinedCsv } from './_shared/csv.js';
 import {
   buildSystemPrompt,
@@ -62,11 +61,7 @@ export default class Annotate extends Command {
   ];
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
+    database: SharedFlags.database,
     aspect: Flags.string({
       char: 'a',
       description: 'Metadata key to annotate (can be repeated)',
@@ -99,10 +94,7 @@ export default class Annotate extends Command {
       char: 'f',
       description: 'Filter by file path pattern',
     }),
-    json: Flags.boolean({
-      description: 'Output as JSON',
-      default: false,
-    }),
+    json: SharedFlags.json,
     'show-llm-requests': Flags.boolean({
       description: 'Show full LLM requests (system + user prompts)',
       default: false,
@@ -111,28 +103,21 @@ export default class Annotate extends Command {
       description: 'Show full LLM responses',
       default: false,
     }),
+    force: Flags.boolean({
+      description: 'Annotate symbols even if dependencies are not annotated',
+      default: false,
+    }),
+    exclude: Flags.string({
+      char: 'x',
+      description: 'Glob pattern for files to exclude (e.g., **/*.test.ts)',
+    }),
   };
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(Annotate);
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
-
     // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
+    const db = await openDatabase(flags.database, this);
 
     const aspects = flags.aspect;
     const primaryAspect = aspects[0]; // Use first aspect for readiness check
@@ -142,6 +127,8 @@ export default class Annotate extends Command {
     const isJson = flags.json;
     const showLlmRequests = flags['show-llm-requests'];
     const showLlmResponses = flags['show-llm-responses'];
+    const forceMode = flags.force;
+    const excludePattern = flags.exclude;
 
     // Build system prompt once
     const systemPrompt = buildSystemPrompt(aspects);
@@ -166,6 +153,12 @@ export default class Annotate extends Command {
     if (!isJson) {
       this.log(chalk.bold(`LLM Annotation: ${aspects.join(', ')}`));
       this.log(chalk.gray(`Model: ${flags.model}, Batch size: ${batchSize}`));
+      if (forceMode) {
+        this.log(chalk.yellow('FORCE MODE - ignoring dependency ordering'));
+      }
+      if (excludePattern) {
+        this.log(chalk.gray(`Excluding files matching: ${excludePattern}`));
+      }
       if (dryRun) {
         this.log(chalk.yellow('DRY RUN - annotations will not be persisted'));
       }
@@ -184,29 +177,51 @@ export default class Annotate extends Command {
           break;
         }
 
-        // Get batch of ready symbols
-        const result = db.getReadyToUnderstandSymbols(primaryAspect, {
-          limit: batchSize,
-          kind: flags.kind,
-          filePattern: flags.file,
-        });
+        // Get batch of symbols to annotate
+        let symbols: ReadySymbolInfo[];
+        let totalRemaining: number;
+        let blockedCount: number;
 
-        if (result.symbols.length === 0) {
-          if (result.totalReady === 0 && result.remaining === 0) {
+        if (forceMode) {
+          // Force mode: get all unannotated symbols regardless of dependencies
+          const result = db.getAllUnannotatedSymbols(primaryAspect, {
+            limit: batchSize,
+            kind: flags.kind,
+            filePattern: flags.file,
+            excludePattern: excludePattern,
+          });
+          symbols = result.symbols;
+          totalRemaining = result.total;
+          blockedCount = 0; // No blocking in force mode
+        } else {
+          // Normal mode: only get symbols with all dependencies annotated
+          const result = db.getReadyToUnderstandSymbols(primaryAspect, {
+            limit: batchSize,
+            kind: flags.kind,
+            filePattern: flags.file,
+          });
+          symbols = result.symbols;
+          totalRemaining = result.totalReady + result.remaining;
+          blockedCount = result.remaining;
+        }
+
+        if (symbols.length === 0) {
+          if (totalRemaining === 0) {
             if (!isJson) {
               this.log(chalk.green(`All symbols have '${primaryAspect}' annotated!`));
             }
-          } else if (result.totalReady === 0) {
+          } else if (blockedCount > 0) {
             if (!isJson) {
               this.log(chalk.yellow(`No symbols ready for annotation.`));
-              this.log(chalk.gray(`${result.remaining} symbols have unmet dependencies.`));
+              this.log(chalk.gray(`${blockedCount} symbols have unmet dependencies.`));
+              this.log(chalk.gray(`Use --force to annotate them anyway.`));
             }
           }
           break;
         }
 
         // Enhance symbols with source code and dependency context
-        const enhancedSymbols = await this.enhanceSymbols(db, result.symbols, aspects);
+        const enhancedSymbols = await this.enhanceSymbols(db, symbols, aspects);
 
         // Get current coverage for the prompt
         const allCoverage = db.getAspectCoverage({
@@ -536,7 +551,7 @@ export default class Annotate extends Command {
     const enhanced: EnhancedSymbol[] = [];
 
     for (const symbol of symbols) {
-      const sourceCode = await this.readSourceCode(symbol.filePath, symbol.line, symbol.endLine);
+      const sourceCode = await readSourceAsString(symbol.filePath, symbol.line, symbol.endLine);
 
       // Get dependencies with all their metadata
       const deps = db.getDependenciesWithMetadata(symbol.id, aspects[0]);
@@ -582,19 +597,6 @@ export default class Annotate extends Command {
     }
 
     return enhanced;
-  }
-
-  /**
-   * Read source code for a symbol.
-   */
-  private async readSourceCode(filePath: string, startLine: number, endLine: number): Promise<string> {
-    try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const lines = content.split('\n');
-      return lines.slice(startLine - 1, endLine).join('\n');
-    } catch {
-      return '<source code not available>';
-    }
   }
 
   /**

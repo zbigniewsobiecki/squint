@@ -1,7 +1,5 @@
 import { Command, Flags } from '@oclif/core';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { IndexDatabase } from '../../db/database.js';
+import { withDatabase, SharedFlags } from '../_shared/index.js';
 
 export default class Files extends Command {
   static override description = 'List all indexed files';
@@ -13,11 +11,7 @@ export default class Files extends Command {
   ];
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
+    database: SharedFlags.database,
     stats: Flags.boolean({
       description: 'Include import statistics (imported-by count, imports count)',
       default: false,
@@ -27,25 +21,7 @@ export default class Files extends Command {
   public async run(): Promise<void> {
     const { flags } = await this.parse(Files);
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`);
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(`Failed to open database: ${message}`);
-    }
-
-    try {
+    await withDatabase(flags.database, this, async (db) => {
       if (flags.stats) {
         const files = db.getAllFilesWithStats();
         for (const file of files) {
@@ -57,8 +33,6 @@ export default class Files extends Command {
           this.log(file.path);
         }
       }
-    } finally {
-      db.close();
-    }
+    });
   }
 }

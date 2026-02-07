@@ -1,8 +1,7 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { IndexDatabase } from '../../db/database.js';
+import { withDatabase, SymbolResolver, SharedFlags, readSourceLines, readAllLines } from '../_shared/index.js';
 
 interface CallSiteWithContext {
   filePath: string;
@@ -42,11 +41,7 @@ export default class Show extends Command {
   };
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
+    database: SharedFlags.database,
     file: Flags.string({
       char: 'f',
       description: 'Filter to specific file (for disambiguation)',
@@ -54,10 +49,7 @@ export default class Show extends Command {
     id: Flags.integer({
       description: 'Look up by definition ID directly',
     }),
-    json: Flags.boolean({
-      description: 'Output as JSON',
-      default: false,
-    }),
+    json: SharedFlags.json,
     'context-lines': Flags.integer({
       char: 'c',
       description: 'Number of context lines around call sites',
@@ -73,30 +65,12 @@ export default class Show extends Command {
       this.error('Either provide a symbol name or use --id');
     }
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
-    try {
-      // Resolve the definition
-      const definition = await this.resolveDefinition(db, args.name, flags.id, flags.file);
+    await withDatabase(flags.database, this, async (db) => {
+      const resolver = new SymbolResolver(db, this);
+      const definition = resolver.resolve(args.name, flags.id, flags.file);
 
       if (!definition) {
-        return; // Error already shown in resolveDefinition
+        return; // Disambiguation message already shown
       }
 
       // Get full definition details
@@ -106,7 +80,7 @@ export default class Show extends Command {
       }
 
       // Read source code
-      const sourceCode = await this.readSourceCode(defDetails.filePath, defDetails.line, defDetails.endLine);
+      const sourceCode = await readSourceLines(defDetails.filePath, defDetails.line, defDetails.endLine);
 
       // Get call sites with context
       const callSites = await this.getCallSitesWithContext(db, definition.id, flags['context-lines']);
@@ -132,71 +106,7 @@ export default class Show extends Command {
       } else {
         this.outputPlainText(symbolInfo);
       }
-    } finally {
-      db.close();
-    }
-  }
-
-  private async resolveDefinition(
-    db: IndexDatabase,
-    name: string | undefined,
-    id: number | undefined,
-    filePath: string | undefined
-  ): Promise<{ id: number } | null> {
-    // Direct ID lookup
-    if (id !== undefined) {
-      const def = db.getDefinitionById(id);
-      if (!def) {
-        this.error(chalk.red(`No definition found with ID ${id}`));
-      }
-      return { id };
-    }
-
-    // Name lookup
-    if (!name) {
-      this.error(chalk.red('Symbol name is required'));
-    }
-
-    let matches = db.getDefinitionsByName(name);
-
-    if (matches.length === 0) {
-      this.error(chalk.red(`No symbol found with name "${name}"`));
-    }
-
-    // Filter by file if specified
-    if (filePath) {
-      const resolvedPath = path.resolve(filePath);
-      matches = matches.filter(m => m.filePath === resolvedPath || m.filePath.endsWith(filePath));
-
-      if (matches.length === 0) {
-        this.error(chalk.red(`No symbol "${name}" found in file "${filePath}"`));
-      }
-    }
-
-    // Disambiguation needed
-    if (matches.length > 1) {
-      this.log(chalk.yellow(`Multiple symbols found with name "${name}":`));
-      this.log('');
-      for (const match of matches) {
-        this.log(`  ${chalk.cyan('--id')} ${match.id}\t${match.kind}\t${match.filePath}:${match.line}`);
-      }
-      this.log('');
-      this.log(chalk.gray('Use --id or --file to disambiguate'));
-      return null;
-    }
-
-    return { id: matches[0].id };
-  }
-
-  private async readSourceCode(filePath: string, startLine: number, endLine: number): Promise<string[]> {
-    try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const lines = content.split('\n');
-      // Convert to 0-based indexing for array access
-      return lines.slice(startLine - 1, endLine);
-    } catch {
-      return ['<source code not available>'];
-    }
+    });
   }
 
   private async getCallSitesWithContext(
@@ -218,12 +128,10 @@ export default class Show extends Command {
     const result: CallSiteWithContext[] = [];
 
     for (const [filePath, fileCallsites] of byFile) {
-      // Read file content once
-      let fileLines: string[] = [];
-      try {
-        const content = await fs.readFile(filePath, 'utf-8');
-        fileLines = content.split('\n');
-      } catch {
+      // Read file content once using shared utility
+      const fileLines = await readAllLines(filePath);
+
+      if (fileLines.length === 0) {
         // File not readable, add callsites without context
         for (const cs of fileCallsites) {
           result.push({

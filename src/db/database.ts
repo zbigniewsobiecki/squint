@@ -1,281 +1,39 @@
 import Database from 'better-sqlite3';
-import { createHash } from 'node:crypto';
 import type { Definition } from '../parser/definition-extractor.js';
 import type { FileReference, ImportedSymbol, SymbolUsage } from '../parser/reference-extractor.js';
 
-export interface FileInsert {
-  path: string;
-  language: string;
-  contentHash: string;
-  sizeBytes: number;
-  modifiedAt: string;
-}
+// Re-export all types and utilities from schema for backward compatibility
+export {
+  type FileInsert,
+  type CallsiteResult,
+  type DependencyInfo,
+  type ReadySymbolInfo,
+  type DependencyWithMetadata,
+  type RelationshipAnnotation,
+  type RelationshipWithDetails,
+  type Domain,
+  type DomainWithCount,
+  type EnhancedRelationshipContext,
+  type IIndexWriter,
+  SCHEMA,
+  computeHash,
+} from './schema.js';
 
-export interface CallsiteResult {
-  usageId: number;
-  symbolId: number;
-  definitionId: number | null;
-  filePath: string;
-  line: number;
-  column: number;
-  symbolName: string;
-  localName: string;
-  argumentCount: number;
-  isMethodCall: boolean;
-  isConstructorCall: boolean;
-  receiverName: string | null;
-}
-
-export interface DependencyInfo {
-  dependencyId: number;
-  name: string;
-  kind: string;
-  filePath: string;
-  line: number;
-}
-
-export interface ReadySymbolInfo {
-  id: number;
-  name: string;
-  kind: string;
-  filePath: string;
-  line: number;
-  endLine: number;
-  dependencyCount: number;
-}
-
-export interface DependencyWithMetadata {
-  id: number;
-  name: string;
-  kind: string;
-  filePath: string;
-  line: number;
-  hasAspect: boolean;
-  aspectValue: string | null;
-}
-
-export interface RelationshipAnnotation {
-  id: number;
-  fromDefinitionId: number;
-  toDefinitionId: number;
-  semantic: string;
-  createdAt: string;
-}
-
-export interface RelationshipWithDetails {
-  id: number;
-  fromDefinitionId: number;
-  fromName: string;
-  fromKind: string;
-  fromFilePath: string;
-  fromLine: number;
-  toDefinitionId: number;
-  toName: string;
-  toKind: string;
-  toFilePath: string;
-  toLine: number;
-  semantic: string;
-}
-
-export interface Domain {
-  id: number;
-  name: string;
-  description: string | null;
-  createdAt: string;
-}
-
-export interface DomainWithCount extends Domain {
-  symbolCount: number;
-}
-
-export interface EnhancedRelationshipContext {
-  // Base relationship info
-  fromDefinitionId: number;
-  fromName: string;
-  fromKind: string;
-  fromFilePath: string;
-  fromLine: number;
-  fromEndLine: number;
-  toDefinitionId: number;
-  toName: string;
-  toKind: string;
-  toFilePath: string;
-  toLine: number;
-  toEndLine: number;
-  // Metadata for from symbol
-  fromPurpose: string | null;
-  fromDomains: string[] | null;
-  fromRole: string | null;
-  fromPure: boolean | null;
-  // Metadata for to symbol
-  toPurpose: string | null;
-  toDomains: string[] | null;
-  toRole: string | null;
-  toPure: boolean | null;
-  // Relationship context
-  relationshipType: 'call' | 'import' | 'extends' | 'implements';
-  usageLine: number;
-  // Other relationships context
-  otherFromRelationships: string[];
-  otherToRelationships: string[];
-  // Domain overlap
-  sharedDomains: string[];
-}
-
-const SCHEMA = `
--- Metadata about the indexing run
-CREATE TABLE metadata (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-
--- Files indexed by this run
-CREATE TABLE files (
-  id INTEGER PRIMARY KEY,
-  path TEXT UNIQUE NOT NULL,
-  language TEXT NOT NULL,
-  content_hash TEXT NOT NULL,
-  size_bytes INTEGER NOT NULL,
-  modified_at TEXT NOT NULL
-);
-
--- All definitions (functions, classes, variables, types) in each file
-CREATE TABLE definitions (
-  id INTEGER PRIMARY KEY,
-  file_id INTEGER NOT NULL,
-  name TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  is_exported INTEGER NOT NULL,
-  is_default INTEGER NOT NULL,
-  line INTEGER NOT NULL,
-  column INTEGER NOT NULL,
-  end_line INTEGER NOT NULL,
-  end_column INTEGER NOT NULL,
-  extends_name TEXT,          -- Parent class name (for classes)
-  implements_names TEXT,      -- JSON array of interface names (for classes)
-  extends_interfaces TEXT,    -- JSON array of parent interfaces (for interfaces)
-  FOREIGN KEY (file_id) REFERENCES files(id)
-);
-
--- Import/export relationships between files
-CREATE TABLE imports (
-  id INTEGER PRIMARY KEY,
-  from_file_id INTEGER NOT NULL,
-  to_file_id INTEGER,
-  type TEXT NOT NULL,
-  source TEXT NOT NULL,
-  is_external INTEGER NOT NULL,
-  is_type_only INTEGER NOT NULL,
-  line INTEGER NOT NULL,
-  column INTEGER NOT NULL,
-  FOREIGN KEY (from_file_id) REFERENCES files(id),
-  FOREIGN KEY (to_file_id) REFERENCES files(id)
-);
-
--- Symbols imported in each reference (or internal symbols within a file)
-CREATE TABLE symbols (
-  id INTEGER PRIMARY KEY,
-  reference_id INTEGER,           -- NULL for internal symbols
-  file_id INTEGER,                -- Set for internal symbols (same-file references)
-  definition_id INTEGER,
-  name TEXT NOT NULL,
-  local_name TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  FOREIGN KEY (reference_id) REFERENCES imports(id),
-  FOREIGN KEY (file_id) REFERENCES files(id),
-  FOREIGN KEY (definition_id) REFERENCES definitions(id)
-);
-
--- Where each imported symbol is used in the file
-CREATE TABLE usages (
-  id INTEGER PRIMARY KEY,
-  symbol_id INTEGER NOT NULL,
-  line INTEGER NOT NULL,
-  column INTEGER NOT NULL,
-  context TEXT NOT NULL,
-  argument_count INTEGER,
-  is_method_call INTEGER,
-  is_constructor_call INTEGER,
-  receiver_name TEXT,
-  FOREIGN KEY (symbol_id) REFERENCES symbols(id)
-);
-
--- Indexes for efficient queries
-CREATE INDEX idx_files_path ON files(path);
-CREATE INDEX idx_definitions_file ON definitions(file_id);
-CREATE INDEX idx_definitions_name ON definitions(name);
-CREATE INDEX idx_definitions_extends ON definitions(extends_name);
-CREATE INDEX idx_imports_from_file ON imports(from_file_id);
-CREATE INDEX idx_imports_to_file ON imports(to_file_id);
-CREATE INDEX idx_symbols_reference ON symbols(reference_id);
-CREATE INDEX idx_symbols_definition ON symbols(definition_id);
-CREATE INDEX idx_symbols_file ON symbols(file_id);
-CREATE INDEX idx_usages_symbol ON usages(symbol_id);
-CREATE INDEX idx_usages_context ON usages(context);
-
--- Key-value metadata for definitions
-CREATE TABLE definition_metadata (
-  id INTEGER PRIMARY KEY,
-  definition_id INTEGER NOT NULL,
-  key TEXT NOT NULL,
-  value TEXT NOT NULL,
-  FOREIGN KEY (definition_id) REFERENCES definitions(id) ON DELETE CASCADE,
-  UNIQUE(definition_id, key)
-);
-
-CREATE INDEX idx_definition_metadata_def ON definition_metadata(definition_id);
-CREATE INDEX idx_definition_metadata_key ON definition_metadata(key);
-
--- Semantic annotations for relationships between definitions
-CREATE TABLE relationship_annotations (
-  id INTEGER PRIMARY KEY,
-  from_definition_id INTEGER NOT NULL,
-  to_definition_id INTEGER NOT NULL,
-  semantic TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (from_definition_id) REFERENCES definitions(id) ON DELETE CASCADE,
-  FOREIGN KEY (to_definition_id) REFERENCES definitions(id) ON DELETE CASCADE,
-  UNIQUE(from_definition_id, to_definition_id)
-);
-
-CREATE INDEX idx_relationship_annotations_from ON relationship_annotations(from_definition_id);
-CREATE INDEX idx_relationship_annotations_to ON relationship_annotations(to_definition_id);
-
--- Domain registry for managing business domains
-CREATE TABLE domains (
-  id INTEGER PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
-  description TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX idx_domains_name ON domains(name);
-`;
-
-export function computeHash(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
-}
-
-/**
- * Interface for database operations, enabling mocking in tests.
- */
-export interface IIndexWriter {
-  initialize(): void;
-  setMetadata(key: string, value: string): void;
-  insertFile(file: FileInsert): number;
-  insertDefinition(fileId: number, def: Definition): number;
-  insertReference(fromFileId: number, toFileId: number | null, ref: FileReference): number;
-  insertSymbol(refId: number | null, defId: number | null, sym: ImportedSymbol, fileId?: number): number;
-  insertUsage(symbolId: number, usage: SymbolUsage): void;
-  getDefinitionByName(fileId: number, name: string): number | null;
-  getDefinitionCount(): number;
-  getReferenceCount(): number;
-  getUsageCount(): number;
-  getCallsites(definitionId: number): CallsiteResult[];
-  getCallsitesForFile(fileId: number): CallsiteResult[];
-  getCallsiteCount(): number;
-  close(): void;
-}
+// Import types for internal use
+import {
+  type FileInsert,
+  type CallsiteResult,
+  type DependencyInfo,
+  type ReadySymbolInfo,
+  type DependencyWithMetadata,
+  type RelationshipAnnotation,
+  type RelationshipWithDetails,
+  type Domain,
+  type DomainWithCount,
+  type EnhancedRelationshipContext,
+  type IIndexWriter,
+  SCHEMA,
+} from './schema.js';
 
 export class IndexDatabase implements IIndexWriter {
   private db: Database.Database;
@@ -2532,6 +2290,210 @@ export class IndexDatabase implements IIndexWriter {
     const stmt = this.db.prepare(sql);
     const row = stmt.get(...params) as { count: number };
     return row.count;
+  }
+
+  /**
+   * Create relationship annotations for inheritance (extends/implements).
+   * Called after all definitions are inserted during indexing.
+   * Creates automatic "extends" and "implements" relationships.
+   * @returns Statistics about created relationships.
+   */
+  createInheritanceRelationships(): {
+    extendsCreated: number;
+    implementsCreated: number;
+    notFound: number;
+  } {
+    let extendsCreated = 0;
+    let implementsCreated = 0;
+    let notFound = 0;
+
+    // Get all definitions that have extends or implements
+    const defsWithInheritance = this.db.prepare(`
+      SELECT id, name, extends_name, implements_names, extends_interfaces
+      FROM definitions
+      WHERE extends_name IS NOT NULL
+         OR implements_names IS NOT NULL
+         OR extends_interfaces IS NOT NULL
+    `).all() as Array<{
+      id: number;
+      name: string;
+      extends_name: string | null;
+      implements_names: string | null;
+      extends_interfaces: string | null;
+    }>;
+
+    // Build a map of name -> definition IDs for lookup
+    // Note: Multiple definitions can have the same name (in different files)
+    const nameToIds = new Map<string, number[]>();
+    const allDefs = this.db.prepare('SELECT id, name FROM definitions').all() as Array<{
+      id: number;
+      name: string;
+    }>;
+    for (const def of allDefs) {
+      const existing = nameToIds.get(def.name) || [];
+      existing.push(def.id);
+      nameToIds.set(def.name, existing);
+    }
+
+    // Helper to find best matching definition for a type name
+    const findTargetDefinition = (typeName: string): number | null => {
+      // Handle generic type syntax: Partial<Foo> -> Foo, Omit<User, 'x'> -> User
+      let baseName = typeName;
+      const genericMatch = typeName.match(/^(\w+)<.*>$/);
+      if (genericMatch) {
+        baseName = genericMatch[1];
+      }
+
+      const ids = nameToIds.get(baseName);
+      if (!ids || ids.length === 0) return null;
+      // If multiple matches, take the first one (could be improved with file context)
+      return ids[0];
+    };
+
+    // Process each definition with inheritance
+    for (const def of defsWithInheritance) {
+      // Handle class extends
+      if (def.extends_name) {
+        const targetId = findTargetDefinition(def.extends_name);
+        if (targetId !== null) {
+          this.setRelationshipAnnotation(def.id, targetId, `extends ${def.extends_name}`);
+          extendsCreated++;
+        } else {
+          notFound++;
+        }
+      }
+
+      // Handle class implements
+      if (def.implements_names) {
+        try {
+          const interfaces = JSON.parse(def.implements_names) as string[];
+          for (const iface of interfaces) {
+            const targetId = findTargetDefinition(iface);
+            if (targetId !== null) {
+              this.setRelationshipAnnotation(def.id, targetId, `implements ${iface}`);
+              implementsCreated++;
+            } else {
+              notFound++;
+            }
+          }
+        } catch {
+          // Skip invalid JSON
+        }
+      }
+
+      // Handle interface extends
+      if (def.extends_interfaces) {
+        try {
+          const parents = JSON.parse(def.extends_interfaces) as string[];
+          for (const parent of parents) {
+            const targetId = findTargetDefinition(parent);
+            if (targetId !== null) {
+              this.setRelationshipAnnotation(def.id, targetId, `extends ${parent}`);
+              extendsCreated++;
+            } else {
+              notFound++;
+            }
+          }
+        } catch {
+          // Skip invalid JSON
+        }
+      }
+    }
+
+    return { extendsCreated, implementsCreated, notFound };
+  }
+
+  /**
+   * Get all symbols that don't have a specific aspect set, regardless of dependency status.
+   * Used with --force flag to annotate all remaining symbols.
+   */
+  getAllUnannotatedSymbols(
+    aspect: string,
+    options?: { limit?: number; kind?: string; filePattern?: string; excludePattern?: string }
+  ): { symbols: ReadySymbolInfo[]; total: number } {
+    const limit = options?.limit ?? 20;
+
+    // Build filter conditions
+    let filterConditions = '';
+    const filterParams: (string | number)[] = [];
+
+    if (options?.kind) {
+      filterConditions += ' AND d.kind = ?';
+      filterParams.push(options.kind);
+    }
+    if (options?.filePattern) {
+      filterConditions += ' AND f.path LIKE ?';
+      filterParams.push(`%${options.filePattern}%`);
+    }
+    if (options?.excludePattern) {
+      filterConditions += ' AND f.path NOT GLOB ?';
+      filterParams.push(options.excludePattern);
+    }
+
+    // Get unannotated symbols (no dependency check)
+    const sql = `
+      WITH understood AS (
+        SELECT definition_id FROM definition_metadata WHERE key = ?
+      ),
+      definition_deps AS (
+        SELECT DISTINCT
+          source.id as definition_id,
+          dep_def.id as dependency_id
+        FROM definitions source
+        JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+        JOIN symbols s ON u.symbol_id = s.id
+        JOIN definitions dep_def ON s.definition_id = dep_def.id
+        JOIN files source_f ON source.file_id = source_f.id
+        WHERE dep_def.id != source.id
+          AND (
+            s.reference_id IN (SELECT id FROM imports WHERE from_file_id = source.file_id)
+            OR s.file_id = source.file_id
+          )
+      )
+      SELECT
+        d.id,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        d.line,
+        d.end_line as endLine,
+        COALESCE(dep_count.cnt, 0) as dependencyCount
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      LEFT JOIN (
+        SELECT definition_id, COUNT(*) as cnt
+        FROM definition_deps
+        GROUP BY definition_id
+      ) dep_count ON dep_count.definition_id = d.id
+      WHERE d.id NOT IN (SELECT definition_id FROM understood)
+        ${filterConditions}
+      ORDER BY dependencyCount ASC, f.path, d.line
+      LIMIT ?
+    `;
+
+    const params: (string | number)[] = [aspect, ...filterParams, limit];
+    const stmt = this.db.prepare(sql);
+    const symbols = stmt.all(...params) as ReadySymbolInfo[];
+
+    // Get total count
+    const countSql = `
+      WITH understood AS (
+        SELECT definition_id FROM definition_metadata WHERE key = ?
+      )
+      SELECT COUNT(*) as total
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      WHERE d.id NOT IN (SELECT definition_id FROM understood)
+        ${filterConditions}
+    `;
+    const countParams: (string | number)[] = [aspect, ...filterParams];
+    const countStmt = this.db.prepare(countSql);
+    const countResult = countStmt.get(...countParams) as { total: number };
+
+    return {
+      symbols,
+      total: countResult.total,
+    };
   }
 
   close(): void {

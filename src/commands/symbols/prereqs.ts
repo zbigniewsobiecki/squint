@@ -1,8 +1,7 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { DependencyInfo, IndexDatabase } from '../../db/database.js';
+import { DependencyInfo } from '../../db/database.js';
+import { withDatabase, SymbolResolver, SharedFlags } from '../_shared/index.js';
 
 interface PrereqInfo extends DependencyInfo {
   unmetDepCount: number;
@@ -36,27 +35,17 @@ export default class Prereqs extends Command {
   };
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
+    database: SharedFlags.database,
     id: Flags.integer({
       description: 'Symbol ID (alternative to name)',
     }),
-    file: Flags.string({
-      char: 'f',
-      description: 'Disambiguate by file path',
-    }),
+    file: SharedFlags.symbolFile,
     aspect: Flags.string({
       char: 'a',
       description: 'The aspect to check',
       required: true,
     }),
-    json: Flags.boolean({
-      description: 'Output as JSON',
-      default: false,
-    }),
+    json: SharedFlags.json,
   };
 
   public async run(): Promise<void> {
@@ -67,29 +56,11 @@ export default class Prereqs extends Command {
       this.error('Either provide a symbol name or --id to identify the symbol');
     }
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
-    try {
-      // Resolve the definition
-      const definition = this.resolveDefinition(db, args.name, flags.id, flags.file);
+    await withDatabase(flags.database, this, async (db) => {
+      const resolver = new SymbolResolver(db, this);
+      const definition = resolver.resolve(args.name, flags.id, flags.file);
       if (!definition) {
-        return; // Error already shown
+        return; // Disambiguation message already shown
       }
 
       // Get prerequisite chain
@@ -121,60 +92,7 @@ export default class Prereqs extends Command {
       } else {
         this.outputPlainText(output);
       }
-    } finally {
-      db.close();
-    }
-  }
-
-  private resolveDefinition(
-    db: IndexDatabase,
-    name: string | undefined,
-    id: number | undefined,
-    filePath: string | undefined
-  ): { id: number } | null {
-    // Direct ID lookup
-    if (id !== undefined) {
-      const def = db.getDefinitionById(id);
-      if (!def) {
-        this.error(chalk.red(`No definition found with ID ${id}`));
-      }
-      return { id };
-    }
-
-    // Name lookup
-    if (!name) {
-      this.error(chalk.red('Symbol name is required'));
-    }
-
-    let matches = db.getDefinitionsByName(name);
-
-    if (matches.length === 0) {
-      this.error(chalk.red(`No symbol found with name "${name}"`));
-    }
-
-    // Filter by file if specified
-    if (filePath) {
-      const resolvedPath = path.resolve(filePath);
-      matches = matches.filter(m => m.filePath === resolvedPath || m.filePath.endsWith(filePath));
-
-      if (matches.length === 0) {
-        this.error(chalk.red(`No symbol "${name}" found in file "${filePath}"`));
-      }
-    }
-
-    // Disambiguation needed
-    if (matches.length > 1) {
-      this.log(chalk.yellow(`Multiple symbols found with name "${name}":`));
-      this.log('');
-      for (const match of matches) {
-        this.log(`  ${chalk.cyan('--id')} ${match.id}\t${match.kind}\t${match.filePath}:${match.line}`);
-      }
-      this.log('');
-      this.log(chalk.gray('Use --id or --file to disambiguate'));
-      return null;
-    }
-
-    return { id: matches[0].id };
+    });
   }
 
   private outputPlainText(output: PrereqsOutput): void {

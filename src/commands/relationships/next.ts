@@ -1,8 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { IndexDatabase, EnhancedRelationshipContext } from '../../db/database.js';
+import { EnhancedRelationshipContext } from '../../db/database.js';
+import { withDatabase, SymbolResolver, SharedFlags, readSourceAsString } from '../_shared/index.js';
 
 interface EnhancedRelationshipWithSource extends EnhancedRelationshipContext {
   fromSourceCode: string;
@@ -20,11 +19,7 @@ export default class Next extends Command {
   ];
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
+    database: SharedFlags.database,
     from: Flags.string({
       description: 'Filter to relationships from this symbol name',
     }),
@@ -36,10 +31,7 @@ export default class Next extends Command {
       description: 'Number of relationships to show',
       default: 1,
     }),
-    json: Flags.boolean({
-      description: 'Output as JSON',
-      default: false,
-    }),
+    json: SharedFlags.json,
     'max-lines': Flags.integer({
       char: 'm',
       description: 'Maximum lines of source code to show (0 = unlimited)',
@@ -50,42 +42,14 @@ export default class Next extends Command {
   public async run(): Promise<void> {
     const { flags } = await this.parse(Next);
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
-    try {
+    await withDatabase(flags.database, this, async (db) => {
       // Resolve from-id if from is provided
       let fromDefinitionId: number | undefined;
       if (flags.from) {
-        const matches = db.getDefinitionsByName(flags.from);
-        if (matches.length === 0) {
-          this.error(chalk.red(`No symbol found with name "${flags.from}"`));
-        }
-        if (matches.length > 1) {
-          this.log(chalk.yellow(`Multiple symbols found with name "${flags.from}":`));
-          for (const match of matches) {
-            this.log(`  ${chalk.cyan('--from-id')} ${match.id}\t${match.kind}\t${match.filePath}:${match.line}`);
-          }
-          this.log('');
-          this.log(chalk.gray('Use --from-id to disambiguate'));
-          return;
-        }
-        fromDefinitionId = matches[0].id;
+        const resolver = new SymbolResolver(db, this);
+        const resolved = resolver.resolve(flags.from, undefined, undefined, 'from');
+        if (!resolved) return;
+        fromDefinitionId = resolved.id;
       } else if (flags['from-id'] !== undefined) {
         fromDefinitionId = flags['from-id'];
       }
@@ -111,12 +75,12 @@ export default class Next extends Command {
       // Enhance with source code
       const enhancedRelationships: EnhancedRelationshipWithSource[] = [];
       for (const rel of relationships) {
-        const fromSourceCode = await this.readSourceCode(
+        const fromSourceCode = await readSourceAsString(
           rel.fromFilePath,
           rel.fromLine,
           rel.fromEndLine
         );
-        const toSourceCode = await this.readSourceCode(
+        const toSourceCode = await readSourceAsString(
           rel.toFilePath,
           rel.toLine,
           rel.toEndLine
@@ -148,20 +112,7 @@ export default class Next extends Command {
           );
         }
       }
-    } finally {
-      db.close();
-    }
-  }
-
-  private async readSourceCode(filePath: string, startLine: number, endLine: number): Promise<string> {
-    try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const lines = content.split('\n');
-      // Convert to 0-based indexing for array access
-      return lines.slice(startLine - 1, endLine).join('\n');
-    } catch {
-      return '<source code not available>';
-    }
+    });
   }
 
   private outputRelationship(

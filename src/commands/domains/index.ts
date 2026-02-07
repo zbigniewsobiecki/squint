@@ -1,8 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { IndexDatabase } from '../../db/database.js';
+import { withDatabase, SharedFlags } from '../_shared/index.js';
 
 export default class Domains extends Command {
   static override description = 'List all registered domains with symbol counts';
@@ -14,15 +12,8 @@ export default class Domains extends Command {
   ];
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
-    json: Flags.boolean({
-      description: 'Output as JSON',
-      default: false,
-    }),
+    database: SharedFlags.database,
+    json: SharedFlags.json,
     unregistered: Flags.boolean({
       description: 'Show domains in use but not registered',
       default: false,
@@ -32,25 +23,7 @@ export default class Domains extends Command {
   public async run(): Promise<void> {
     const { flags } = await this.parse(Domains);
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
-    try {
+    await withDatabase(flags.database, this, async (db) => {
       if (flags.unregistered) {
         // Show unregistered domains
         const unregistered = db.getUnregisteredDomains();
@@ -95,8 +68,6 @@ export default class Domains extends Command {
         this.log('');
         this.log(chalk.gray(`${domainsWithCounts.length} domain(s) registered`));
       }
-    } finally {
-      db.close();
-    }
+    });
   }
 }
