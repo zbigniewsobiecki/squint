@@ -23,7 +23,10 @@ export default class Set extends Command {
   static override examples = [
     '<%= config.bin %> symbols set purpose "Parse TS files" --name parseFile',
     '<%= config.bin %> symbols set purpose "Main entry point" --id 42',
-    '<%= config.bin %> symbols set status "deprecated" --name MyClass --file src/models/user.ts',
+    '<%= config.bin %> symbols set domain \'["auth", "user"]\' --name loginUser',
+    '<%= config.bin %> symbols set role "controller that handles HTTP requests" --name UserController',
+    '<%= config.bin %> symbols set pure true --name calculateTotal',
+    '<%= config.bin %> symbols set pure false --name saveToDatabase',
     'echo \'[{"name":"foo","value":"desc1"}]\' | <%= config.bin %> symbols set purpose --batch',
   ];
 
@@ -115,6 +118,11 @@ export default class Set extends Command {
       const displayName = defDetails?.name ?? `ID ${definition.id}`;
 
       this.log(`Set ${chalk.cyan(args.key)}="${args.value}" on ${chalk.yellow(displayName)}`);
+
+      // Warn about unregistered domains
+      if (args.key === 'domain') {
+        this.warnUnregisteredDomains(db, args.value);
+      }
     } finally {
       db.close();
     }
@@ -211,6 +219,35 @@ export default class Set extends Command {
       }
     } finally {
       db.close();
+    }
+
+    // Warn about unregistered domains in batch mode
+    if (key === 'domain' && !flags.json) {
+      let db2: IndexDatabase | null = null;
+      try {
+        db2 = new IndexDatabase(dbPath);
+        // Collect all domains from successful entries
+        const allDomainsSet: globalThis.Set<string> = new globalThis.Set();
+        for (const entry of entries) {
+          try {
+            const domains = JSON.parse(entry.value) as string[];
+            if (Array.isArray(domains)) {
+              for (const d of domains) {
+                if (typeof d === 'string') allDomainsSet.add(d);
+              }
+            }
+          } catch { /* skip */ }
+        }
+        const unregistered = Array.from(allDomainsSet).filter((d: string) => !db2!.isDomainRegistered(d));
+        if (unregistered.length > 0) {
+          this.log('');
+          this.log(chalk.yellow(`Warning: ${unregistered.length} unregistered domain(s): ${unregistered.join(', ')}`));
+          this.log(chalk.gray(`Register with: ats domains sync`));
+        }
+      } catch { /* skip warnings if db fails */ }
+      finally {
+        db2?.close();
+      }
     }
 
     // Output results
@@ -334,5 +371,32 @@ export default class Set extends Command {
     }
 
     return { id: matches[0].id };
+  }
+
+  /**
+   * Warn about unregistered domains in a domain value.
+   * The value should be a JSON array of domain names.
+   */
+  private warnUnregisteredDomains(db: IndexDatabase, value: string): void {
+    try {
+      const domains = JSON.parse(value) as string[];
+      if (!Array.isArray(domains)) return;
+
+      const unregistered: string[] = [];
+      for (const domain of domains) {
+        if (typeof domain === 'string' && !db.isDomainRegistered(domain)) {
+          unregistered.push(domain);
+        }
+      }
+
+      if (unregistered.length > 0) {
+        this.log('');
+        this.log(chalk.yellow(`Warning: ${unregistered.length} unregistered domain(s): ${unregistered.join(', ')}`));
+        this.log(chalk.gray(`Register with: ats domains add <name> "<description>"`));
+        this.log(chalk.gray(`Or sync all: ats domains sync`));
+      }
+    } catch {
+      // Value is not valid JSON, skip warning
+    }
   }
 }

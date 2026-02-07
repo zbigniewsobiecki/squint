@@ -15,6 +15,9 @@ export default class Symbols extends Command {
     '<%= config.bin %> symbols -d ./my-index.db',
     '<%= config.bin %> symbols --has purpose',
     '<%= config.bin %> symbols --missing purpose --kind function',
+    '<%= config.bin %> symbols --domain auth',
+    '<%= config.bin %> symbols --pure false',
+    '<%= config.bin %> symbols --domains',
   ];
 
   static override flags = {
@@ -34,6 +37,16 @@ export default class Symbols extends Command {
     }),
     missing: Flags.string({
       description: 'Filter to symbols missing this metadata key',
+    }),
+    domain: Flags.string({
+      description: 'Filter to symbols with this domain tag',
+    }),
+    pure: Flags.string({
+      description: 'Filter by purity (true for pure functions, false for side-effecting)',
+    }),
+    domains: Flags.boolean({
+      description: 'List all unique domains used in the codebase',
+      default: false,
     }),
   };
 
@@ -59,6 +72,60 @@ export default class Symbols extends Command {
     }
 
     try {
+      // Handle --domains flag: list all unique domains
+      if (flags.domains) {
+        const domains = db.getAllDomains();
+        if (domains.length === 0) {
+          this.log(chalk.gray('No domains found. Use `ats symbols set domain \'["tag1", "tag2"]\' --name SymbolName` to add domains.'));
+        } else {
+          this.log('Domains in use:');
+          for (const domain of domains) {
+            const count = db.getSymbolsByDomain(domain).length;
+            this.log(`  ${chalk.cyan(domain)} (${count} symbol${count !== 1 ? 's' : ''})`);
+          }
+        }
+        return;
+      }
+
+      // Handle --domain filter: show symbols with a specific domain
+      if (flags.domain) {
+        const symbols = db.getSymbolsByDomain(flags.domain);
+        if (symbols.length === 0) {
+          this.log(chalk.gray(`No symbols found with domain "${flags.domain}".`));
+        } else {
+          for (const sym of symbols) {
+            const domainsStr = sym.domains.join(', ');
+            const purposeStr = sym.purpose ? ` - ${sym.purpose}` : '';
+            this.log(`${sym.name}\t${sym.kind}\t[${domainsStr}]${purposeStr}`);
+          }
+          this.log('');
+          this.log(chalk.gray(`Found ${symbols.length} symbol(s) with domain "${flags.domain}"`));
+        }
+        return;
+      }
+
+      // Handle --pure filter: show pure or impure symbols
+      if (flags.pure !== undefined) {
+        const isPure = flags.pure === 'true';
+        if (flags.pure !== 'true' && flags.pure !== 'false') {
+          this.error(chalk.red('--pure must be "true" or "false"'));
+        }
+        const symbols = db.getSymbolsByPurity(isPure);
+        if (symbols.length === 0) {
+          this.log(chalk.gray(`No symbols found with pure=${flags.pure}.`));
+        } else {
+          for (const sym of symbols) {
+            const purposeStr = sym.purpose ? ` - ${sym.purpose}` : '';
+            this.log(`${sym.name}\t${sym.kind}\t${sym.filePath}:${sym.line}${purposeStr}`);
+          }
+          this.log('');
+          const label = isPure ? 'pure' : 'side-effecting';
+          this.log(chalk.gray(`Found ${symbols.length} ${label} symbol(s)`));
+        }
+        return;
+      }
+
+      // Default: list all symbols with optional filters
       // Resolve file path if provided
       let fileId: number | null = null;
       if (flags.file) {

@@ -54,6 +54,74 @@ export interface DependencyWithMetadata {
   aspectValue: string | null;
 }
 
+export interface RelationshipAnnotation {
+  id: number;
+  fromDefinitionId: number;
+  toDefinitionId: number;
+  semantic: string;
+  createdAt: string;
+}
+
+export interface RelationshipWithDetails {
+  id: number;
+  fromDefinitionId: number;
+  fromName: string;
+  fromKind: string;
+  fromFilePath: string;
+  fromLine: number;
+  toDefinitionId: number;
+  toName: string;
+  toKind: string;
+  toFilePath: string;
+  toLine: number;
+  semantic: string;
+}
+
+export interface Domain {
+  id: number;
+  name: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface DomainWithCount extends Domain {
+  symbolCount: number;
+}
+
+export interface EnhancedRelationshipContext {
+  // Base relationship info
+  fromDefinitionId: number;
+  fromName: string;
+  fromKind: string;
+  fromFilePath: string;
+  fromLine: number;
+  fromEndLine: number;
+  toDefinitionId: number;
+  toName: string;
+  toKind: string;
+  toFilePath: string;
+  toLine: number;
+  toEndLine: number;
+  // Metadata for from symbol
+  fromPurpose: string | null;
+  fromDomains: string[] | null;
+  fromRole: string | null;
+  fromPure: boolean | null;
+  // Metadata for to symbol
+  toPurpose: string | null;
+  toDomains: string[] | null;
+  toRole: string | null;
+  toPure: boolean | null;
+  // Relationship context
+  relationshipType: 'call' | 'import' | 'extends' | 'implements';
+  usageLine: number;
+  // Other relationships context
+  otherFromRelationships: string[];
+  otherToRelationships: string[];
+  // Domain overlap
+  sharedDomains: string[];
+}
+
 const SCHEMA = `
 -- Metadata about the indexing run
 CREATE TABLE metadata (
@@ -157,6 +225,31 @@ CREATE TABLE definition_metadata (
 
 CREATE INDEX idx_definition_metadata_def ON definition_metadata(definition_id);
 CREATE INDEX idx_definition_metadata_key ON definition_metadata(key);
+
+-- Semantic annotations for relationships between definitions
+CREATE TABLE relationship_annotations (
+  id INTEGER PRIMARY KEY,
+  from_definition_id INTEGER NOT NULL,
+  to_definition_id INTEGER NOT NULL,
+  semantic TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (from_definition_id) REFERENCES definitions(id) ON DELETE CASCADE,
+  FOREIGN KEY (to_definition_id) REFERENCES definitions(id) ON DELETE CASCADE,
+  UNIQUE(from_definition_id, to_definition_id)
+);
+
+CREATE INDEX idx_relationship_annotations_from ON relationship_annotations(from_definition_id);
+CREATE INDEX idx_relationship_annotations_to ON relationship_annotations(to_definition_id);
+
+-- Domain registry for managing business domains
+CREATE TABLE domains (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  description TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_domains_name ON domains(name);
 `;
 
 export function computeHash(content: string): string {
@@ -195,6 +288,8 @@ export class IndexDatabase implements IIndexWriter {
   initialize(): void {
     // Drop all tables if they exist and recreate
     this.db.exec(`
+      DROP TABLE IF EXISTS domains;
+      DROP TABLE IF EXISTS relationship_annotations;
       DROP TABLE IF EXISTS definition_metadata;
       DROP TABLE IF EXISTS usages;
       DROP TABLE IF EXISTS symbols;
@@ -1629,6 +1724,814 @@ export class IndexDatabase implements IIndexWriter {
       totalReady: countResult.totalReady,
       remaining: countResult.totalRemaining - countResult.totalReady,
     };
+  }
+
+  // ============================================
+  // Relationship annotation methods
+  // ============================================
+
+  /**
+   * Set (insert or update) a semantic annotation for a relationship between two definitions.
+   */
+  setRelationshipAnnotation(fromDefinitionId: number, toDefinitionId: number, semantic: string): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO relationship_annotations (from_definition_id, to_definition_id, semantic, created_at)
+      VALUES (?, ?, ?, datetime('now'))
+    `);
+    stmt.run(fromDefinitionId, toDefinitionId, semantic);
+  }
+
+  /**
+   * Get a relationship annotation between two definitions.
+   */
+  getRelationshipAnnotation(fromDefinitionId: number, toDefinitionId: number): RelationshipAnnotation | null {
+    const stmt = this.db.prepare(`
+      SELECT id, from_definition_id as fromDefinitionId, to_definition_id as toDefinitionId,
+             semantic, created_at as createdAt
+      FROM relationship_annotations
+      WHERE from_definition_id = ? AND to_definition_id = ?
+    `);
+    const row = stmt.get(fromDefinitionId, toDefinitionId) as RelationshipAnnotation | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Remove a relationship annotation.
+   */
+  removeRelationshipAnnotation(fromDefinitionId: number, toDefinitionId: number): boolean {
+    const stmt = this.db.prepare(`
+      DELETE FROM relationship_annotations
+      WHERE from_definition_id = ? AND to_definition_id = ?
+    `);
+    const result = stmt.run(fromDefinitionId, toDefinitionId);
+    return result.changes > 0;
+  }
+
+  /**
+   * Get all relationship annotations from a specific definition.
+   */
+  getRelationshipsFrom(fromDefinitionId: number): RelationshipWithDetails[] {
+    const stmt = this.db.prepare(`
+      SELECT
+        ra.id,
+        ra.from_definition_id as fromDefinitionId,
+        fd.name as fromName,
+        fd.kind as fromKind,
+        ff.path as fromFilePath,
+        fd.line as fromLine,
+        ra.to_definition_id as toDefinitionId,
+        td.name as toName,
+        td.kind as toKind,
+        tf.path as toFilePath,
+        td.line as toLine,
+        ra.semantic
+      FROM relationship_annotations ra
+      JOIN definitions fd ON ra.from_definition_id = fd.id
+      JOIN files ff ON fd.file_id = ff.id
+      JOIN definitions td ON ra.to_definition_id = td.id
+      JOIN files tf ON td.file_id = tf.id
+      WHERE ra.from_definition_id = ?
+      ORDER BY td.name
+    `);
+    return stmt.all(fromDefinitionId) as RelationshipWithDetails[];
+  }
+
+  /**
+   * Get all relationship annotations to a specific definition.
+   */
+  getRelationshipsTo(toDefinitionId: number): RelationshipWithDetails[] {
+    const stmt = this.db.prepare(`
+      SELECT
+        ra.id,
+        ra.from_definition_id as fromDefinitionId,
+        fd.name as fromName,
+        fd.kind as fromKind,
+        ff.path as fromFilePath,
+        fd.line as fromLine,
+        ra.to_definition_id as toDefinitionId,
+        td.name as toName,
+        td.kind as toKind,
+        tf.path as toFilePath,
+        td.line as toLine,
+        ra.semantic
+      FROM relationship_annotations ra
+      JOIN definitions fd ON ra.from_definition_id = fd.id
+      JOIN files ff ON fd.file_id = ff.id
+      JOIN definitions td ON ra.to_definition_id = td.id
+      JOIN files tf ON td.file_id = tf.id
+      WHERE ra.to_definition_id = ?
+      ORDER BY fd.name
+    `);
+    return stmt.all(toDefinitionId) as RelationshipWithDetails[];
+  }
+
+  /**
+   * Get all relationship annotations.
+   */
+  getAllRelationshipAnnotations(options?: { limit?: number }): RelationshipWithDetails[] {
+    const limit = options?.limit ?? 100;
+    const stmt = this.db.prepare(`
+      SELECT
+        ra.id,
+        ra.from_definition_id as fromDefinitionId,
+        fd.name as fromName,
+        fd.kind as fromKind,
+        ff.path as fromFilePath,
+        fd.line as fromLine,
+        ra.to_definition_id as toDefinitionId,
+        td.name as toName,
+        td.kind as toKind,
+        tf.path as toFilePath,
+        td.line as toLine,
+        ra.semantic
+      FROM relationship_annotations ra
+      JOIN definitions fd ON ra.from_definition_id = fd.id
+      JOIN files ff ON fd.file_id = ff.id
+      JOIN definitions td ON ra.to_definition_id = td.id
+      JOIN files tf ON td.file_id = tf.id
+      ORDER BY ff.path, fd.line
+      LIMIT ?
+    `);
+    return stmt.all(limit) as RelationshipWithDetails[];
+  }
+
+  /**
+   * Get count of relationship annotations.
+   */
+  getRelationshipAnnotationCount(): number {
+    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM relationship_annotations');
+    const row = stmt.get() as { count: number };
+    return row.count;
+  }
+
+  /**
+   * Get definitions that have calls to other definitions but no annotation.
+   * Finds "call" edges without semantic annotations.
+   */
+  getUnannotatedRelationships(options?: { limit?: number; fromDefinitionId?: number }): Array<{
+    fromDefinitionId: number;
+    fromName: string;
+    fromKind: string;
+    fromFilePath: string;
+    fromLine: number;
+    toDefinitionId: number;
+    toName: string;
+    toKind: string;
+    toFilePath: string;
+    toLine: number;
+  }> {
+    const limit = options?.limit ?? 20;
+
+    let whereClause = '';
+    const params: (string | number)[] = [];
+
+    if (options?.fromDefinitionId !== undefined) {
+      whereClause = 'WHERE source.id = ?';
+      params.push(options.fromDefinitionId);
+    }
+
+    const sql = `
+      SELECT DISTINCT
+        source.id as fromDefinitionId,
+        source.name as fromName,
+        source.kind as fromKind,
+        sf.path as fromFilePath,
+        source.line as fromLine,
+        dep_def.id as toDefinitionId,
+        dep_def.name as toName,
+        dep_def.kind as toKind,
+        df.path as toFilePath,
+        dep_def.line as toLine
+      FROM definitions source
+      JOIN files sf ON source.file_id = sf.id
+      JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+      JOIN symbols s ON u.symbol_id = s.id
+      JOIN definitions dep_def ON s.definition_id = dep_def.id
+      JOIN files df ON dep_def.file_id = df.id
+      LEFT JOIN relationship_annotations ra
+        ON ra.from_definition_id = source.id AND ra.to_definition_id = dep_def.id
+      ${whereClause}
+        ${whereClause ? 'AND' : 'WHERE'} dep_def.id != source.id
+        AND ra.id IS NULL
+        AND (
+          s.reference_id IN (SELECT id FROM imports WHERE from_file_id = source.file_id)
+          OR s.file_id = source.file_id
+        )
+      ORDER BY sf.path, source.line
+      LIMIT ?
+    `;
+    params.push(limit);
+
+    const stmt = this.db.prepare(sql);
+    return stmt.all(...params) as Array<{
+      fromDefinitionId: number;
+      fromName: string;
+      fromKind: string;
+      fromFilePath: string;
+      fromLine: number;
+      toDefinitionId: number;
+      toName: string;
+      toKind: string;
+      toFilePath: string;
+      toLine: number;
+    }>;
+  }
+
+  /**
+   * Get symbols that have a specific domain tag.
+   * Domain is stored as a JSON array in the 'domain' metadata key.
+   */
+  getSymbolsByDomain(domain: string): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    line: number;
+    domains: string[];
+    purpose: string | null;
+  }> {
+    // Use LIKE with JSON pattern to find domain in the array
+    const pattern = `%"${domain}"%`;
+    const stmt = this.db.prepare(`
+      SELECT
+        d.id,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        d.line,
+        dm_domain.value as domains,
+        dm_purpose.value as purpose
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      JOIN definition_metadata dm_domain ON dm_domain.definition_id = d.id AND dm_domain.key = 'domain'
+      LEFT JOIN definition_metadata dm_purpose ON dm_purpose.definition_id = d.id AND dm_purpose.key = 'purpose'
+      WHERE dm_domain.value LIKE ?
+      ORDER BY f.path, d.line
+    `);
+    const rows = stmt.all(pattern) as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      line: number;
+      domains: string;
+      purpose: string | null;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      filePath: row.filePath,
+      line: row.line,
+      domains: JSON.parse(row.domains) as string[],
+      purpose: row.purpose,
+    }));
+  }
+
+  /**
+   * Get all unique domains used across all symbols.
+   */
+  getAllDomains(): string[] {
+    const stmt = this.db.prepare(`
+      SELECT value FROM definition_metadata WHERE key = 'domain'
+    `);
+    const rows = stmt.all() as Array<{ value: string }>;
+
+    const domains = new Set<string>();
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.value) as string[];
+        for (const d of parsed) {
+          domains.add(d);
+        }
+      } catch {
+        // Skip invalid JSON
+      }
+    }
+    return Array.from(domains).sort();
+  }
+
+  /**
+   * Get symbols filtered by purity (pure = no side effects).
+   * Returns symbols where 'pure' metadata matches the specified value.
+   */
+  getSymbolsByPurity(isPure: boolean): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    line: number;
+    purpose: string | null;
+  }> {
+    const pureValue = isPure ? 'true' : 'false';
+    const stmt = this.db.prepare(`
+      SELECT
+        d.id,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        d.line,
+        dm_purpose.value as purpose
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      JOIN definition_metadata dm_pure ON dm_pure.definition_id = d.id AND dm_pure.key = 'pure'
+      LEFT JOIN definition_metadata dm_purpose ON dm_purpose.definition_id = d.id AND dm_purpose.key = 'purpose'
+      WHERE dm_pure.value = ?
+      ORDER BY f.path, d.line
+    `);
+    return stmt.all(pureValue) as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      line: number;
+      purpose: string | null;
+    }>;
+  }
+
+  // ============================================
+  // Domain registry methods
+  // ============================================
+
+  /**
+   * Ensure the domains table exists (for existing databases).
+   * Called automatically by domain methods to support legacy databases.
+   */
+  private ensureDomainsTable(): void {
+    const tableExists = this.db.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='domains'
+    `).get();
+
+    if (!tableExists) {
+      this.db.exec(`
+        CREATE TABLE domains (
+          id INTEGER PRIMARY KEY,
+          name TEXT UNIQUE NOT NULL,
+          description TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_domains_name ON domains(name);
+      `);
+    }
+  }
+
+  /**
+   * Add a new domain to the registry.
+   * @returns The domain ID if created, or null if already exists.
+   */
+  addDomain(name: string, description?: string): number | null {
+    this.ensureDomainsTable();
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO domains (name, description) VALUES (?, ?)
+      `);
+      const result = stmt.run(name, description ?? null);
+      return result.lastInsertRowid as number;
+    } catch (error) {
+      // Domain already exists (UNIQUE constraint)
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Get a domain by name.
+   */
+  getDomain(name: string): Domain | null {
+    this.ensureDomainsTable();
+    const stmt = this.db.prepare(`
+      SELECT id, name, description, created_at as createdAt
+      FROM domains WHERE name = ?
+    `);
+    const row = stmt.get(name) as Domain | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Get all domains from the registry.
+   */
+  getDomainsFromRegistry(): Domain[] {
+    this.ensureDomainsTable();
+    const stmt = this.db.prepare(`
+      SELECT id, name, description, created_at as createdAt
+      FROM domains ORDER BY name
+    `);
+    return stmt.all() as Domain[];
+  }
+
+  /**
+   * Get all domains with their symbol counts.
+   */
+  getDomainsWithCounts(): DomainWithCount[] {
+    this.ensureDomainsTable();
+
+    // Get all registered domains
+    const domains = this.getDomainsFromRegistry();
+
+    // Get all domain values from metadata
+    const metadataStmt = this.db.prepare(`
+      SELECT value FROM definition_metadata WHERE key = 'domain'
+    `);
+    const rows = metadataStmt.all() as Array<{ value: string }>;
+
+    // Count symbols per domain
+    const domainCounts = new Map<string, number>();
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.value) as string[];
+        for (const d of parsed) {
+          domainCounts.set(d, (domainCounts.get(d) || 0) + 1);
+        }
+      } catch {
+        // Skip invalid JSON
+      }
+    }
+
+    return domains.map(domain => ({
+      ...domain,
+      symbolCount: domainCounts.get(domain.name) || 0,
+    }));
+  }
+
+  /**
+   * Update a domain's description.
+   */
+  updateDomainDescription(name: string, description: string): boolean {
+    this.ensureDomainsTable();
+    const stmt = this.db.prepare(`
+      UPDATE domains SET description = ? WHERE name = ?
+    `);
+    const result = stmt.run(description, name);
+    return result.changes > 0;
+  }
+
+  /**
+   * Rename a domain in both the registry and all symbol metadata.
+   * @returns Number of symbols updated.
+   */
+  renameDomain(oldName: string, newName: string): { updated: boolean; symbolsUpdated: number } {
+    this.ensureDomainsTable();
+
+    // Update registry
+    const updateRegistry = this.db.prepare(`
+      UPDATE domains SET name = ? WHERE name = ?
+    `);
+    const registryResult = updateRegistry.run(newName, oldName);
+
+    // Update all symbol metadata
+    const getMetadata = this.db.prepare(`
+      SELECT id, definition_id, value FROM definition_metadata WHERE key = 'domain'
+    `);
+    const rows = getMetadata.all() as Array<{ id: number; definition_id: number; value: string }>;
+
+    let symbolsUpdated = 0;
+    const updateMetadata = this.db.prepare(`
+      UPDATE definition_metadata SET value = ? WHERE id = ?
+    `);
+
+    for (const row of rows) {
+      try {
+        const domains = JSON.parse(row.value) as string[];
+        const idx = domains.indexOf(oldName);
+        if (idx !== -1) {
+          domains[idx] = newName;
+          updateMetadata.run(JSON.stringify(domains), row.id);
+          symbolsUpdated++;
+        }
+      } catch {
+        // Skip invalid JSON
+      }
+    }
+
+    return {
+      updated: registryResult.changes > 0,
+      symbolsUpdated,
+    };
+  }
+
+  /**
+   * Merge one domain into another. The source domain is removed from all symbols
+   * and replaced with the target domain.
+   * @returns Number of symbols updated.
+   */
+  mergeDomains(fromName: string, intoName: string): { symbolsUpdated: number; registryRemoved: boolean } {
+    this.ensureDomainsTable();
+
+    // Update all symbol metadata
+    const getMetadata = this.db.prepare(`
+      SELECT id, definition_id, value FROM definition_metadata WHERE key = 'domain'
+    `);
+    const rows = getMetadata.all() as Array<{ id: number; definition_id: number; value: string }>;
+
+    let symbolsUpdated = 0;
+    const updateMetadata = this.db.prepare(`
+      UPDATE definition_metadata SET value = ? WHERE id = ?
+    `);
+
+    for (const row of rows) {
+      try {
+        const domains = JSON.parse(row.value) as string[];
+        const fromIdx = domains.indexOf(fromName);
+        if (fromIdx !== -1) {
+          // Remove the old domain
+          domains.splice(fromIdx, 1);
+          // Add the new domain if not already present
+          if (!domains.includes(intoName)) {
+            domains.push(intoName);
+          }
+          updateMetadata.run(JSON.stringify(domains.sort()), row.id);
+          symbolsUpdated++;
+        }
+      } catch {
+        // Skip invalid JSON
+      }
+    }
+
+    // Remove the source domain from registry
+    const removeRegistry = this.db.prepare(`
+      DELETE FROM domains WHERE name = ?
+    `);
+    const registryResult = removeRegistry.run(fromName);
+
+    return {
+      symbolsUpdated,
+      registryRemoved: registryResult.changes > 0,
+    };
+  }
+
+  /**
+   * Remove a domain from the registry.
+   * @param force If true, removes even if symbols still use this domain.
+   * @returns Object with removed status and count of symbols still using the domain.
+   */
+  removeDomain(name: string, force = false): { removed: boolean; symbolsUsingDomain: number } {
+    this.ensureDomainsTable();
+
+    // Count symbols using this domain
+    const symbolsUsingDomain = this.getSymbolsByDomain(name).length;
+
+    if (symbolsUsingDomain > 0 && !force) {
+      return { removed: false, symbolsUsingDomain };
+    }
+
+    // Remove from registry
+    const stmt = this.db.prepare(`
+      DELETE FROM domains WHERE name = ?
+    `);
+    const result = stmt.run(name);
+
+    return {
+      removed: result.changes > 0,
+      symbolsUsingDomain,
+    };
+  }
+
+  /**
+   * Sync all domains currently in use to the registry.
+   * Registers any domain found in symbol metadata that isn't already registered.
+   * @returns Array of newly registered domain names.
+   */
+  syncDomainsFromMetadata(): string[] {
+    this.ensureDomainsTable();
+
+    // Get all unique domains from metadata
+    const domainsInUse = this.getAllDomains();
+
+    // Get registered domains
+    const registeredDomains = new Set(this.getDomainsFromRegistry().map(d => d.name));
+
+    // Register any missing domains
+    const newlyRegistered: string[] = [];
+    for (const domain of domainsInUse) {
+      if (!registeredDomains.has(domain)) {
+        const id = this.addDomain(domain);
+        if (id !== null) {
+          newlyRegistered.push(domain);
+        }
+      }
+    }
+
+    return newlyRegistered;
+  }
+
+  /**
+   * Get all unregistered domains currently in use.
+   */
+  getUnregisteredDomains(): string[] {
+    this.ensureDomainsTable();
+    const domainsInUse = this.getAllDomains();
+    const registeredDomains = new Set(this.getDomainsFromRegistry().map(d => d.name));
+    return domainsInUse.filter(d => !registeredDomains.has(d));
+  }
+
+  /**
+   * Check if a domain is registered.
+   */
+  isDomainRegistered(name: string): boolean {
+    this.ensureDomainsTable();
+    const stmt = this.db.prepare(`
+      SELECT 1 FROM domains WHERE name = ?
+    `);
+    return stmt.get(name) !== undefined;
+  }
+
+  // ============================================
+  // Enhanced relationship methods
+  // ============================================
+
+  /**
+   * Get the next relationship(s) that need annotation with rich context.
+   * Returns relationships ordered by: symbols with most dependencies first,
+   * then by file path and line number.
+   */
+  getNextRelationshipToAnnotate(options?: {
+    limit?: number;
+    fromDefinitionId?: number;
+  }): EnhancedRelationshipContext[] {
+    const limit = options?.limit ?? 1;
+
+    let whereClause = '';
+    const params: (string | number)[] = [];
+
+    if (options?.fromDefinitionId !== undefined) {
+      whereClause = 'WHERE source.id = ?';
+      params.push(options.fromDefinitionId);
+    }
+
+    // Get unannotated relationships with basic info
+    const sql = `
+      SELECT DISTINCT
+        source.id as fromDefinitionId,
+        source.name as fromName,
+        source.kind as fromKind,
+        sf.path as fromFilePath,
+        source.line as fromLine,
+        source.end_line as fromEndLine,
+        dep_def.id as toDefinitionId,
+        dep_def.name as toName,
+        dep_def.kind as toKind,
+        df.path as toFilePath,
+        dep_def.line as toLine,
+        dep_def.end_line as toEndLine,
+        u.line as usageLine
+      FROM definitions source
+      JOIN files sf ON source.file_id = sf.id
+      JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+      JOIN symbols s ON u.symbol_id = s.id
+      JOIN definitions dep_def ON s.definition_id = dep_def.id
+      JOIN files df ON dep_def.file_id = df.id
+      LEFT JOIN relationship_annotations ra
+        ON ra.from_definition_id = source.id AND ra.to_definition_id = dep_def.id
+      ${whereClause}
+        ${whereClause ? 'AND' : 'WHERE'} dep_def.id != source.id
+        AND ra.id IS NULL
+        AND (
+          s.reference_id IN (SELECT id FROM imports WHERE from_file_id = source.file_id)
+          OR s.file_id = source.file_id
+        )
+      ORDER BY sf.path, source.line
+      LIMIT ?
+    `;
+    params.push(limit);
+
+    const stmt = this.db.prepare(sql);
+    const rows = stmt.all(...params) as Array<{
+      fromDefinitionId: number;
+      fromName: string;
+      fromKind: string;
+      fromFilePath: string;
+      fromLine: number;
+      fromEndLine: number;
+      toDefinitionId: number;
+      toName: string;
+      toKind: string;
+      toFilePath: string;
+      toLine: number;
+      toEndLine: number;
+      usageLine: number;
+    }>;
+
+    // Enhance each relationship with metadata and context
+    const results: EnhancedRelationshipContext[] = [];
+
+    for (const row of rows) {
+      // Get metadata for both symbols
+      const fromMeta = this.getDefinitionMetadata(row.fromDefinitionId);
+      const toMeta = this.getDefinitionMetadata(row.toDefinitionId);
+
+      // Parse domains
+      let fromDomains: string[] | null = null;
+      let toDomains: string[] | null = null;
+      try {
+        if (fromMeta['domain']) {
+          fromDomains = JSON.parse(fromMeta['domain']) as string[];
+        }
+      } catch { /* ignore */ }
+      try {
+        if (toMeta['domain']) {
+          toDomains = JSON.parse(toMeta['domain']) as string[];
+        }
+      } catch { /* ignore */ }
+
+      // Calculate shared domains
+      const sharedDomains: string[] = [];
+      if (fromDomains && toDomains) {
+        for (const d of fromDomains) {
+          if (toDomains.includes(d)) {
+            sharedDomains.push(d);
+          }
+        }
+      }
+
+      // Get other relationships from source (what else does source call?)
+      const otherFromRels = this.getDefinitionDependencies(row.fromDefinitionId)
+        .filter(d => d.dependencyId !== row.toDefinitionId)
+        .map(d => d.name);
+
+      // Get other relationships to target (what else calls target?)
+      const otherToRelsStmt = this.db.prepare(`
+        SELECT DISTINCT source.name
+        FROM definitions source
+        JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+        JOIN symbols s ON u.symbol_id = s.id
+        WHERE s.definition_id = ?
+          AND source.id != ?
+          AND (
+            s.reference_id IN (SELECT id FROM imports WHERE from_file_id = source.file_id)
+            OR s.file_id = source.file_id
+          )
+        ORDER BY source.name
+        LIMIT 10
+      `);
+      const otherToRels = otherToRelsStmt.all(row.toDefinitionId, row.fromDefinitionId) as Array<{ name: string }>;
+
+      results.push({
+        fromDefinitionId: row.fromDefinitionId,
+        fromName: row.fromName,
+        fromKind: row.fromKind,
+        fromFilePath: row.fromFilePath,
+        fromLine: row.fromLine,
+        fromEndLine: row.fromEndLine,
+        toDefinitionId: row.toDefinitionId,
+        toName: row.toName,
+        toKind: row.toKind,
+        toFilePath: row.toFilePath,
+        toLine: row.toLine,
+        toEndLine: row.toEndLine,
+        fromPurpose: fromMeta['purpose'] ?? null,
+        fromDomains,
+        fromRole: fromMeta['role'] ?? null,
+        fromPure: fromMeta['pure'] ? fromMeta['pure'] === 'true' : null,
+        toPurpose: toMeta['purpose'] ?? null,
+        toDomains,
+        toRole: toMeta['role'] ?? null,
+        toPure: toMeta['pure'] ? toMeta['pure'] === 'true' : null,
+        relationshipType: 'call', // Default to call for now
+        usageLine: row.usageLine,
+        otherFromRelationships: otherFromRels.slice(0, 10),
+        otherToRelationships: otherToRels.map(r => r.name),
+        sharedDomains,
+      });
+    }
+
+    return results;
+  }
+
+  /**
+   * Get count of unannotated relationships.
+   */
+  getUnannotatedRelationshipCount(fromDefinitionId?: number): number {
+    let whereClause = '';
+    const params: (string | number)[] = [];
+
+    if (fromDefinitionId !== undefined) {
+      whereClause = 'WHERE source.id = ?';
+      params.push(fromDefinitionId);
+    }
+
+    const sql = `
+      SELECT COUNT(DISTINCT source.id || '-' || dep_def.id) as count
+      FROM definitions source
+      JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+      JOIN symbols s ON u.symbol_id = s.id
+      JOIN definitions dep_def ON s.definition_id = dep_def.id
+      LEFT JOIN relationship_annotations ra
+        ON ra.from_definition_id = source.id AND ra.to_definition_id = dep_def.id
+      ${whereClause}
+        ${whereClause ? 'AND' : 'WHERE'} dep_def.id != source.id
+        AND ra.id IS NULL
+        AND (
+          s.reference_id IN (SELECT id FROM imports WHERE from_file_id = source.file_id)
+          OR s.file_id = source.file_id
+        )
+    `;
+
+    const stmt = this.db.prepare(sql);
+    const row = stmt.get(...params) as { count: number };
+    return row.count;
   }
 
   close(): void {
