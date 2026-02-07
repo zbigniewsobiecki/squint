@@ -38,8 +38,8 @@ function createMockIndexWriter(): IIndexWriter & {
       calls.push({ method: 'insertReference', args: [fromFileId, toFileId, ref] });
       return ++refIdCounter;
     }),
-    insertSymbol: vi.fn((refId, defId, sym) => {
-      calls.push({ method: 'insertSymbol', args: [refId, defId, sym] });
+    insertSymbol: vi.fn((refId, defId, sym, fileId) => {
+      calls.push({ method: 'insertSymbol', args: [refId, defId, sym, fileId] });
       return ++symbolIdCounter;
     }),
     insertUsage: vi.fn((symbolId, usage) => {
@@ -52,6 +52,9 @@ function createMockIndexWriter(): IIndexWriter & {
     getDefinitionCount: vi.fn(() => defIdCounter),
     getReferenceCount: vi.fn(() => refIdCounter),
     getUsageCount: vi.fn(() => usageCounter),
+    getCallsites: vi.fn(() => []),
+    getCallsitesForFile: vi.fn(() => []),
+    getCallsiteCount: vi.fn(() => 0),
     close: vi.fn(() => {
       calls.push({ method: 'close', args: [] });
     }),
@@ -88,6 +91,7 @@ describe('indexParsedFiles', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
         definitions: [],
         references: [],
+        internalUsages: [],
       }],
     ]);
 
@@ -119,6 +123,7 @@ describe('indexParsedFiles', () => {
           },
         ],
         references: [],
+        internalUsages: [],
       }],
     ]);
 
@@ -160,6 +165,7 @@ describe('indexParsedFiles', () => {
             position: { row: 0, column: 0 },
           },
         ],
+        internalUsages: [],
       }],
       ['/project/utils.ts', {
         language: 'typescript',
@@ -177,6 +183,7 @@ describe('indexParsedFiles', () => {
           },
         ],
         references: [],
+        internalUsages: [],
       }],
     ]);
 
@@ -213,6 +220,7 @@ describe('indexParsedFiles', () => {
           },
         ],
         references: [],
+        internalUsages: [],
       }],
     ]);
 
@@ -241,6 +249,7 @@ describe('indexParsedFiles', () => {
           },
         ],
         references: [],
+        internalUsages: [],
       }],
       ['/project/index.ts', {
         language: 'typescript',
@@ -266,6 +275,7 @@ describe('indexParsedFiles', () => {
             position: { row: 0, column: 0 },
           },
         ],
+        internalUsages: [],
       }],
     ]);
 
@@ -310,6 +320,7 @@ describe('indexParsedFiles', () => {
             position: { row: 0, column: 0 },
           },
         ],
+        internalUsages: [],
       }],
     ]);
 

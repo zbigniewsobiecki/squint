@@ -28,7 +28,8 @@ export function indexParsedFiles(
 
   // First pass: Insert all files and their definitions
   const fileIdMap = new Map<string, number>();
-  const definitionMap = new Map<string, Map<string, number>>(); // filePath -> (name -> defId)
+  const definitionMap = new Map<string, Map<string, number>>(); // filePath -> (name -> defId) for exported
+  const allDefinitionMap = new Map<string, Map<string, number>>(); // filePath -> (name -> defId) for all
 
   for (const [filePath, parsed] of parsedFiles) {
     const fileId = db.insertFile({
@@ -42,13 +43,16 @@ export function indexParsedFiles(
 
     // Insert definitions for this file
     const defMap = new Map<string, number>();
+    const allDefMap = new Map<string, number>();
     for (const def of parsed.definitions) {
       const defId = db.insertDefinition(fileId, def);
+      allDefMap.set(def.name, defId);
       if (def.isExported) {
         defMap.set(def.name, defId);
       }
     }
     definitionMap.set(filePath, defMap);
+    allDefinitionMap.set(filePath, allDefMap);
   }
 
   // Second pass: Insert references and link symbols to definitions
@@ -97,6 +101,35 @@ export function indexParsedFiles(
         for (const usage of sym.usages) {
           db.insertUsage(symbolId, usage);
         }
+      }
+    }
+  }
+
+  // Third pass: Insert internal usages (same-file calls)
+  for (const [filePath, parsed] of parsedFiles) {
+    const fileId = fileIdMap.get(filePath)!;
+    const allDefMap = allDefinitionMap.get(filePath);
+
+    for (const internalUsage of parsed.internalUsages) {
+      // Find the definition ID for this symbol
+      const defId = allDefMap?.get(internalUsage.definitionName) ?? null;
+
+      // Create a symbol entry for internal usage (no reference_id, has file_id)
+      const symbolId = db.insertSymbol(
+        null, // no reference_id
+        defId,
+        {
+          name: internalUsage.definitionName,
+          localName: internalUsage.definitionName,
+          kind: 'named',
+          usages: internalUsage.usages,
+        },
+        fileId // file_id for internal symbols
+      );
+
+      // Insert usages for this internal symbol
+      for (const usage of internalUsage.usages) {
+        db.insertUsage(symbolId, usage);
       }
     }
   }

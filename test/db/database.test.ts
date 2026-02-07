@@ -528,6 +528,509 @@ describe('IndexDatabase', () => {
     });
   });
 
+  describe('definition metadata', () => {
+    it('sets and gets metadata on a definition', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defId = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      db.setDefinitionMetadata(defId, 'purpose', 'Adds two numbers');
+      db.setDefinitionMetadata(defId, 'status', 'stable');
+
+      const metadata = db.getDefinitionMetadata(defId);
+      expect(metadata).toEqual({
+        purpose: 'Adds two numbers',
+        status: 'stable',
+      });
+    });
+
+    it('returns empty object when no metadata exists', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defId = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const metadata = db.getDefinitionMetadata(defId);
+      expect(metadata).toEqual({});
+    });
+
+    it('overwrites existing metadata key', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defId = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      db.setDefinitionMetadata(defId, 'status', 'draft');
+      db.setDefinitionMetadata(defId, 'status', 'stable');
+
+      const metadata = db.getDefinitionMetadata(defId);
+      expect(metadata.status).toBe('stable');
+    });
+
+    it('removes metadata key', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defId = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      db.setDefinitionMetadata(defId, 'purpose', 'Adds numbers');
+      db.setDefinitionMetadata(defId, 'status', 'stable');
+
+      const removed = db.removeDefinitionMetadata(defId, 'purpose');
+      expect(removed).toBe(true);
+
+      const metadata = db.getDefinitionMetadata(defId);
+      expect(metadata).toEqual({ status: 'stable' });
+    });
+
+    it('returns false when removing non-existent key', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defId = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const removed = db.removeDefinitionMetadata(defId, 'nonexistent');
+      expect(removed).toBe(false);
+    });
+
+    it('gets definitions with a specific metadata key', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const def1 = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const def2 = db.insertDefinition(fileId, {
+        name: 'subtract',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 3, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const def3 = db.insertDefinition(fileId, {
+        name: 'multiply',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 8, column: 1 },
+      });
+
+      db.setDefinitionMetadata(def1, 'documented', 'yes');
+      db.setDefinitionMetadata(def3, 'documented', 'yes');
+
+      const withDocumented = db.getDefinitionsWithMetadata('documented');
+      expect(withDocumented.sort()).toEqual([def1, def3].sort());
+    });
+
+    it('gets definitions without a specific metadata key', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const def1 = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const def2 = db.insertDefinition(fileId, {
+        name: 'subtract',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 3, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const def3 = db.insertDefinition(fileId, {
+        name: 'multiply',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 8, column: 1 },
+      });
+
+      db.setDefinitionMetadata(def1, 'documented', 'yes');
+
+      const withoutDocumented = db.getDefinitionsWithoutMetadata('documented');
+      expect(withoutDocumented.sort()).toEqual([def2, def3].sort());
+    });
+
+    it('returns empty array when no definitions have the metadata key', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const withKey = db.getDefinitionsWithMetadata('nonexistent');
+      expect(withKey).toEqual([]);
+    });
+
+    it('returns all definitions when none have the metadata key', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const def1 = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const def2 = db.insertDefinition(fileId, {
+        name: 'subtract',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 3, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const withoutKey = db.getDefinitionsWithoutMetadata('nonexistent');
+      expect(withoutKey.sort()).toEqual([def1, def2].sort());
+    });
+
+    it('keeps metadata isolated between definitions', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const def1 = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const def2 = db.insertDefinition(fileId, {
+        name: 'subtract',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 3, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      db.setDefinitionMetadata(def1, 'purpose', 'Add numbers');
+      db.setDefinitionMetadata(def2, 'purpose', 'Subtract numbers');
+
+      expect(db.getDefinitionMetadata(def1).purpose).toBe('Add numbers');
+      expect(db.getDefinitionMetadata(def2).purpose).toBe('Subtract numbers');
+    });
+
+    it('getMetadataKeys returns all unique metadata keys', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const def1 = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const def2 = db.insertDefinition(fileId, {
+        name: 'subtract',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 3, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      db.setDefinitionMetadata(def1, 'purpose', 'Add numbers');
+      db.setDefinitionMetadata(def1, 'owner', 'team-a');
+      db.setDefinitionMetadata(def2, 'purpose', 'Subtract numbers');
+      db.setDefinitionMetadata(def2, 'status', 'stable');
+
+      const keys = db.getMetadataKeys();
+      expect(keys.sort()).toEqual(['owner', 'purpose', 'status']);
+    });
+
+    it('getMetadataKeys returns empty array when no metadata exists', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const keys = db.getMetadataKeys();
+      expect(keys).toEqual([]);
+    });
+
+    it('getAspectCoverage returns coverage stats for all aspects', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const def1 = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const def2 = db.insertDefinition(fileId, {
+        name: 'subtract',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 3, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const def3 = db.insertDefinition(fileId, {
+        name: 'multiply',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 8, column: 1 },
+      });
+
+      // Set metadata: purpose on 2/3, owner on 1/3
+      db.setDefinitionMetadata(def1, 'purpose', 'Add numbers');
+      db.setDefinitionMetadata(def2, 'purpose', 'Subtract numbers');
+      db.setDefinitionMetadata(def1, 'owner', 'team-a');
+
+      const coverage = db.getAspectCoverage();
+      expect(coverage).toHaveLength(2);
+
+      const purposeCoverage = coverage.find(c => c.aspect === 'purpose');
+      expect(purposeCoverage).toBeDefined();
+      expect(purposeCoverage!.covered).toBe(2);
+      expect(purposeCoverage!.total).toBe(3);
+      expect(purposeCoverage!.percentage).toBeCloseTo(66.7, 1);
+
+      const ownerCoverage = coverage.find(c => c.aspect === 'owner');
+      expect(ownerCoverage).toBeDefined();
+      expect(ownerCoverage!.covered).toBe(1);
+      expect(ownerCoverage!.total).toBe(3);
+      expect(ownerCoverage!.percentage).toBeCloseTo(33.3, 1);
+    });
+
+    it('getAspectCoverage returns empty array when no definitions exist', () => {
+      const coverage = db.getAspectCoverage();
+      expect(coverage).toEqual([]);
+    });
+
+    it('getAspectCoverage filters by kind', () => {
+      const fileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const func1 = db.insertDefinition(fileId, {
+        name: 'add',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const class1 = db.insertDefinition(fileId, {
+        name: 'Calculator',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        position: { row: 3, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+
+      db.setDefinitionMetadata(func1, 'purpose', 'Add numbers');
+      db.setDefinitionMetadata(class1, 'purpose', 'Calculator class');
+
+      // Filter to only functions
+      const coverage = db.getAspectCoverage({ kind: 'function' });
+      expect(coverage).toHaveLength(1);
+      expect(coverage[0].covered).toBe(1);
+      expect(coverage[0].total).toBe(1);
+      expect(coverage[0].percentage).toBe(100);
+    });
+
+    it('getAspectCoverage filters by file pattern', () => {
+      const file1 = db.insertFile({
+        path: '/project/src/parser/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('content1'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const file2 = db.insertFile({
+        path: '/project/src/db/database.ts',
+        language: 'typescript',
+        contentHash: computeHash('content2'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const def1 = db.insertDefinition(file1, {
+        name: 'parseFile',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const def2 = db.insertDefinition(file2, {
+        name: 'insertRow',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      db.setDefinitionMetadata(def1, 'purpose', 'Parse files');
+      db.setDefinitionMetadata(def2, 'purpose', 'Insert database row');
+
+      // Filter to parser directory
+      const coverage = db.getAspectCoverage({ filePattern: 'parser' });
+      expect(coverage).toHaveLength(1);
+      expect(coverage[0].covered).toBe(1);
+      expect(coverage[0].total).toBe(1);
+      expect(coverage[0].percentage).toBe(100);
+    });
+  });
+
   describe('inheritance queries', () => {
     it('stores and retrieves class extends relationship', () => {
       const fileId = db.insertFile({

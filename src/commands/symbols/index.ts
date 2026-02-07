@@ -13,6 +13,8 @@ export default class Symbols extends Command {
     '<%= config.bin %> symbols --kind class',
     '<%= config.bin %> symbols --file src/index.ts',
     '<%= config.bin %> symbols -d ./my-index.db',
+    '<%= config.bin %> symbols --has purpose',
+    '<%= config.bin %> symbols --missing purpose --kind function',
   ];
 
   static override flags = {
@@ -26,6 +28,12 @@ export default class Symbols extends Command {
     }),
     file: Flags.string({
       description: 'Filter to symbols in a specific file',
+    }),
+    has: Flags.string({
+      description: 'Filter to symbols with this metadata key',
+    }),
+    missing: Flags.string({
+      description: 'Filter to symbols missing this metadata key',
     }),
   };
 
@@ -61,10 +69,20 @@ export default class Symbols extends Command {
         }
       }
 
-      const symbols = db.getSymbols({
+      let symbols = db.getSymbols({
         kind: flags.kind,
         fileId: fileId ?? undefined,
       });
+
+      // Apply metadata filters
+      if (flags.has) {
+        const idsWithKey = new Set(db.getDefinitionsWithMetadata(flags.has));
+        symbols = symbols.filter(sym => idsWithKey.has(sym.id));
+      }
+      if (flags.missing) {
+        const idsWithoutKey = new Set(db.getDefinitionsWithoutMetadata(flags.missing));
+        symbols = symbols.filter(sym => idsWithoutKey.has(sym.id));
+      }
 
       if (symbols.length === 0) {
         this.log(chalk.gray('No symbols found.'));

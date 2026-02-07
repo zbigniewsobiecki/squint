@@ -1,6 +1,7 @@
 import type { SyntaxNode } from 'tree-sitter';
 import path from 'node:path';
 import fs from 'node:fs';
+import type { Definition } from './definition-extractor.js';
 
 export interface CallsiteMetadata {
   argumentCount: number;
@@ -776,4 +777,49 @@ export function extractReferences(
 
   walk(rootNode);
   return references;
+}
+
+/**
+ * Internal symbol usage - for tracking calls to local definitions within the same file
+ */
+export interface InternalSymbolUsage {
+  definitionName: string;
+  usages: SymbolUsage[];
+}
+
+/**
+ * Extract internal usages of definitions within the same file.
+ * This captures calls to local functions, classes, etc. that are not imported.
+ */
+export function extractInternalUsages(
+  rootNode: SyntaxNode,
+  definitions: Definition[]
+): InternalSymbolUsage[] {
+  const results: InternalSymbolUsage[] = [];
+
+  for (const def of definitions) {
+    // Find all usages of this definition's name
+    const usages = findSymbolUsages(rootNode, def.name);
+
+    // Filter out the definition itself (where the function/class is declared)
+    // by checking if the usage is at the same position as the definition
+    const filteredUsages = usages.filter(usage => {
+      // Definition position is 0-based, usage position is also 0-based
+      const isDefinitionSite =
+        usage.position.row === def.position.row &&
+        usage.position.column === def.position.column;
+      return !isDefinitionSite;
+    });
+
+    // Only include if there are actual usages (with call sites)
+    const callUsages = filteredUsages.filter(u => u.callsite);
+    if (callUsages.length > 0) {
+      results.push({
+        definitionName: def.name,
+        usages: callUsages,
+      });
+    }
+  }
+
+  return results;
 }

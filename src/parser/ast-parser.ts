@@ -6,7 +6,9 @@ import path from 'node:path';
 import { getLanguageFromExtension } from '../utils/file-scanner.js';
 import {
   extractReferences,
+  extractInternalUsages,
   type FileReference,
+  type InternalSymbolUsage,
 } from './reference-extractor.js';
 import {
   extractDefinitions,
@@ -17,12 +19,13 @@ export interface ParsedFile {
   language: 'typescript' | 'javascript';
   references: FileReference[];
   definitions: Definition[];
+  internalUsages: InternalSymbolUsage[];
   content: string;
   sizeBytes: number;
   modifiedAt: string;
 }
 
-export type { FileReference, Definition };
+export type { FileReference, Definition, InternalSymbolUsage };
 
 const typescriptParser = new Parser();
 typescriptParser.setLanguage(TypeScript.typescript);
@@ -64,11 +67,13 @@ export function parseContent(
   const language = getLanguageFromExtension(filePath);
   const references = extractReferences(tree.rootNode, filePath, knownFiles);
   const definitions = extractDefinitions(tree.rootNode);
+  const internalUsages = extractInternalUsages(tree.rootNode, definitions);
 
   return {
     language,
     references,
     definitions,
+    internalUsages,
     content,
     sizeBytes: metadata.sizeBytes,
     modifiedAt: metadata.modifiedAt,
