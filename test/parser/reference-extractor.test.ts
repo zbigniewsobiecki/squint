@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { resolveImportPath } from '../../src/parser/reference-extractor.js';
 import { parseContent } from '../../src/parser/ast-parser.js';
+import type { FileReference } from '../../src/parser/reference-extractor.js';
 
 describe('resolveImportPath', () => {
   it('resolves relative paths with known files', () => {
@@ -188,5 +189,114 @@ const b = format('world', 'extra');
     expect(formatImport?.usages).toHaveLength(2);
     expect(formatImport?.usages[0]?.callsite?.argumentCount).toBe(1);
     expect(formatImport?.usages[1]?.callsite?.argumentCount).toBe(2);
+  });
+});
+
+describe('re-export tracking', () => {
+  const metadata = { sizeBytes: 100, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+  it('creates synthetic usage for named re-exports', () => {
+    const content = `export { foo, bar } from './utils';`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set(['/project/utils.ts']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.references).toHaveLength(1);
+    const ref = result.references[0];
+    expect(ref.type).toBe('re-export');
+
+    // Each re-exported symbol should have a synthetic usage
+    const fooImport = ref.imports.find(i => i.name === 'foo');
+    expect(fooImport).toBeDefined();
+    expect(fooImport?.usages).toHaveLength(1);
+    expect(fooImport?.usages[0]?.context).toBe('re-export');
+
+    const barImport = ref.imports.find(i => i.name === 'bar');
+    expect(barImport).toBeDefined();
+    expect(barImport?.usages).toHaveLength(1);
+    expect(barImport?.usages[0]?.context).toBe('re-export');
+  });
+
+  it('creates synthetic usage for aliased re-exports', () => {
+    const content = `export { foo as renamedFoo } from './utils';`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set(['/project/utils.ts']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.references).toHaveLength(1);
+    const ref = result.references[0];
+
+    const fooImport = ref.imports.find(i => i.name === 'foo');
+    expect(fooImport).toBeDefined();
+    expect(fooImport?.localName).toBe('renamedFoo');
+    expect(fooImport?.usages).toHaveLength(1);
+    expect(fooImport?.usages[0]?.context).toBe('re-export');
+  });
+
+  it('creates synthetic usage for export * (namespace re-export)', () => {
+    const content = `export * from './utils';`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set(['/project/utils.ts']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.references).toHaveLength(1);
+    const ref = result.references[0];
+    expect(ref.type).toBe('export-all');
+
+    // Namespace re-export should have a synthetic usage
+    const namespaceImport = ref.imports.find(i => i.name === '*');
+    expect(namespaceImport).toBeDefined();
+    expect(namespaceImport?.usages).toHaveLength(1);
+    expect(namespaceImport?.usages[0]?.context).toBe('re-export');
+  });
+
+  it('synthetic usage position matches export statement position', () => {
+    const content = `// comment
+export { query } from './database';`;
+    const filePath = '/project/db.ts';
+    const knownFiles = new Set(['/project/database.ts']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const ref = result.references[0];
+    const queryImport = ref.imports.find(i => i.name === 'query');
+
+    // The synthetic usage should be at the export statement's position (line 1, 0-indexed)
+    expect(queryImport?.usages[0]?.position.row).toBe(1);
+    expect(queryImport?.usages[0]?.position.column).toBe(0);
+  });
+
+  it('handles multiple re-exports in same file', () => {
+    const content = `
+export { a } from './moduleA';
+export { b, c } from './moduleB';
+export * from './moduleC';
+`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set([
+      '/project/moduleA.ts',
+      '/project/moduleB.ts',
+      '/project/moduleC.ts',
+    ]);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.references).toHaveLength(3);
+
+    // First re-export: { a }
+    const refA = result.references.find(r => r.source === './moduleA') as FileReference;
+    expect(refA.imports.find(i => i.name === 'a')?.usages).toHaveLength(1);
+
+    // Second re-export: { b, c }
+    const refB = result.references.find(r => r.source === './moduleB') as FileReference;
+    expect(refB.imports.find(i => i.name === 'b')?.usages).toHaveLength(1);
+    expect(refB.imports.find(i => i.name === 'c')?.usages).toHaveLength(1);
+
+    // Third re-export: * (namespace)
+    const refC = result.references.find(r => r.source === './moduleC') as FileReference;
+    expect(refC.imports.find(i => i.name === '*')?.usages).toHaveLength(1);
   });
 });

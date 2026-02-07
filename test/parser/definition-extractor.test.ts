@@ -281,3 +281,130 @@ export default class DefaultError extends Error {
     });
   });
 });
+
+describe('module-level definition ranges', () => {
+  it('extends const endPosition to end of file for module-level usage capture', () => {
+    const content = `import express from 'express';
+
+const app = express();
+
+app.use('/api', router);
+app.listen(3000);
+`;
+    const filePath = '/project/app.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const appDef = result.definitions.find(d => d.name === 'app');
+    expect(appDef).toBeDefined();
+    expect(appDef?.kind).toBe('const');
+    // Definition starts at line 2 (0-indexed)
+    expect(appDef?.position.row).toBe(2);
+    // endPosition should extend to end of file (line 6, 0-indexed, includes trailing newline)
+    expect(appDef?.endPosition.row).toBe(6);
+  });
+
+  it('extends let endPosition to end of file', () => {
+    const content = `let counter = 0;
+
+counter++;
+counter++;
+`;
+    const filePath = '/project/counter.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const counterDef = result.definitions.find(d => d.name === 'counter');
+    expect(counterDef).toBeDefined();
+    expect(counterDef?.kind).toBe('variable');
+    expect(counterDef?.position.row).toBe(0);
+    // Should extend to end of file (includes trailing newline)
+    expect(counterDef?.endPosition.row).toBe(4);
+  });
+
+  it('extends exported const endPosition to end of file', () => {
+    const content = `export const config = {
+  port: 3000
+};
+
+console.log(config.port);
+`;
+    const filePath = '/project/config.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const configDef = result.definitions.find(d => d.name === 'config');
+    expect(configDef).toBeDefined();
+    expect(configDef?.isExported).toBe(true);
+    // Should extend to end of file (includes trailing newline)
+    expect(configDef?.endPosition.row).toBe(5);
+  });
+
+  it('handles multiple module-level variables', () => {
+    const content = `const a = 1;
+const b = 2;
+
+console.log(a + b);
+`;
+    const filePath = '/project/vars.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.definitions).toHaveLength(2);
+
+    const aDef = result.definitions.find(d => d.name === 'a');
+    const bDef = result.definitions.find(d => d.name === 'b');
+
+    // Both should extend to end of file (includes trailing newline)
+    expect(aDef?.endPosition.row).toBe(4);
+    expect(bDef?.endPosition.row).toBe(4);
+  });
+
+  it('does not affect function definition ranges', () => {
+    const content = `function hello() {
+  return 'world';
+}
+
+hello();
+`;
+    const filePath = '/project/func.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const helloDef = result.definitions.find(d => d.name === 'hello');
+    expect(helloDef).toBeDefined();
+    expect(helloDef?.kind).toBe('function');
+    // Function should end at its closing brace (line 2)
+    expect(helloDef?.endPosition.row).toBe(2);
+  });
+
+  it('does not affect class definition ranges', () => {
+    const content = `class MyClass {
+  method() {}
+}
+
+new MyClass();
+`;
+    const filePath = '/project/class.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const classDef = result.definitions.find(d => d.name === 'MyClass');
+    expect(classDef).toBeDefined();
+    expect(classDef?.kind).toBe('class');
+    // Class should end at its closing brace (line 2)
+    expect(classDef?.endPosition.row).toBe(2);
+  });
+});

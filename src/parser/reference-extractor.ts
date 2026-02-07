@@ -484,15 +484,26 @@ function extractImportedSymbols(
 }
 
 /**
- * Extract exported symbols from a re-export statement
+ * Extract exported symbols from a re-export statement.
+ * For re-exports, we create a synthetic usage at the export location
+ * to ensure dependency edges are created in the database.
  */
 function extractReExportedSymbols(
   exportNode: SyntaxNode,
-  rootNode: SyntaxNode
+  _rootNode: SyntaxNode
 ): ImportedSymbol[] {
   const symbols: ImportedSymbol[] = [];
 
   const exportClause = findChildByType(exportNode, 'export_clause');
+
+  // Synthetic usage at the export statement location
+  const syntheticUsage: SymbolUsage = {
+    position: {
+      row: exportNode.startPosition.row,
+      column: exportNode.startPosition.column,
+    },
+    context: 're-export',
+  };
 
   if (!exportClause) {
     // Check for export * from './file'
@@ -504,7 +515,7 @@ function extractReExportedSymbols(
             name: '*',
             localName: '*',
             kind: 'namespace',
-            usages: [],
+            usages: [syntheticUsage],
           },
         ];
       }
@@ -527,7 +538,7 @@ function extractReExportedSymbols(
           name: originalName,
           localName,
           kind: 'named',
-          usages: findSymbolUsages(rootNode, localName),
+          usages: [syntheticUsage],
         });
       }
     }

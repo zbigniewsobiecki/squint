@@ -268,13 +268,16 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
             const name = getVariableName(child);
             if (name) {
               const exportInfo = exportedNames.get(name);
+              // For module-level variables (const/let/var), extend endPosition to end of file
+              // This captures usages that occur after the declaration in entry-point files
+              // (e.g., `const app = express(); ... app.use(...)`)
               definitions.push({
                 name,
                 kind,
                 isExported: directlyExported || !!exportInfo,
                 isDefault: directDefault || (exportInfo?.isDefault ?? false),
                 position: { row: node.startPosition.row, column: node.startPosition.column },
-                endPosition: { row: node.endPosition.row, column: node.endPosition.column },
+                endPosition: { row: rootNode.endPosition.row, column: rootNode.endPosition.column },
               });
             }
           }
