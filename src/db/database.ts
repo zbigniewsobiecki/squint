@@ -26,6 +26,34 @@ export interface CallsiteResult {
   receiverName: string | null;
 }
 
+export interface DependencyInfo {
+  dependencyId: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  line: number;
+}
+
+export interface ReadySymbolInfo {
+  id: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  line: number;
+  endLine: number;
+  dependencyCount: number;
+}
+
+export interface DependencyWithMetadata {
+  id: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  line: number;
+  hasAspect: boolean;
+  aspectValue: string | null;
+}
+
 const SCHEMA = `
 -- Metadata about the indexing run
 CREATE TABLE metadata (
@@ -1077,165 +1105,6 @@ export class IndexDatabase implements IIndexWriter {
   }
 
   /**
-   * Get files in optimal reading order using topological sort (Kahn's algorithm).
-   * Files with no internal imports (leaves) come first, then files that only depend on those, etc.
-   * Cycles are detected and grouped together.
-   */
-  getFilesInReadingOrder(options?: { excludeTests?: boolean }): Array<{
-    id: number;
-    path: string;
-    depth: number;
-    cycleGroup?: number;
-  }> {
-    // Get all files
-    const filesStmt = this.db.prepare('SELECT id, path FROM files');
-    const allFiles = filesStmt.all() as Array<{ id: number; path: string }>;
-
-    // Filter test files if requested
-    let files = allFiles;
-    if (options?.excludeTests) {
-      files = allFiles.filter(f => {
-        const p = f.path;
-        return !p.includes('.test.') &&
-               !p.includes('.spec.') &&
-               !p.includes('/__tests__/') &&
-               !p.includes('/test/') &&
-               !p.includes('/tests/');
-      });
-    }
-
-    const fileIds = new Set(files.map(f => f.id));
-    const fileMap = new Map(files.map(f => [f.id, f.path]));
-
-    // Build adjacency list: for each file, which files does it import (depend on)
-    // A file "depends on" the files it imports
-    const importsStmt = this.db.prepare(`
-      SELECT DISTINCT from_file_id, to_file_id
-      FROM imports
-      WHERE to_file_id IS NOT NULL AND is_external = 0
-    `);
-    const importRows = importsStmt.all() as Array<{ from_file_id: number; to_file_id: number }>;
-
-    // dependsOn[A] = set of files that A imports (A depends on these)
-    const dependsOn = new Map<number, Set<number>>();
-    // dependedBy[A] = set of files that import A (these depend on A)
-    const dependedBy = new Map<number, Set<number>>();
-
-    for (const fileId of fileIds) {
-      dependsOn.set(fileId, new Set());
-      dependedBy.set(fileId, new Set());
-    }
-
-    for (const row of importRows) {
-      // Only consider imports between files in our filtered set
-      if (fileIds.has(row.from_file_id) && fileIds.has(row.to_file_id)) {
-        dependsOn.get(row.from_file_id)!.add(row.to_file_id);
-        dependedBy.get(row.to_file_id)!.add(row.from_file_id);
-      }
-    }
-
-    // Kahn's algorithm for topological sort
-    // In-degree = number of internal imports (files this file depends on)
-    const inDegree = new Map<number, number>();
-    for (const fileId of fileIds) {
-      inDegree.set(fileId, dependsOn.get(fileId)!.size);
-    }
-
-    // Queue starts with leaves (files with no internal imports)
-    const queue: number[] = [];
-    for (const fileId of fileIds) {
-      if (inDegree.get(fileId) === 0) {
-        queue.push(fileId);
-      }
-    }
-
-    const result: Array<{ id: number; path: string; depth: number; cycleGroup?: number }> = [];
-    const processed = new Set<number>();
-    let currentDepth = 0;
-
-    // Process level by level to track depth
-    while (queue.length > 0) {
-      const levelSize = queue.length;
-      const nextLevel: number[] = [];
-
-      for (let i = 0; i < levelSize; i++) {
-        const fileId = queue[i];
-        if (processed.has(fileId)) continue;
-
-        processed.add(fileId);
-        result.push({
-          id: fileId,
-          path: fileMap.get(fileId)!,
-          depth: currentDepth,
-        });
-
-        // For each file that depends on this file, decrement its in-degree
-        for (const dependentId of dependedBy.get(fileId)!) {
-          const newDegree = inDegree.get(dependentId)! - 1;
-          inDegree.set(dependentId, newDegree);
-          if (newDegree === 0 && !processed.has(dependentId)) {
-            nextLevel.push(dependentId);
-          }
-        }
-      }
-
-      queue.length = 0;
-      queue.push(...nextLevel);
-      if (nextLevel.length > 0) {
-        currentDepth++;
-      }
-    }
-
-    // Handle cycles: files remaining after queue is empty are in cycles
-    const remaining = [...fileIds].filter(id => !processed.has(id));
-    if (remaining.length > 0) {
-      // Find connected components among remaining files (cycle groups)
-      const visited = new Set<number>();
-      let cycleGroupNum = 0;
-
-      for (const startId of remaining) {
-        if (visited.has(startId)) continue;
-
-        // BFS to find all files in this cycle group
-        const cycleQueue = [startId];
-        const cycleGroup: number[] = [];
-
-        while (cycleQueue.length > 0) {
-          const fileId = cycleQueue.shift()!;
-          if (visited.has(fileId)) continue;
-          visited.add(fileId);
-          cycleGroup.push(fileId);
-
-          // Add connected files (both directions)
-          for (const depId of dependsOn.get(fileId)!) {
-            if (!visited.has(depId) && remaining.includes(depId)) {
-              cycleQueue.push(depId);
-            }
-          }
-          for (const depById of dependedBy.get(fileId)!) {
-            if (!visited.has(depById) && remaining.includes(depById)) {
-              cycleQueue.push(depById);
-            }
-          }
-        }
-
-        // Add all files in this cycle group
-        for (const fileId of cycleGroup) {
-          result.push({
-            id: fileId,
-            path: fileMap.get(fileId)!,
-            depth: currentDepth,
-            cycleGroup: cycleGroupNum,
-          });
-        }
-        cycleGroupNum++;
-      }
-    }
-
-    return result;
-  }
-
-  /**
    * Get all symbols (definitions) with optional filters
    */
   getSymbols(filters?: { kind?: string; fileId?: number }): Array<{
@@ -1464,6 +1333,302 @@ export class IndexDatabase implements IIndexWriter {
     }
 
     return results;
+  }
+
+  /**
+   * Get all symbols that a definition depends on (uses within its line range).
+   * This finds usages within the definition's code that reference other definitions.
+   */
+  getDefinitionDependencies(definitionId: number): DependencyInfo[] {
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT
+        dep_def.id as dependencyId,
+        dep_def.name,
+        dep_def.kind,
+        dep_f.path as filePath,
+        dep_def.line
+      FROM definitions source
+      JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+      JOIN symbols s ON u.symbol_id = s.id
+      JOIN definitions dep_def ON s.definition_id = dep_def.id
+      JOIN files dep_f ON dep_def.file_id = dep_f.id
+      JOIN files source_f ON source.file_id = source_f.id
+      WHERE source.id = ?
+        AND dep_def.id != source.id
+        AND (
+          -- Symbol is from an import in the same file
+          s.reference_id IN (SELECT id FROM imports WHERE from_file_id = source.file_id)
+          -- Or symbol is internal to the same file
+          OR s.file_id = source.file_id
+        )
+      ORDER BY dep_f.path, dep_def.line
+    `);
+    return stmt.all(definitionId) as DependencyInfo[];
+  }
+
+  /**
+   * Get dependencies with their metadata status for a specific aspect.
+   * Combines dependency lookup with metadata check in a single efficient query.
+   */
+  getDependenciesWithMetadata(definitionId: number, aspect?: string): DependencyWithMetadata[] {
+    const sql = `
+      SELECT DISTINCT
+        dep_def.id,
+        dep_def.name,
+        dep_def.kind,
+        dep_f.path as filePath,
+        dep_def.line,
+        CASE WHEN dm.value IS NOT NULL THEN 1 ELSE 0 END as hasAspect,
+        dm.value as aspectValue
+      FROM definitions source
+      JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+      JOIN symbols s ON u.symbol_id = s.id
+      JOIN definitions dep_def ON s.definition_id = dep_def.id
+      JOIN files dep_f ON dep_def.file_id = dep_f.id
+      LEFT JOIN definition_metadata dm ON dm.definition_id = dep_def.id AND dm.key = ?
+      WHERE source.id = ?
+        AND dep_def.id != source.id
+        AND (
+          s.reference_id IN (SELECT id FROM imports WHERE from_file_id = source.file_id)
+          OR s.file_id = source.file_id
+        )
+      ORDER BY dep_f.path, dep_def.line
+    `;
+    const stmt = this.db.prepare(sql);
+    const rows = stmt.all(aspect ?? '', definitionId) as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      line: number;
+      hasAspect: number;
+      aspectValue: string | null;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      filePath: row.filePath,
+      line: row.line,
+      hasAspect: row.hasAspect === 1,
+      aspectValue: row.aspectValue,
+    }));
+  }
+
+  /**
+   * Get dependencies that don't have a specific aspect set.
+   * Orders by dependency count (leaf nodes first) for topological processing.
+   */
+  getUnmetDependencies(definitionId: number, aspect: string): DependencyInfo[] {
+    const sql = `
+      WITH has_aspect AS (
+        SELECT definition_id FROM definition_metadata WHERE key = ?
+      )
+      SELECT DISTINCT
+        dep_def.id as dependencyId,
+        dep_def.name,
+        dep_def.kind,
+        dep_f.path as filePath,
+        dep_def.line
+      FROM definitions source
+      JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+      JOIN symbols s ON u.symbol_id = s.id
+      JOIN definitions dep_def ON s.definition_id = dep_def.id
+      JOIN files dep_f ON dep_def.file_id = dep_f.id
+      WHERE source.id = ?
+        AND dep_def.id != source.id
+        AND dep_def.id NOT IN (SELECT definition_id FROM has_aspect)
+        AND (
+          s.reference_id IN (SELECT id FROM imports WHERE from_file_id = source.file_id)
+          OR s.file_id = source.file_id
+        )
+      ORDER BY dep_f.path, dep_def.line
+    `;
+    const stmt = this.db.prepare(sql);
+    return stmt.all(aspect, definitionId) as DependencyInfo[];
+  }
+
+  /**
+   * Get the full prerequisite chain for understanding a symbol.
+   * Returns unmet dependencies in topological order (leaves first).
+   * Handles circular dependencies by tracking visited nodes.
+   */
+  getPrerequisiteChain(definitionId: number, aspect: string): Array<DependencyInfo & { unmetDepCount: number }> {
+    const visited = new Set<number>();
+    const result: Array<DependencyInfo & { unmetDepCount: number }> = [];
+
+    const processNode = (id: number): void => {
+      if (visited.has(id)) return;
+      visited.add(id);
+
+      const unmetDeps = this.getUnmetDependencies(id, aspect);
+
+      // Process children first (depth-first)
+      for (const dep of unmetDeps) {
+        if (!visited.has(dep.dependencyId)) {
+          processNode(dep.dependencyId);
+        }
+      }
+
+      // Add this node after its dependencies (unless it's the root)
+      if (id !== definitionId) {
+        const nodeUnmetDeps = this.getUnmetDependencies(id, aspect);
+        const def = this.getDefinitionById(id);
+        if (def) {
+          result.push({
+            dependencyId: id,
+            name: def.name,
+            kind: def.kind,
+            filePath: def.filePath,
+            line: def.line,
+            unmetDepCount: nodeUnmetDeps.length,
+          });
+        }
+      }
+    };
+
+    // Start from the target definition
+    const directUnmet = this.getUnmetDependencies(definitionId, aspect);
+    for (const dep of directUnmet) {
+      processNode(dep.dependencyId);
+    }
+
+    // Sort by unmet dependency count (leaves first)
+    result.sort((a, b) => a.unmetDepCount - b.unmetDepCount);
+
+    return result;
+  }
+
+  /**
+   * Find symbols that are "ready to understand" for a given aspect.
+   * A symbol is ready when all its dependencies already have the aspect set (or it has no dependencies).
+   * Excludes symbols that already have the aspect set.
+   */
+  getReadyToUnderstandSymbols(
+    aspect: string,
+    options?: { limit?: number; kind?: string; filePattern?: string }
+  ): { symbols: ReadySymbolInfo[]; totalReady: number; remaining: number } {
+    const limit = options?.limit ?? 20;
+
+    // Build filter conditions and collect filter params
+    let filterConditions = '';
+    const filterParams: (string | number)[] = [];
+
+    if (options?.kind) {
+      filterConditions += ' AND d.kind = ?';
+      filterParams.push(options.kind);
+    }
+    if (options?.filePattern) {
+      filterConditions += ' AND f.path LIKE ?';
+      filterParams.push(`%${options.filePattern}%`);
+    }
+
+    // The main query uses CTEs:
+    // 1. understood: definitions that already have the aspect set
+    // 2. definition_deps: maps each definition to its dependencies
+    // 3. unmet: definitions that have at least one dependency without the aspect
+    const sql = `
+      WITH understood AS (
+        SELECT definition_id FROM definition_metadata WHERE key = ?
+      ),
+      definition_deps AS (
+        SELECT DISTINCT
+          source.id as definition_id,
+          dep_def.id as dependency_id
+        FROM definitions source
+        JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+        JOIN symbols s ON u.symbol_id = s.id
+        JOIN definitions dep_def ON s.definition_id = dep_def.id
+        JOIN files source_f ON source.file_id = source_f.id
+        WHERE dep_def.id != source.id
+          AND (
+            s.reference_id IN (SELECT id FROM imports WHERE from_file_id = source.file_id)
+            OR s.file_id = source.file_id
+          )
+      ),
+      unmet AS (
+        SELECT DISTINCT definition_id
+        FROM definition_deps
+        WHERE dependency_id NOT IN (SELECT definition_id FROM understood)
+      )
+      SELECT
+        d.id,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        d.line,
+        d.end_line as endLine,
+        COALESCE(dep_count.cnt, 0) as dependencyCount
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      LEFT JOIN (
+        SELECT definition_id, COUNT(*) as cnt
+        FROM definition_deps
+        GROUP BY definition_id
+      ) dep_count ON dep_count.definition_id = d.id
+      WHERE d.id NOT IN (SELECT definition_id FROM understood)
+        AND d.id NOT IN (SELECT definition_id FROM unmet)
+        ${filterConditions}
+      ORDER BY dependencyCount ASC, f.path, d.line
+      LIMIT ?
+    `;
+
+    const params: (string | number)[] = [aspect, ...filterParams, limit];
+    const stmt = this.db.prepare(sql);
+    const symbols = stmt.all(...params) as ReadySymbolInfo[];
+
+    // Get counts for the summary
+    // The count query has filter conditions in two places: subquery and main WHERE
+    // So we need to provide filter params twice
+    const countSql = `
+      WITH understood AS (
+        SELECT definition_id FROM definition_metadata WHERE key = ?
+      ),
+      definition_deps AS (
+        SELECT DISTINCT
+          source.id as definition_id,
+          dep_def.id as dependency_id
+        FROM definitions source
+        JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+        JOIN symbols s ON u.symbol_id = s.id
+        JOIN definitions dep_def ON s.definition_id = dep_def.id
+        JOIN files source_f ON source.file_id = source_f.id
+        WHERE dep_def.id != source.id
+          AND (
+            s.reference_id IN (SELECT id FROM imports WHERE from_file_id = source.file_id)
+            OR s.file_id = source.file_id
+          )
+      ),
+      unmet AS (
+        SELECT DISTINCT definition_id
+        FROM definition_deps
+        WHERE dependency_id NOT IN (SELECT definition_id FROM understood)
+      )
+      SELECT
+        COUNT(*) as totalReady,
+        (SELECT COUNT(*) FROM definitions d2
+         JOIN files f2 ON d2.file_id = f2.id
+         WHERE d2.id NOT IN (SELECT definition_id FROM understood)
+           ${filterConditions.replace(/d\./g, 'd2.').replace(/f\./g, 'f2.')}
+        ) as totalRemaining
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      WHERE d.id NOT IN (SELECT definition_id FROM understood)
+        AND d.id NOT IN (SELECT definition_id FROM unmet)
+        ${filterConditions}
+    `;
+
+    // Params: aspect, then filterParams for subquery, then filterParams for main WHERE
+    const countParams: (string | number)[] = [aspect, ...filterParams, ...filterParams];
+    const countStmt = this.db.prepare(countSql);
+    const countResult = countStmt.get(...countParams) as { totalReady: number; totalRemaining: number };
+
+    return {
+      symbols,
+      totalReady: countResult.totalReady,
+      remaining: countResult.totalRemaining - countResult.totalReady,
+    };
   }
 
   close(): void {

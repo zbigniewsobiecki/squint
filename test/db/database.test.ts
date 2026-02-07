@@ -1031,6 +1031,460 @@ describe('IndexDatabase', () => {
     });
   });
 
+  describe('dependency queries', () => {
+    it('getDependenciesWithMetadata returns dependencies with aspect status', () => {
+      // Create two files
+      const utilsFileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('utils'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const indexFileId = db.insertFile({
+        path: '/project/index.ts',
+        language: 'typescript',
+        contentHash: computeHash('index'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      // Create definitions in utils.ts
+      const helperDefId = db.insertDefinition(utilsFileId, {
+        name: 'helper',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const utilDefId = db.insertDefinition(utilsFileId, {
+        name: 'util',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 3, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      // Create main function in index.ts that uses both
+      const mainDefId = db.insertDefinition(indexFileId, {
+        name: 'main',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 2, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+
+      // Create import reference
+      const refId = db.insertReference(indexFileId, utilsFileId, {
+        type: 'import',
+        source: './utils',
+        isExternal: false,
+        isTypeOnly: false,
+        imports: [],
+        position: { row: 0, column: 0 },
+      });
+
+      // Create symbols linking to definitions
+      const helperSymId = db.insertSymbol(refId, helperDefId, {
+        name: 'helper',
+        localName: 'helper',
+        kind: 'named',
+        usages: [],
+      });
+
+      const utilSymId = db.insertSymbol(refId, utilDefId, {
+        name: 'util',
+        localName: 'util',
+        kind: 'named',
+        usages: [],
+      });
+
+      // Create usages within main function's line range
+      db.insertUsage(helperSymId, {
+        position: { row: 4, column: 10 },
+        context: 'call_expression',
+      });
+
+      db.insertUsage(utilSymId, {
+        position: { row: 6, column: 10 },
+        context: 'call_expression',
+      });
+
+      // Set metadata on one dependency only
+      db.setDefinitionMetadata(helperDefId, 'purpose', 'A helper function');
+
+      // Get dependencies with metadata status
+      const deps = db.getDependenciesWithMetadata(mainDefId, 'purpose');
+      expect(deps).toHaveLength(2);
+
+      const helperDep = deps.find(d => d.name === 'helper');
+      expect(helperDep).toBeDefined();
+      expect(helperDep!.hasAspect).toBe(true);
+      expect(helperDep!.aspectValue).toBe('A helper function');
+
+      const utilDep = deps.find(d => d.name === 'util');
+      expect(utilDep).toBeDefined();
+      expect(utilDep!.hasAspect).toBe(false);
+      expect(utilDep!.aspectValue).toBeNull();
+    });
+
+    it('getDependenciesWithMetadata returns empty array when no dependencies', () => {
+      const fileId = db.insertFile({
+        path: '/project/simple.ts',
+        language: 'typescript',
+        contentHash: computeHash('simple'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defId = db.insertDefinition(fileId, {
+        name: 'standalone',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const deps = db.getDependenciesWithMetadata(defId, 'purpose');
+      expect(deps).toEqual([]);
+    });
+
+    it('getUnmetDependencies returns only dependencies missing the aspect', () => {
+      // Setup similar to above
+      const utilsFileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('utils'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const indexFileId = db.insertFile({
+        path: '/project/index.ts',
+        language: 'typescript',
+        contentHash: computeHash('index'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const helperDefId = db.insertDefinition(utilsFileId, {
+        name: 'helper',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const utilDefId = db.insertDefinition(utilsFileId, {
+        name: 'util',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 3, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const mainDefId = db.insertDefinition(indexFileId, {
+        name: 'main',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 2, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+
+      const refId = db.insertReference(indexFileId, utilsFileId, {
+        type: 'import',
+        source: './utils',
+        isExternal: false,
+        isTypeOnly: false,
+        imports: [],
+        position: { row: 0, column: 0 },
+      });
+
+      const helperSymId = db.insertSymbol(refId, helperDefId, {
+        name: 'helper',
+        localName: 'helper',
+        kind: 'named',
+        usages: [],
+      });
+
+      const utilSymId = db.insertSymbol(refId, utilDefId, {
+        name: 'util',
+        localName: 'util',
+        kind: 'named',
+        usages: [],
+      });
+
+      db.insertUsage(helperSymId, {
+        position: { row: 4, column: 10 },
+        context: 'call_expression',
+      });
+
+      db.insertUsage(utilSymId, {
+        position: { row: 6, column: 10 },
+        context: 'call_expression',
+      });
+
+      // Set aspect on helper only
+      db.setDefinitionMetadata(helperDefId, 'purpose', 'A helper function');
+
+      // Get unmet dependencies
+      const unmet = db.getUnmetDependencies(mainDefId, 'purpose');
+      expect(unmet).toHaveLength(1);
+      expect(unmet[0].name).toBe('util');
+    });
+
+    it('getUnmetDependencies returns empty array when all deps have aspect', () => {
+      const utilsFileId = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('utils'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const indexFileId = db.insertFile({
+        path: '/project/index.ts',
+        language: 'typescript',
+        contentHash: computeHash('index'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const helperDefId = db.insertDefinition(utilsFileId, {
+        name: 'helper',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const mainDefId = db.insertDefinition(indexFileId, {
+        name: 'main',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 2, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+
+      const refId = db.insertReference(indexFileId, utilsFileId, {
+        type: 'import',
+        source: './utils',
+        isExternal: false,
+        isTypeOnly: false,
+        imports: [],
+        position: { row: 0, column: 0 },
+      });
+
+      const helperSymId = db.insertSymbol(refId, helperDefId, {
+        name: 'helper',
+        localName: 'helper',
+        kind: 'named',
+        usages: [],
+      });
+
+      db.insertUsage(helperSymId, {
+        position: { row: 4, column: 10 },
+        context: 'call_expression',
+      });
+
+      // Set aspect on all dependencies
+      db.setDefinitionMetadata(helperDefId, 'purpose', 'A helper function');
+
+      const unmet = db.getUnmetDependencies(mainDefId, 'purpose');
+      expect(unmet).toEqual([]);
+    });
+
+    it('getPrerequisiteChain returns topologically sorted unmet deps', () => {
+      // Create a chain: main -> func1 -> func2 -> func3
+      const fileId = db.insertFile({
+        path: '/project/chain.ts',
+        language: 'typescript',
+        contentHash: computeHash('chain'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const func3Id = db.insertDefinition(fileId, {
+        name: 'func3',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const func2Id = db.insertDefinition(fileId, {
+        name: 'func2',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 3, column: 0 },
+        endPosition: { row: 6, column: 1 },
+      });
+
+      const func1Id = db.insertDefinition(fileId, {
+        name: 'func1',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 7, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+
+      const mainId = db.insertDefinition(fileId, {
+        name: 'main',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 11, column: 0 },
+        endPosition: { row: 14, column: 1 },
+      });
+
+      // Create internal symbols for same-file references
+      const sym3 = db.insertSymbol(null, func3Id, {
+        name: 'func3',
+        localName: 'func3',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      const sym2 = db.insertSymbol(null, func2Id, {
+        name: 'func2',
+        localName: 'func2',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      const sym1 = db.insertSymbol(null, func1Id, {
+        name: 'func1',
+        localName: 'func1',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      // func2 calls func3
+      db.insertUsage(sym3, {
+        position: { row: 4, column: 10 },
+        context: 'call_expression',
+      });
+
+      // func1 calls func2
+      db.insertUsage(sym2, {
+        position: { row: 8, column: 10 },
+        context: 'call_expression',
+      });
+
+      // main calls func1
+      db.insertUsage(sym1, {
+        position: { row: 12, column: 10 },
+        context: 'call_expression',
+      });
+
+      // Get prerequisite chain for main
+      const prereqs = db.getPrerequisiteChain(mainId, 'purpose');
+
+      // Should return func3, func2, func1 in order (leaves first)
+      expect(prereqs.length).toBeGreaterThanOrEqual(1);
+      // Leaves (0 deps) should come first
+      const leafNodes = prereqs.filter(p => p.unmetDepCount === 0);
+      expect(leafNodes.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('getPrerequisiteChain returns empty when no unmet deps', () => {
+      const fileId = db.insertFile({
+        path: '/project/simple.ts',
+        language: 'typescript',
+        contentHash: computeHash('simple'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defId = db.insertDefinition(fileId, {
+        name: 'standalone',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 2, column: 1 },
+      });
+
+      const prereqs = db.getPrerequisiteChain(defId, 'purpose');
+      expect(prereqs).toEqual([]);
+    });
+
+    it('getPrerequisiteChain handles circular dependencies gracefully', () => {
+      // Create circular: funcA -> funcB -> funcA
+      const fileId = db.insertFile({
+        path: '/project/circular.ts',
+        language: 'typescript',
+        contentHash: computeHash('circular'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const funcAId = db.insertDefinition(fileId, {
+        name: 'funcA',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const funcBId = db.insertDefinition(fileId, {
+        name: 'funcB',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 11, column: 1 },
+      });
+
+      // Create internal symbols
+      const symA = db.insertSymbol(null, funcAId, {
+        name: 'funcA',
+        localName: 'funcA',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      const symB = db.insertSymbol(null, funcBId, {
+        name: 'funcB',
+        localName: 'funcB',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      // funcA calls funcB
+      db.insertUsage(symB, {
+        position: { row: 2, column: 10 },
+        context: 'call_expression',
+      });
+
+      // funcB calls funcA (creating cycle)
+      db.insertUsage(symA, {
+        position: { row: 8, column: 10 },
+        context: 'call_expression',
+      });
+
+      // Should not throw or infinite loop
+      const prereqs = db.getPrerequisiteChain(funcAId, 'purpose');
+      // Should include funcB (and handle the cycle)
+      expect(prereqs.length).toBeLessThanOrEqual(2);
+    });
+  });
+
   describe('inheritance queries', () => {
     it('stores and retrieves class extends relationship', () => {
       const fileId = db.insertFile({

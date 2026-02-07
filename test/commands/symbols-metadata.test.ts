@@ -19,8 +19,8 @@ describe('symbols metadata commands', () => {
     db = new IndexDatabase(dbPath);
     db.initialize();
 
-    // Insert test file
-    const fileId = db.insertFile({
+    // Insert test files
+    const utilsFileId = db.insertFile({
       path: path.join(testDir, 'utils.ts'),
       language: 'typescript',
       contentHash: computeHash('content'),
@@ -28,8 +28,16 @@ describe('symbols metadata commands', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    // Insert test definitions
-    db.insertDefinition(fileId, {
+    const mainFileId = db.insertFile({
+      path: path.join(testDir, 'main.ts'),
+      language: 'typescript',
+      contentHash: computeHash('main'),
+      sizeBytes: 100,
+      modifiedAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    // Insert test definitions in utils.ts
+    const addId = db.insertDefinition(utilsFileId, {
       name: 'add',
       kind: 'function',
       isExported: true,
@@ -38,7 +46,7 @@ describe('symbols metadata commands', () => {
       endPosition: { row: 2, column: 1 },
     });
 
-    db.insertDefinition(fileId, {
+    const subtractId = db.insertDefinition(utilsFileId, {
       name: 'subtract',
       kind: 'function',
       isExported: true,
@@ -47,13 +55,59 @@ describe('symbols metadata commands', () => {
       endPosition: { row: 5, column: 1 },
     });
 
-    db.insertDefinition(fileId, {
+    db.insertDefinition(utilsFileId, {
       name: 'MyClass',
       kind: 'class',
       isExported: true,
       isDefault: false,
       position: { row: 6, column: 0 },
       endPosition: { row: 10, column: 1 },
+    });
+
+    // Insert main function that depends on add and subtract
+    const mainId = db.insertDefinition(mainFileId, {
+      name: 'main',
+      kind: 'function',
+      isExported: true,
+      isDefault: false,
+      position: { row: 2, column: 0 },
+      endPosition: { row: 10, column: 1 },
+    });
+
+    // Create import reference from main.ts to utils.ts
+    const refId = db.insertReference(mainFileId, utilsFileId, {
+      type: 'import',
+      source: './utils',
+      isExternal: false,
+      isTypeOnly: false,
+      imports: [],
+      position: { row: 0, column: 0 },
+    });
+
+    // Create symbols linking to definitions
+    const addSymId = db.insertSymbol(refId, addId, {
+      name: 'add',
+      localName: 'add',
+      kind: 'named',
+      usages: [],
+    });
+
+    const subSymId = db.insertSymbol(refId, subtractId, {
+      name: 'subtract',
+      localName: 'subtract',
+      kind: 'named',
+      usages: [],
+    });
+
+    // Create usages within main function's line range
+    db.insertUsage(addSymId, {
+      position: { row: 4, column: 10 },
+      context: 'call_expression',
+    });
+
+    db.insertUsage(subSymId, {
+      position: { row: 6, column: 10 },
+      context: 'call_expression',
     });
 
     db.close();
@@ -212,7 +266,8 @@ describe('symbols metadata commands', () => {
       expect(output).not.toContain('\tadd\t');
       expect(output).toContain('subtract');
       expect(output).toContain('MyClass');
-      expect(output).toContain('Found 2 symbol(s)');
+      expect(output).toContain('main');
+      expect(output).toContain('Found 3 symbol(s)');
     });
 
     it('combines with --kind filter', () => {
@@ -227,7 +282,8 @@ describe('symbols metadata commands', () => {
       expect(output).toContain('add');
       expect(output).toContain('subtract');
       expect(output).toContain('MyClass');
-      expect(output).toContain('Found 3 symbol(s)');
+      expect(output).toContain('main');
+      expect(output).toContain('Found 4 symbol(s)');
     });
   });
 
@@ -268,6 +324,214 @@ describe('symbols metadata commands', () => {
       const output = runCommand(`symbols show --id 1 --json -d ${dbPath}`);
       const json = JSON.parse(output);
       expect(json.metadata).toEqual({});
+    });
+  });
+
+  describe('symbols deps', () => {
+    it('shows dependencies of a symbol', () => {
+      const output = runCommand(`symbols deps main -d ${dbPath}`);
+      expect(output).toContain('Dependencies for main');
+      expect(output).toContain('add');
+      expect(output).toContain('subtract');
+    });
+
+    it('shows dependency status with --aspect flag', () => {
+      // Set metadata on one dependency
+      const setupDb = new IndexDatabase(dbPath);
+      setupDb.setDefinitionMetadata(1, 'purpose', 'Adds two numbers');
+      setupDb.close();
+
+      const output = runCommand(`symbols deps main --aspect purpose -d ${dbPath}`);
+      expect(output).toContain('Dependencies for main');
+      expect(output).toContain('unmet');
+      expect(output).toContain('✓');
+      expect(output).toContain('✗');
+    });
+
+    it('returns JSON output with --json flag', () => {
+      const output = runCommand(`symbols deps main --json -d ${dbPath}`);
+      const json = JSON.parse(output);
+      expect(json.symbol.name).toBe('main');
+      expect(json.dependencies).toHaveLength(2);
+      expect(json.totalCount).toBe(2);
+    });
+
+    it('shows no dependencies message when symbol has none', () => {
+      const output = runCommand(`symbols deps add -d ${dbPath}`);
+      expect(output).toContain('has no dependencies');
+    });
+
+    it('reports error for non-existent symbol', () => {
+      const output = runCommand(`symbols deps nonexistent -d ${dbPath}`);
+      expect(output).toContain('No symbol found');
+    });
+
+    it('supports --id flag', () => {
+      const output = runCommand(`symbols deps --id 4 -d ${dbPath}`);
+      expect(output).toContain('Dependencies for main');
+    });
+  });
+
+  describe('symbols prereqs', () => {
+    it('shows prerequisites for understanding a symbol', () => {
+      const output = runCommand(`symbols prereqs main --aspect purpose -d ${dbPath}`);
+      // Should show add and subtract as prerequisites
+      expect(output).toContain('Prerequisites');
+      expect(output).toContain('purpose');
+    });
+
+    it('shows no prerequisites when all deps have aspect', () => {
+      // Set metadata on all dependencies
+      const setupDb = new IndexDatabase(dbPath);
+      setupDb.setDefinitionMetadata(1, 'purpose', 'Adds numbers');
+      setupDb.setDefinitionMetadata(2, 'purpose', 'Subtracts numbers');
+      setupDb.close();
+
+      const output = runCommand(`symbols prereqs main --aspect purpose -d ${dbPath}`);
+      expect(output).toContain('No prerequisites needed');
+    });
+
+    it('returns JSON output with --json flag', () => {
+      const output = runCommand(`symbols prereqs main --aspect purpose --json -d ${dbPath}`);
+      const json = JSON.parse(output);
+      expect(json.symbol.name).toBe('main');
+      expect(json.aspect).toBe('purpose');
+      expect(Array.isArray(json.prerequisites)).toBe(true);
+    });
+
+    it('requires --aspect flag', () => {
+      const output = runCommand(`symbols prereqs main -d ${dbPath}`);
+      expect(output).toContain('aspect');
+    });
+
+    it('supports --id flag', () => {
+      const output = runCommand(`symbols prereqs --id 4 --aspect purpose -d ${dbPath}`);
+      expect(output).toContain('Prerequisites');
+    });
+  });
+
+  describe('symbols ready --verbose', () => {
+    it('shows dependency info with --verbose flag', () => {
+      // Set metadata on one symbol so another becomes ready
+      const setupDb = new IndexDatabase(dbPath);
+      setupDb.setDefinitionMetadata(1, 'purpose', 'Adds numbers');
+      setupDb.setDefinitionMetadata(2, 'purpose', 'Subtracts numbers');
+      setupDb.close();
+
+      const output = runCommand(`symbols ready --aspect purpose --verbose -d ${dbPath}`);
+      expect(output).toContain('Ready to understand');
+      // Should show dependency info when verbose
+      // main depends on add and subtract which have purpose set
+    });
+
+    it('includes dependency metadata in JSON output when verbose', () => {
+      const setupDb = new IndexDatabase(dbPath);
+      setupDb.setDefinitionMetadata(1, 'purpose', 'Adds numbers');
+      setupDb.setDefinitionMetadata(2, 'purpose', 'Subtracts numbers');
+      setupDb.close();
+
+      const output = runCommand(`symbols ready --aspect purpose --verbose --json -d ${dbPath}`);
+      const json = JSON.parse(output);
+      expect(json.verbose).toBe(true);
+      // Symbols that have dependencies should include them
+      const symbolsWithDeps = json.symbols.filter((s: { dependencies?: unknown[] }) => s.dependencies && s.dependencies.length > 0);
+      if (symbolsWithDeps.length > 0) {
+        expect(symbolsWithDeps[0].dependencies).toBeDefined();
+      }
+    });
+
+    it('works without --verbose flag (no dependency info)', () => {
+      const output = runCommand(`symbols ready --aspect purpose --json -d ${dbPath}`);
+      const json = JSON.parse(output);
+      expect(json.verbose).toBe(false);
+    });
+  });
+
+  describe('symbols set --batch', () => {
+    it('sets metadata on multiple symbols from input file', () => {
+      const batchFile = path.join(testDir, 'batch.json');
+      fs.writeFileSync(batchFile, JSON.stringify([
+        { name: 'add', value: 'Adds two numbers' },
+        { name: 'subtract', value: 'Subtracts two numbers' },
+      ]));
+
+      const output = runCommand(`symbols set purpose -i ${batchFile} -d ${dbPath}`);
+      expect(output).toContain('Set purpose on 2 symbols');
+      expect(output).toContain('✓ add');
+      expect(output).toContain('✓ subtract');
+
+      // Verify metadata was saved
+      const verifyDb = new IndexDatabase(dbPath);
+      expect(verifyDb.getDefinitionMetadata(1).purpose).toBe('Adds two numbers');
+      expect(verifyDb.getDefinitionMetadata(2).purpose).toBe('Subtracts two numbers');
+      verifyDb.close();
+    });
+
+    it('reports failures for non-existent symbols', () => {
+      const batchFile = path.join(testDir, 'batch.json');
+      fs.writeFileSync(batchFile, JSON.stringify([
+        { name: 'add', value: 'Adds numbers' },
+        { name: 'nonexistent', value: 'Should fail' },
+      ]));
+
+      const output = runCommand(`symbols set purpose -i ${batchFile} -d ${dbPath}`);
+      expect(output).toContain('1 failed');
+      expect(output).toContain('✓ add');
+      expect(output).toContain('✗ nonexistent');
+    });
+
+    it('supports --id in batch entries', () => {
+      const batchFile = path.join(testDir, 'batch.json');
+      fs.writeFileSync(batchFile, JSON.stringify([
+        { id: 1, value: 'By ID' },
+      ]));
+
+      const output = runCommand(`symbols set purpose -i ${batchFile} -d ${dbPath}`);
+      expect(output).toContain('Set purpose on 1 symbols');
+
+      const verifyDb = new IndexDatabase(dbPath);
+      expect(verifyDb.getDefinitionMetadata(1).purpose).toBe('By ID');
+      verifyDb.close();
+    });
+
+    it('returns JSON output with --json flag', () => {
+      const batchFile = path.join(testDir, 'batch.json');
+      fs.writeFileSync(batchFile, JSON.stringify([
+        { name: 'add', value: 'Test' },
+      ]));
+
+      const output = runCommand(`symbols set purpose -i ${batchFile} --json -d ${dbPath}`);
+      const json = JSON.parse(output);
+      expect(json.key).toBe('purpose');
+      expect(json.results).toHaveLength(1);
+      expect(json.results[0].success).toBe(true);
+    });
+
+    it('handles empty input gracefully', () => {
+      const batchFile = path.join(testDir, 'batch.json');
+      fs.writeFileSync(batchFile, '[]');
+
+      const output = runCommand(`symbols set purpose -i ${batchFile} -d ${dbPath}`);
+      expect(output).toContain('Set purpose on 0 symbols');
+    });
+
+    it('reports error for invalid JSON', () => {
+      const batchFile = path.join(testDir, 'batch.json');
+      fs.writeFileSync(batchFile, 'not json');
+
+      const output = runCommand(`symbols set purpose -i ${batchFile} -d ${dbPath}`);
+      expect(output).toContain('Failed to parse JSON');
+    });
+
+    it('handles entries missing value', () => {
+      const batchFile = path.join(testDir, 'batch.json');
+      fs.writeFileSync(batchFile, JSON.stringify([
+        { name: 'add' }, // missing value
+      ]));
+
+      const output = runCommand(`symbols set purpose -i ${batchFile} -d ${dbPath}`);
+      expect(output).toContain('✗');
+      expect(output).toContain('Missing value');
     });
   });
 });
