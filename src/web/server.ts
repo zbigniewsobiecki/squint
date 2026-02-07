@@ -59,6 +59,8 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
         jsonResponse(res, db.getImportGraph());
       } else if (path === '/api/graph/classes') {
         jsonResponse(res, db.getClassHierarchy());
+      } else if (path === '/api/graph/symbols') {
+        jsonResponse(res, getSymbolGraph(db));
       } else {
         notFound(res, 'Not found');
       }
@@ -99,13 +101,116 @@ function serveHTML(res: http.ServerResponse): void {
   res.end(getEmbeddedHTML());
 }
 
+/**
+ * Build the symbol graph data for D3 visualization
+ */
+function getSymbolGraph(db: IndexDatabase): {
+  nodes: Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    hasAnnotations: boolean;
+    purpose?: string;
+    domain?: string[];
+    pure?: boolean;
+    lines: number;
+  }>;
+  edges: Array<{
+    source: number;
+    target: number;
+    semantic: string;
+  }>;
+  stats: {
+    totalSymbols: number;
+    annotatedSymbols: number;
+    totalRelationships: number;
+  };
+} {
+  // Get all definitions as nodes
+  const allDefs = db.getAllDefinitions();
+
+  // Get all relationship annotations (edges with labels)
+  // Handle case where table doesn't exist in older databases
+  let relationships: ReturnType<typeof db.getAllRelationshipAnnotations> = [];
+  try {
+    relationships = db.getAllRelationshipAnnotations({ limit: 10000 });
+  } catch {
+    // Table doesn't exist - continue with empty relationships
+  }
+
+  // Track which definition IDs have annotations
+  const annotatedIds = new Set<number>();
+  for (const rel of relationships) {
+    annotatedIds.add(rel.fromDefinitionId);
+    annotatedIds.add(rel.toDefinitionId);
+  }
+
+  // Get file paths for each definition
+  const fileMap = new Map<number, string>();
+  const files = db.getAllFiles();
+  for (const file of files) {
+    fileMap.set(file.id, file.path);
+  }
+
+  // Get metadata for all definitions
+  const metadataMap = new Map<number, Record<string, string>>();
+  for (const def of allDefs) {
+    const metadata = db.getDefinitionMetadata(def.id);
+    if (Object.keys(metadata).length > 0) {
+      metadataMap.set(def.id, metadata);
+    }
+  }
+
+  // Build nodes array with metadata
+  const nodes = allDefs.map(def => {
+    const metadata = metadataMap.get(def.id) || {};
+    let domain: string[] | undefined;
+    if (metadata.domain) {
+      try {
+        domain = JSON.parse(metadata.domain);
+      } catch {
+        domain = [metadata.domain];
+      }
+    }
+    return {
+      id: def.id,
+      name: def.name,
+      kind: def.kind,
+      filePath: fileMap.get(def.fileId) || '',
+      hasAnnotations: annotatedIds.has(def.id),
+      purpose: metadata.purpose,
+      domain,
+      pure: metadata.pure ? metadata.pure === 'true' : undefined,
+      lines: def.endLine - def.line + 1,
+    };
+  });
+
+  // Build edges array from relationships
+  const edges = relationships.map(rel => ({
+    source: rel.fromDefinitionId,
+    target: rel.toDefinitionId,
+    semantic: rel.semantic,
+  }));
+
+  return {
+    nodes,
+    edges,
+    stats: {
+      totalSymbols: nodes.length,
+      annotatedSymbols: annotatedIds.size,
+      totalRelationships: relationships.length,
+    },
+  };
+}
+
 function getEmbeddedHTML(): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ATS Code Browser</title>
+  <title>ATS Symbol Graph</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
     * {
@@ -136,6 +241,7 @@ function getEmbeddedHTML(): string {
       display: flex;
       align-items: center;
       gap: 16px;
+      flex-shrink: 0;
     }
 
     header h1 {
@@ -163,292 +269,60 @@ function getEmbeddedHTML(): string {
       font-weight: 500;
     }
 
-    /* Tab Navigation */
-    .tabs {
-      display: flex;
-      background: #252526;
-      border-bottom: 1px solid #3c3c3c;
-      padding: 0 16px;
-    }
-
-    .tab {
-      padding: 10px 16px;
-      cursor: pointer;
-      color: #858585;
-      border-bottom: 2px solid transparent;
-      transition: all 0.2s;
-    }
-
-    .tab:hover {
-      color: #d4d4d4;
-    }
-
-    .tab.active {
-      color: #e0e0e0;
-      border-bottom-color: #007acc;
-    }
-
-    /* Main Content */
-    .main {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
-
-    /* Sidebar */
-    .sidebar {
-      width: 300px;
-      background: #252526;
-      border-right: 1px solid #3c3c3c;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-
-    .sidebar-header {
-      padding: 12px 16px;
-      border-bottom: 1px solid #3c3c3c;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .sidebar-header h2 {
-      font-size: 14px;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #858585;
-    }
-
-    .search-box {
-      padding: 8px 16px;
-      border-bottom: 1px solid #3c3c3c;
-    }
-
-    .search-box input {
-      width: 100%;
-      padding: 6px 10px;
-      background: #3c3c3c;
-      border: 1px solid #3c3c3c;
-      border-radius: 4px;
-      color: #d4d4d4;
-      font-size: 13px;
-    }
-
-    .search-box input:focus {
-      outline: none;
-      border-color: #007acc;
-    }
-
-    .sidebar-content {
-      flex: 1;
-      overflow-y: auto;
-    }
-
-    /* File Tree */
-    .tree-item {
-      padding: 6px 16px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .tree-item:hover {
-      background: #2a2d2e;
-    }
-
-    .tree-item.selected {
-      background: #094771;
-    }
-
-    .tree-item .icon {
-      width: 16px;
-      height: 16px;
-      flex-shrink: 0;
-    }
-
-    .tree-item.folder > .icon {
-      color: #dcb67a;
-    }
-
-    .tree-item.file > .icon {
-      color: #519aba;
-    }
-
-    .tree-children {
-      display: none;
-    }
-
-    .tree-children.expanded {
-      display: block;
-    }
-
-    .tree-item.folder .toggle {
-      width: 16px;
-      text-align: center;
-      color: #858585;
-    }
-
-    /* Definition list in sidebar */
-    .definition-item {
-      padding: 6px 16px 6px 24px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-    }
-
-    .definition-item:hover {
-      background: #2a2d2e;
-    }
-
-    .definition-item .kind {
-      font-size: 11px;
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-weight: 500;
-    }
-
-    .kind-function { background: #3d5a80; color: #a8d0e6; }
-    .kind-class { background: #5a3d80; color: #d0a8e6; }
-    .kind-interface { background: #3d8050; color: #a8e6b4; }
-    .kind-type { background: #806a3d; color: #e6d4a8; }
-    .kind-variable, .kind-const { background: #803d3d; color: #e6a8a8; }
-    .kind-enum { background: #3d6880; color: #a8cce6; }
-
-    .definition-item .name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .definition-item .exported {
+    .stat-value.annotated {
       color: #6a9955;
-      font-size: 11px;
     }
 
-    /* Visualization Area */
-    .visualization {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-
-    .viz-container {
+    /* Graph Container */
+    .graph-container {
       flex: 1;
       position: relative;
       overflow: hidden;
     }
 
-    .viz-container svg {
+    .graph-container svg {
       width: 100%;
       height: 100%;
     }
 
     /* Graph Styles */
     .node circle {
-      stroke: #3c3c3c;
-      stroke-width: 2px;
       cursor: pointer;
+      transition: stroke-width 0.2s;
+    }
+
+    .node circle:hover {
+      stroke-width: 3px;
     }
 
     .node text {
-      font-size: 11px;
+      font-size: 10px;
       fill: #d4d4d4;
       pointer-events: none;
     }
 
+    .node.greyed-out circle {
+      opacity: 0.3;
+    }
+
+    .node.greyed-out text {
+      opacity: 0.4;
+    }
+
     .link {
-      stroke: #4a4a4a;
       stroke-opacity: 0.6;
       fill: none;
     }
 
-    .link.extends {
-      stroke: #4fc1ff;
+    .link-label {
+      font-size: 9px;
+      fill: #858585;
+      pointer-events: none;
     }
 
-    .link.implements {
-      stroke: #6a9955;
-      stroke-dasharray: 4 2;
-    }
-
-    .link.import {
-      stroke: #ce9178;
-    }
-
-    /* Details Panel */
-    .details-panel {
-      height: 200px;
-      background: #252526;
-      border-top: 1px solid #3c3c3c;
-      overflow-y: auto;
-      padding: 16px;
-    }
-
-    .details-panel h3 {
-      font-size: 14px;
-      margin-bottom: 12px;
-      color: #e0e0e0;
-    }
-
-    .details-grid {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 8px 16px;
-      font-size: 13px;
-    }
-
-    .details-label {
-      color: #858585;
-    }
-
-    .details-value {
-      color: #d4d4d4;
-    }
-
-    .details-value a {
-      color: #4fc1ff;
-      text-decoration: none;
-    }
-
-    .details-value a:hover {
-      text-decoration: underline;
-    }
-
-    /* Breadcrumb */
-    .breadcrumb {
-      padding: 8px 16px;
-      background: #252526;
-      border-top: 1px solid #3c3c3c;
-      font-size: 13px;
-      color: #858585;
-    }
-
-    .breadcrumb span {
-      color: #4fc1ff;
-      cursor: pointer;
-    }
-
-    .breadcrumb span:hover {
-      text-decoration: underline;
-    }
-
-    /* Loading & Empty states */
-    .loading, .empty {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      color: #858585;
-      font-size: 14px;
+    /* Arrow marker */
+    marker path {
+      fill: #4a4a4a;
     }
 
     /* Tooltip */
@@ -461,103 +335,215 @@ function getEmbeddedHTML(): string {
       font-size: 12px;
       pointer-events: none;
       z-index: 1000;
-      max-width: 300px;
+      max-width: 450px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     }
 
     .tooltip .name {
       font-weight: 600;
       color: #e0e0e0;
+      margin-bottom: 4px;
     }
 
     .tooltip .kind {
-      color: #4fc1ff;
-      font-size: 11px;
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: 500;
+      margin-right: 6px;
+    }
+
+    .tooltip .lines {
+      font-size: 10px;
+      color: #858585;
     }
 
     .tooltip .location {
       color: #858585;
       font-size: 11px;
+    }
+
+    .tooltip .semantic {
+      color: #ce9178;
+      font-size: 11px;
       margin-top: 4px;
+      font-style: italic;
     }
 
-    /* Callsites list */
-    .callsites-list {
-      margin-top: 12px;
+    .tooltip .domains {
+      margin: 6px 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
     }
 
-    .callsite-item {
-      padding: 4px 0;
-      font-size: 12px;
+    .tooltip .domain-tag {
+      background: #2d4a5a;
+      color: #8cc4d4;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    .tooltip .pure {
+      font-size: 10px;
+      margin: 4px 0;
+      padding: 2px 6px;
+      border-radius: 3px;
+      display: inline-block;
+    }
+
+    .tooltip .pure.is-pure {
+      background: #2d5a3d;
+      color: #8cd4a8;
+    }
+
+    .tooltip .pure.has-side-effects {
+      background: #5a3d2d;
+      color: #d4a88c;
+    }
+
+    .tooltip .purpose {
       color: #d4d4d4;
+      font-size: 11px;
+      margin-top: 6px;
+      line-height: 1.4;
+      border-top: 1px solid #4a4a4a;
+      padding-top: 6px;
     }
 
-    .callsite-item .file {
-      color: #4fc1ff;
+    /* Kind colors */
+    .kind-function { background: #3d5a80; color: #a8d0e6; }
+    .kind-class { background: #5a3d80; color: #d0a8e6; }
+    .kind-interface { background: #3d8050; color: #a8e6b4; }
+    .kind-type { background: #806a3d; color: #e6d4a8; }
+    .kind-variable, .kind-const { background: #803d3d; color: #e6a8a8; }
+    .kind-enum { background: #3d6880; color: #a8cce6; }
+    .kind-method { background: #4a6670; color: #b8d4dc; }
+
+    /* Legend */
+    .legend {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      background: rgba(37, 37, 38, 0.9);
+      border: 1px solid #3c3c3c;
+      border-radius: 4px;
+      padding: 12px;
+      font-size: 11px;
     }
 
-    .callsite-item .line {
+    .legend-title {
       color: #858585;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .legend-circle {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid #3c3c3c;
+    }
+
+    .legend-circle.greyed {
+      opacity: 0.3;
+    }
+
+    /* Loading */
+    .loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #858585;
+      font-size: 14px;
+    }
+
+    /* Empty state */
+    .empty-state {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      color: #858585;
+    }
+
+    .empty-state h2 {
+      color: #d4d4d4;
+      margin-bottom: 8px;
     }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>ATS Code Browser</h1>
+      <h1>ATS Symbol Graph</h1>
       <div class="stats" id="stats">
-        <span class="stat">Files: <span class="stat-value" id="stat-files">-</span></span>
-        <span class="stat">Definitions: <span class="stat-value" id="stat-definitions">-</span></span>
-        <span class="stat">Imports: <span class="stat-value" id="stat-imports">-</span></span>
-        <span class="stat">Usages: <span class="stat-value" id="stat-usages">-</span></span>
+        <span class="stat">Symbols: <span class="stat-value" id="stat-symbols">-</span></span>
+        <span class="stat">Annotated: <span class="stat-value annotated" id="stat-annotated">-</span></span>
+        <span class="stat">Relationships: <span class="stat-value" id="stat-relationships">-</span></span>
       </div>
     </header>
 
-    <div class="tabs">
-      <div class="tab active" data-tab="files">Files</div>
-      <div class="tab" data-tab="definitions">Definitions</div>
-      <div class="tab" data-tab="imports">Import Graph</div>
-      <div class="tab" data-tab="classes">Class Hierarchy</div>
+    <div class="graph-container" id="graph-container">
+      <svg id="graph-svg"></svg>
+      <div class="loading" id="loading">Loading symbol graph...</div>
     </div>
 
-    <div class="main">
-      <div class="sidebar">
-        <div class="sidebar-header">
-          <h2 id="sidebar-title">Files</h2>
-        </div>
-        <div class="search-box">
-          <input type="text" id="search" placeholder="Search...">
-        </div>
-        <div class="sidebar-content" id="sidebar-content">
-          <div class="loading">Loading...</div>
-        </div>
+    <div class="legend">
+      <div class="legend-title">Symbol Types</div>
+      <div class="legend-item">
+        <div class="legend-circle" style="background: #3d5a80;"></div>
+        <span>function</span>
       </div>
-
-      <div class="visualization">
-        <div class="viz-container" id="viz-container">
-          <svg id="viz-svg"></svg>
-        </div>
-        <div class="details-panel" id="details-panel">
-          <div class="empty">Select an item to view details</div>
-        </div>
+      <div class="legend-item">
+        <div class="legend-circle" style="background: #5a3d80;"></div>
+        <span>class</span>
       </div>
-    </div>
-
-    <div class="breadcrumb" id="breadcrumb">
-      <span data-path="">Home</span>
+      <div class="legend-item">
+        <div class="legend-circle" style="background: #3d8050;"></div>
+        <span>interface</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-circle" style="background: #806a3d;"></div>
+        <span>type</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-circle greyed" style="background: #666;"></div>
+        <span>no annotations</span>
+      </div>
     </div>
   </div>
 
   <div class="tooltip" id="tooltip" style="display: none;"></div>
 
   <script>
-    // State
-    let currentTab = 'files';
-    let files = [];
-    let definitions = [];
-    let selectedItem = null;
     let simulation = null;
 
-    // API helpers
+    // Color scheme for different kinds
+    const kindColors = {
+      'function': '#3d5a80',
+      'class': '#5a3d80',
+      'interface': '#3d8050',
+      'type': '#806a3d',
+      'variable': '#803d3d',
+      'const': '#803d3d',
+      'enum': '#3d6880',
+      'method': '#4a6670'
+    };
+
+    // API helper
     async function fetchJSON(url) {
       const res = await fetch(url);
       return res.json();
@@ -565,378 +551,86 @@ function getEmbeddedHTML(): string {
 
     // Initialize
     async function init() {
-      const stats = await fetchJSON('/api/stats');
-      document.getElementById('stat-files').textContent = stats.files;
-      document.getElementById('stat-definitions').textContent = stats.definitions;
-      document.getElementById('stat-imports').textContent = stats.imports;
-      document.getElementById('stat-usages').textContent = stats.usages;
+      try {
+        const data = await fetchJSON('/api/graph/symbols');
 
-      files = await fetchJSON('/api/files');
-      definitions = await fetchJSON('/api/definitions');
+        // Update stats
+        document.getElementById('stat-symbols').textContent = data.stats.totalSymbols;
+        document.getElementById('stat-annotated').textContent = data.stats.annotatedSymbols;
+        document.getElementById('stat-relationships').textContent = data.stats.totalRelationships;
 
-      setupTabs();
-      setupSearch();
-      showTab('files');
-    }
+        // Hide loading
+        document.getElementById('loading').style.display = 'none';
 
-    // Tab handling
-    function setupTabs() {
-      document.querySelectorAll('.tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-          document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-          tab.classList.add('active');
-          showTab(tab.dataset.tab);
-        });
-      });
-    }
-
-    function showTab(tab) {
-      currentTab = tab;
-      const sidebar = document.getElementById('sidebar-content');
-      const viz = document.getElementById('viz-container');
-
-      // Stop any running simulation
-      if (simulation) {
-        simulation.stop();
-        simulation = null;
-      }
-
-      switch (tab) {
-        case 'files':
-          document.getElementById('sidebar-title').textContent = 'Files';
-          renderFileTree(sidebar);
-          clearVisualization();
-          break;
-        case 'definitions':
-          document.getElementById('sidebar-title').textContent = 'Definitions';
-          renderDefinitionList(sidebar);
-          clearVisualization();
-          break;
-        case 'imports':
-          document.getElementById('sidebar-title').textContent = 'Import Graph';
-          renderFileList(sidebar);
-          renderImportGraph();
-          break;
-        case 'classes':
-          document.getElementById('sidebar-title').textContent = 'Class Hierarchy';
-          renderClassList(sidebar);
-          renderClassHierarchy();
-          break;
-      }
-    }
-
-    // Search
-    function setupSearch() {
-      const searchInput = document.getElementById('search');
-      searchInput.addEventListener('input', (e) => {
-        const query = e.target.value.toLowerCase();
-        filterSidebar(query);
-      });
-    }
-
-    function filterSidebar(query) {
-      const items = document.querySelectorAll('.sidebar-content .tree-item, .sidebar-content .definition-item');
-      items.forEach(item => {
-        const text = item.textContent.toLowerCase();
-        item.style.display = text.includes(query) ? '' : 'none';
-      });
-    }
-
-    // File Tree
-    function renderFileTree(container) {
-      const tree = buildFileTree(files);
-      container.innerHTML = '';
-      renderTreeNodes(container, tree, 0);
-    }
-
-    function buildFileTree(files) {
-      const root = { name: '', children: {}, files: [] };
-
-      files.forEach(file => {
-        const parts = file.path.split('/');
-        let current = root;
-
-        for (let i = 0; i < parts.length - 1; i++) {
-          const part = parts[i];
-          if (!current.children[part]) {
-            current.children[part] = { name: part, children: {}, files: [] };
-          }
-          current = current.children[part];
+        if (data.nodes.length === 0) {
+          showEmptyState();
+          return;
         }
 
-        current.files.push({ ...file, name: parts[parts.length - 1] });
-      });
-
-      return root;
+        renderSymbolGraph(data);
+      } catch (error) {
+        console.error('Failed to load graph:', error);
+        document.getElementById('loading').textContent = 'Failed to load graph';
+      }
     }
 
-    function renderTreeNodes(container, node, depth) {
-      // Sort folders first, then files
-      const folders = Object.values(node.children).sort((a, b) => a.name.localeCompare(b.name));
-      const nodeFiles = node.files.sort((a, b) => a.name.localeCompare(b.name));
-
-      folders.forEach(folder => {
-        const div = document.createElement('div');
-        div.className = 'tree-item folder';
-        div.style.paddingLeft = (16 + depth * 16) + 'px';
-        div.innerHTML = \`
-          <span class="toggle">+</span>
-          <span class="icon">&#x1F4C1;</span>
-          <span>\${folder.name}</span>
-        \`;
-
-        const children = document.createElement('div');
-        children.className = 'tree-children';
-        renderTreeNodes(children, folder, depth + 1);
-
-        div.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const toggle = div.querySelector('.toggle');
-          if (children.classList.contains('expanded')) {
-            children.classList.remove('expanded');
-            toggle.textContent = '+';
-          } else {
-            children.classList.add('expanded');
-            toggle.textContent = '-';
-          }
-        });
-
-        container.appendChild(div);
-        container.appendChild(children);
-      });
-
-      nodeFiles.forEach(file => {
-        const div = document.createElement('div');
-        div.className = 'tree-item file';
-        div.style.paddingLeft = (32 + depth * 16) + 'px';
-        div.innerHTML = \`
-          <span class="icon">&#x1F4C4;</span>
-          <span>\${file.name}</span>
-        \`;
-        div.addEventListener('click', () => selectFile(file));
-        container.appendChild(div);
-      });
-    }
-
-    function renderFileList(container) {
-      container.innerHTML = '';
-      files.forEach(file => {
-        const div = document.createElement('div');
-        div.className = 'tree-item file';
-        div.innerHTML = \`
-          <span class="icon">&#x1F4C4;</span>
-          <span>\${file.path}</span>
-        \`;
-        div.addEventListener('click', () => highlightFileInGraph(file.id));
-        container.appendChild(div);
-      });
-    }
-
-    // Definition List
-    function renderDefinitionList(container) {
-      container.innerHTML = '';
-      definitions.forEach(def => {
-        const div = document.createElement('div');
-        div.className = 'definition-item';
-        div.innerHTML = \`
-          <span class="kind kind-\${def.kind}">\${def.kind}</span>
-          <span class="name">\${def.name}</span>
-          \${def.isExported ? '<span class="exported">export</span>' : ''}
-        \`;
-        div.addEventListener('click', () => selectDefinition(def));
-        container.appendChild(div);
-      });
-    }
-
-    function renderClassList(container) {
-      container.innerHTML = '';
-      const classes = definitions.filter(d => d.kind === 'class' || d.kind === 'interface');
-      classes.forEach(def => {
-        const div = document.createElement('div');
-        div.className = 'definition-item';
-        div.innerHTML = \`
-          <span class="kind kind-\${def.kind}">\${def.kind}</span>
-          <span class="name">\${def.name}</span>
-          \${def.extendsName ? '<span class="exported">: ' + def.extendsName + '</span>' : ''}
-        \`;
-        div.addEventListener('click', () => highlightClassInGraph(def.id));
-        container.appendChild(div);
-      });
-    }
-
-    // Selection handlers
-    async function selectFile(file) {
-      selectedItem = file;
-      updateBreadcrumb(file.path);
-
-      const details = await fetchJSON('/api/files/' + file.id);
-      showFileDetails(details);
-    }
-
-    async function selectDefinition(def) {
-      selectedItem = def;
-
-      const details = await fetchJSON('/api/definitions/' + def.id);
-      const callsites = await fetchJSON('/api/definitions/' + def.id + '/callsites');
-      showDefinitionDetails(details, callsites);
-      updateBreadcrumb(details.filePath + ':' + details.line);
-    }
-
-    // Details Panel
-    function showFileDetails(file) {
-      const panel = document.getElementById('details-panel');
-      let html = \`
-        <h3>\${file.path}</h3>
-        <div class="details-grid">
-          <span class="details-label">Language:</span>
-          <span class="details-value">\${file.language}</span>
-          <span class="details-label">Size:</span>
-          <span class="details-value">\${formatBytes(file.sizeBytes)}</span>
-          <span class="details-label">Modified:</span>
-          <span class="details-value">\${file.modifiedAt}</span>
-          <span class="details-label">Definitions:</span>
-          <span class="details-value">\${file.definitions.length}</span>
-          <span class="details-label">Imports:</span>
-          <span class="details-value">\${file.imports.length}</span>
+    function showEmptyState() {
+      const container = document.getElementById('graph-container');
+      container.innerHTML = \`
+        <div class="empty-state">
+          <h2>No symbols found</h2>
+          <p>Index a codebase to see the symbol graph</p>
         </div>
       \`;
-
-      if (file.definitions.length > 0) {
-        html += '<h3 style="margin-top: 16px;">Definitions</h3>';
-        file.definitions.forEach(def => {
-          html += \`
-            <div class="definition-item" onclick="selectDefinition({id: \${def.id}})">
-              <span class="kind kind-\${def.kind}">\${def.kind}</span>
-              <span class="name">\${def.name}</span>
-              <span class="details-label">:\${def.line}</span>
-            </div>
-          \`;
-        });
-      }
-
-      panel.innerHTML = html;
     }
 
-    function showDefinitionDetails(def, callsites) {
-      const panel = document.getElementById('details-panel');
-      let html = \`
-        <h3>\${def.name}</h3>
-        <div class="details-grid">
-          <span class="details-label">Kind:</span>
-          <span class="details-value"><span class="kind kind-\${def.kind}">\${def.kind}</span></span>
-          <span class="details-label">File:</span>
-          <span class="details-value"><a href="#" onclick="selectFileById(\${def.fileId})">\${def.filePath}</a></span>
-          <span class="details-label">Location:</span>
-          <span class="details-value">Line \${def.line}, Column \${def.column}</span>
-          <span class="details-label">Exported:</span>
-          <span class="details-value">\${def.isExported ? 'Yes' : 'No'}</span>
-      \`;
-
-      if (def.extendsName) {
-        html += \`
-          <span class="details-label">Extends:</span>
-          <span class="details-value">\${def.extendsName}</span>
-        \`;
-      }
-
-      if (def.implementsNames && def.implementsNames.length > 0) {
-        html += \`
-          <span class="details-label">Implements:</span>
-          <span class="details-value">\${def.implementsNames.join(', ')}</span>
-        \`;
-      }
-
-      html += '</div>';
-
-      if (callsites.length > 0) {
-        html += \`<h3 style="margin-top: 16px;">Callsites (\${callsites.length})</h3><div class="callsites-list">\`;
-        callsites.forEach(cs => {
-          html += \`
-            <div class="callsite-item">
-              <span class="file">\${cs.filePath}</span>:<span class="line">\${cs.line}</span>
-              \${cs.receiverName ? '(' + cs.receiverName + '.' + cs.localName + ')' : ''}
-            </div>
-          \`;
-        });
-        html += '</div>';
-      }
-
-      panel.innerHTML = html;
-    }
-
-    async function selectFileById(fileId) {
-      const file = files.find(f => f.id === fileId);
-      if (file) {
-        await selectFile(file);
-      }
-    }
-
-    // Breadcrumb
-    function updateBreadcrumb(path) {
-      const bc = document.getElementById('breadcrumb');
-      const parts = path.split('/');
-      let html = '<span data-path="" onclick="clearSelection()">Home</span>';
-
-      parts.forEach((part, i) => {
-        html += ' / <span>' + part + '</span>';
-      });
-
-      bc.innerHTML = html;
-    }
-
-    function clearSelection() {
-      selectedItem = null;
-      document.getElementById('details-panel').innerHTML = '<div class="empty">Select an item to view details</div>';
-      document.getElementById('breadcrumb').innerHTML = '<span data-path="">Home</span>';
-    }
-
-    // Visualization
-    function clearVisualization() {
-      const svg = d3.select('#viz-svg');
-      svg.selectAll('*').remove();
-    }
-
-    async function renderImportGraph() {
-      const data = await fetchJSON('/api/graph/imports');
-      renderForceGraph(data, 'import');
-    }
-
-    async function renderClassHierarchy() {
-      const data = await fetchJSON('/api/graph/classes');
-      if (data.nodes.length === 0) {
-        const svg = d3.select('#viz-svg');
-        svg.selectAll('*').remove();
-        svg.append('text')
-          .attr('x', '50%')
-          .attr('y', '50%')
-          .attr('text-anchor', 'middle')
-          .attr('fill', '#858585')
-          .text('No classes or interfaces found');
-        return;
-      }
-      renderForceGraph(data, 'hierarchy');
-    }
-
-    function renderForceGraph(data, type) {
-      const container = document.getElementById('viz-container');
+    function renderSymbolGraph(data) {
+      const container = document.getElementById('graph-container');
       const width = container.clientWidth;
       const height = container.clientHeight;
 
-      const svg = d3.select('#viz-svg');
+      const svg = d3.select('#graph-svg');
       svg.selectAll('*').remove();
 
-      // Create node id lookup for links
+      // Create node id lookup
       const nodeById = new Map(data.nodes.map(n => [n.id, n]));
 
-      // Filter valid links
-      const links = data.links.filter(l => nodeById.has(l.source) && nodeById.has(l.target));
+      // Filter valid edges and create link objects
+      const links = data.edges
+        .filter(e => nodeById.has(e.source) && nodeById.has(e.target))
+        .map(e => ({
+          source: e.source,
+          target: e.target,
+          semantic: e.semantic
+        }));
 
-      // Create simulation
+      // Define arrow marker
+      svg.append('defs').append('marker')
+        .attr('id', 'arrowhead')
+        .attr('viewBox', '-0 -5 10 10')
+        .attr('refX', 20)
+        .attr('refY', 0)
+        .attr('orient', 'auto')
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .append('path')
+        .attr('d', 'M 0,-5 L 10,0 L 0,5')
+        .attr('fill', '#4a4a4a');
+
+      // Calculate node radius based on lines (same formula used for rendering)
+      const getNodeRadius = (lines) => {
+        const minR = 5, maxR = 25;
+        const maxLines = 300;
+        const normalized = Math.sqrt(Math.min(lines, maxLines)) / Math.sqrt(maxLines);
+        return minR + normalized * (maxR - minR);
+      };
+
+      // Create simulation with dynamic collision radius
       simulation = d3.forceSimulation(data.nodes)
-        .force('link', d3.forceLink(links).id(d => d.id).distance(100))
+        .force('link', d3.forceLink(links).id(d => d.id).distance(150))
         .force('charge', d3.forceManyBody().strength(-300))
         .force('center', d3.forceCenter(width / 2, height / 2))
-        .force('collision', d3.forceCollide().radius(30));
+        .force('collision', d3.forceCollide().radius(d => getNodeRadius(d.lines) + 15));
 
       // Zoom behavior
       const g = svg.append('g');
@@ -949,56 +643,83 @@ function getEmbeddedHTML(): string {
 
       // Draw links
       const link = g.append('g')
+        .attr('class', 'links')
         .selectAll('line')
         .data(links)
         .enter()
         .append('line')
-        .attr('class', d => 'link ' + (d.type || type))
-        .attr('stroke-width', 1.5);
+        .attr('class', 'link')
+        .attr('stroke', '#4a4a4a')
+        .attr('stroke-width', 1.5)
+        .attr('marker-end', 'url(#arrowhead)');
+
+      // Draw link labels (semantic annotations)
+      const linkLabel = g.append('g')
+        .attr('class', 'link-labels')
+        .selectAll('text')
+        .data(links)
+        .enter()
+        .append('text')
+        .attr('class', 'link-label')
+        .text(d => {
+          // Truncate long labels
+          const label = d.semantic || '';
+          return label.length > 25 ? label.substring(0, 22) + '...' : label;
+        });
 
       // Draw nodes
       const node = g.append('g')
+        .attr('class', 'nodes')
         .selectAll('.node')
         .data(data.nodes)
         .enter()
         .append('g')
-        .attr('class', 'node')
+        .attr('class', d => 'node' + (d.hasAnnotations ? '' : ' greyed-out'))
         .call(d3.drag()
           .on('start', dragstarted)
           .on('drag', dragged)
           .on('end', dragended));
 
+      // Calculate node radius based on lines of code (log scale)
+      // Min: 5px, Max: 25px
+      const getRadius = (lines) => {
+        const minR = 5, maxR = 25;
+        const minLines = 1, maxLines = 300;
+        // Use sqrt for more visible differentiation
+        const normalized = Math.sqrt(Math.min(lines, maxLines)) / Math.sqrt(maxLines);
+        return minR + normalized * (maxR - minR);
+      };
+
       // Node circles
       node.append('circle')
-        .attr('r', d => d.kind === 'class' ? 12 : d.kind === 'interface' ? 10 : 8)
-        .attr('fill', d => {
-          if (d.kind === 'class') return '#5a3d80';
-          if (d.kind === 'interface') return '#3d8050';
-          return '#3d5a80';
-        });
+        .attr('r', d => getRadius(d.lines))
+        .attr('fill', d => kindColors[d.kind] || '#666')
+        .attr('stroke', d => d.hasAnnotations ? '#6a9955' : '#3c3c3c')
+        .attr('stroke-width', d => d.hasAnnotations ? 2 : 1.5);
 
-      // Node labels
+      // Node labels (positioned based on node size)
       node.append('text')
-        .attr('dx', 15)
+        .attr('dx', d => getRadius(d.lines) + 4)
         .attr('dy', 4)
-        .text(d => {
-          const name = d.name;
-          if (type === 'import') {
-            // Show just filename for imports
-            return name.split('/').pop();
-          }
-          return name;
-        });
+        .text(d => d.name);
 
       // Tooltip
       const tooltip = d3.select('#tooltip');
 
       node.on('mouseover', (event, d) => {
+        const domainHtml = d.domain ? \`<div class="domains">\${d.domain.map(dom => '<span class="domain-tag">' + dom + '</span>').join('')}</div>\` : '';
+        const pureHtml = d.pure !== undefined ? \`<div class="pure \${d.pure ? 'is-pure' : 'has-side-effects'}">\${d.pure ? 'Pure function' : 'Has side effects'}</div>\` : '';
+        const purposeHtml = d.purpose ? \`<div class="purpose">\${d.purpose}</div>\` : '';
+
         tooltip.style('display', 'block')
           .html(\`
             <div class="name">\${d.name}</div>
-            <div class="kind">\${d.kind}</div>
-            \${d.extendsName ? '<div class="location">extends ' + d.extendsName + '</div>' : ''}
+            <span class="kind kind-\${d.kind}">\${d.kind}</span>
+            <span class="lines">\${d.lines} lines</span>
+            \${domainHtml}
+            \${pureHtml}
+            \${purposeHtml}
+            <div class="location">\${d.filePath.split('/').slice(-2).join('/')}</div>
           \`);
       })
       .on('mousemove', (event) => {
@@ -1007,19 +728,22 @@ function getEmbeddedHTML(): string {
       })
       .on('mouseout', () => {
         tooltip.style('display', 'none');
+      });
+
+      // Link hover for semantic labels
+      link.on('mouseover', (event, d) => {
+        tooltip.style('display', 'block')
+          .html(\`
+            <div class="name">\${nodeById.get(d.source.id)?.name || d.source} → \${nodeById.get(d.target.id)?.name || d.target}</div>
+            <div class="semantic">\${d.semantic}</div>
+          \`);
       })
-      .on('click', async (event, d) => {
-        if (type === 'hierarchy') {
-          const def = definitions.find(def => def.id === d.id);
-          if (def) {
-            await selectDefinition(def);
-          }
-        } else {
-          const file = files.find(f => f.id === d.id);
-          if (file) {
-            await selectFile(file);
-          }
-        }
+      .on('mousemove', (event) => {
+        tooltip.style('left', (event.pageX + 10) + 'px')
+          .style('top', (event.pageY - 10) + 'px');
+      })
+      .on('mouseout', () => {
+        tooltip.style('display', 'none');
       });
 
       // Update positions on tick
@@ -1029,6 +753,10 @@ function getEmbeddedHTML(): string {
           .attr('y1', d => d.source.y)
           .attr('x2', d => d.target.x)
           .attr('y2', d => d.target.y);
+
+        linkLabel
+          .attr('x', d => (d.source.x + d.target.x) / 2)
+          .attr('y', d => (d.source.y + d.target.y) / 2);
 
         node.attr('transform', d => \`translate(\${d.x},\${d.y})\`);
       });
@@ -1049,23 +777,6 @@ function getEmbeddedHTML(): string {
         d.fx = null;
         d.fy = null;
       }
-    }
-
-    function highlightFileInGraph(fileId) {
-      d3.selectAll('.node circle').attr('stroke', d => d.id === fileId ? '#fff' : '#3c3c3c');
-    }
-
-    function highlightClassInGraph(defId) {
-      d3.selectAll('.node circle').attr('stroke', d => d.id === defId ? '#fff' : '#3c3c3c');
-    }
-
-    // Utilities
-    function formatBytes(bytes) {
-      if (bytes === 0) return '0 B';
-      const k = 1024;
-      const sizes = ['B', 'KB', 'MB', 'GB'];
-      const i = Math.floor(Math.log(bytes) / Math.log(k));
-      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     }
 
     // Start

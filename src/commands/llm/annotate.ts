@@ -455,9 +455,15 @@ export default class Annotate extends Command {
         });
         const finalCoverage = filterCoverageForAspects(updatedCoverage, aspects, totalSymbols);
 
-        // Get relationship coverage
-        const annotatedRels = db.getRelationshipAnnotationCount();
-        const unannotatedRels = db.getUnannotatedRelationshipCount();
+        // Get relationship coverage (handle missing table in older databases)
+        let annotatedRels = 0;
+        let unannotatedRels = 0;
+        try {
+          annotatedRels = db.getRelationshipAnnotationCount();
+          unannotatedRels = db.getUnannotatedRelationshipCount();
+        } catch {
+          // Table doesn't exist - continue with zeros
+        }
         const totalRels = annotatedRels + unannotatedRels;
         const relCoverage: RelationshipCoverageInfo = {
           annotated: annotatedRels,
@@ -510,9 +516,15 @@ export default class Annotate extends Command {
       });
       const coverage = filterCoverageForAspects(finalCoverageData, aspects, totalSymbols);
 
-      // Get final relationship coverage
-      const finalAnnotatedRels = db.getRelationshipAnnotationCount();
-      const finalUnannotatedRels = db.getUnannotatedRelationshipCount();
+      // Get final relationship coverage (handle missing table in older databases)
+      let finalAnnotatedRels = 0;
+      let finalUnannotatedRels = 0;
+      try {
+        finalAnnotatedRels = db.getRelationshipAnnotationCount();
+        finalUnannotatedRels = db.getUnannotatedRelationshipCount();
+      } catch {
+        // Table doesn't exist - continue with zeros
+      }
       const finalTotalRels = finalAnnotatedRels + finalUnannotatedRels;
       const finalRelCoverage: RelationshipCoverageInfo = {
         annotated: finalAnnotatedRels,
@@ -579,8 +591,13 @@ export default class Annotate extends Command {
         };
       });
 
-      // Get unannotated relationships from this symbol
-      const unannotatedRels = db.getUnannotatedRelationships({ fromDefinitionId: symbol.id, limit: 50 });
+      // Get unannotated relationships from this symbol (handle missing table)
+      let unannotatedRels: ReturnType<typeof db.getUnannotatedRelationships> = [];
+      try {
+        unannotatedRels = db.getUnannotatedRelationships({ fromDefinitionId: symbol.id, limit: 50 });
+      } catch {
+        // Table doesn't exist - continue with empty relationships
+      }
       const relationshipsToAnnotate: RelationshipToAnnotate[] = unannotatedRels.map(rel => ({
         toId: rel.toDefinitionId,
         toName: rel.toName,

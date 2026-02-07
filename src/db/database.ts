@@ -541,6 +541,7 @@ export class IndexDatabase implements IIndexWriter {
     isDefault: boolean;
     line: number;
     column: number;
+    endLine: number;
     extendsName: string | null;
   }> {
     let sql = `
@@ -553,6 +554,7 @@ export class IndexDatabase implements IIndexWriter {
         is_default as isDefault,
         line,
         column,
+        end_line as endLine,
         extends_name as extendsName
       FROM definitions
       WHERE 1=1
@@ -580,6 +582,7 @@ export class IndexDatabase implements IIndexWriter {
       isDefault: number;
       line: number;
       column: number;
+      endLine: number;
       extendsName: string | null;
     }>;
 
