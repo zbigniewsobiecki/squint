@@ -1573,6 +1573,81 @@ function getEmbeddedHTML(): string {
       border-radius: 10px;
     }
 
+    /* Steps View (when a flow is selected) */
+    .steps-back-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      cursor: pointer;
+      color: #4fc1ff;
+      font-size: 12px;
+      border-bottom: 1px solid #3c3c3c;
+      transition: background 0.2s;
+    }
+    .steps-back-btn:hover {
+      background: #2d2d2d;
+    }
+    .steps-back-btn .back-icon {
+      font-size: 14px;
+    }
+
+    .steps-flow-title {
+      padding: 12px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #d4d4d4;
+      border-bottom: 1px solid #3c3c3c;
+      background: #1e1e1e;
+    }
+
+    .step-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 16px;
+      cursor: pointer;
+      transition: background 0.2s;
+      border-bottom: 1px solid #2d2d2d;
+    }
+    .step-item:hover {
+      background: #2d2d2d;
+    }
+    .step-item:last-child {
+      border-bottom: none;
+    }
+
+    .step-number {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #3c3c3c;
+      color: #d4d4d4;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .step-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .step-name {
+      font-size: 12px;
+      color: #d4d4d4;
+      margin-bottom: 2px;
+      word-break: break-word;
+    }
+
+    .step-modules {
+      font-size: 10px;
+      color: #858585;
+    }
+
     /* Main DAG Area */
     .flows-dag-main {
       flex: 1;
@@ -1668,6 +1743,18 @@ function getEmbeddedHTML(): string {
     .module-box.leaf .module-box-header {
       font-size: 10px;
       fill: #b0b0b0;
+    }
+
+    /* Dimmed modules (not part of selected flow) */
+    .module-box.module-dimmed rect {
+      opacity: 0.3;
+    }
+    .module-box.module-dimmed text {
+      opacity: 0.3;
+    }
+    .module-box.module-dimmed:hover rect,
+    .module-box.module-dimmed:hover text {
+      opacity: 0.5;
     }
 
     /* Flow Arrows */
@@ -1830,6 +1917,7 @@ function getEmbeddedHTML(): string {
     let flowsDagData = null;  // DAG view data
     let selectedFlows = new Set();  // Currently selected flow IDs
     let modulePositions = new Map();  // Module ID -> {x, y} for arrow rendering
+    let originalSidebarHtml = '';    // Store flows list HTML for restoration
 
     // Flow colors palette
     const flowColors = ['#4fc1ff', '#ce9178', '#6a9955', '#c586c0', '#dcdcaa', '#9cdcfe', '#d7ba7d', '#b5cea8'];
@@ -3091,6 +3179,104 @@ function getEmbeddedHTML(): string {
         .scale(scale));
     }
 
+    // Show steps for a selected flow in the sidebar
+    function showFlowSteps(flowId) {
+      const sidebarContent = document.querySelector('.flows-sidebar-content');
+      if (!sidebarContent) return;
+
+      // Store original HTML if not already stored
+      if (!originalSidebarHtml) {
+        originalSidebarHtml = sidebarContent.innerHTML;
+      }
+
+      // Find the flow
+      const flow = flowsDagData.rootFlows.find(f => f.id === flowId);
+      if (!flow) return;
+
+      // Build steps HTML
+      const stepsHtml = flow.leafFlows.map((leaf, idx) => {
+        const fromModule = modulePositions.get(leaf.fromModuleId)?.node;
+        const toModule = modulePositions.get(leaf.toModuleId)?.node;
+        const modulesText = fromModule && toModule
+          ? \`\${fromModule.name} → \${toModule.name}\`
+          : '';
+
+        return \`
+          <div class="step-item" data-step-idx="\${idx}" data-from-module="\${leaf.fromModuleId}" data-to-module="\${leaf.toModuleId}">
+            <span class="step-number">\${idx + 1}</span>
+            <div class="step-content">
+              <div class="step-name">\${leaf.name}</div>
+              \${modulesText ? \`<div class="step-modules">\${modulesText}</div>\` : ''}
+            </div>
+          </div>
+        \`;
+      }).join('');
+
+      sidebarContent.innerHTML = \`
+        <div class="steps-back-btn" id="steps-back-btn">
+          <span class="back-icon">←</span>
+          <span>Back to flows</span>
+        </div>
+        <div class="steps-flow-title">\${flow.name}</div>
+        <div class="steps-list">
+          \${stepsHtml || '<div style="padding: 16px; color: #858585;">No steps in this flow</div>'}
+        </div>
+      \`;
+
+      // Setup back button handler
+      document.getElementById('steps-back-btn')?.addEventListener('click', goBackToFlowsList);
+    }
+
+    // Go back to flows list view
+    function goBackToFlowsList() {
+      const sidebarContent = document.querySelector('.flows-sidebar-content');
+      if (!sidebarContent || !originalSidebarHtml) return;
+
+      // Clear selection
+      selectedFlows.clear();
+
+      // Restore original sidebar
+      sidebarContent.innerHTML = originalSidebarHtml;
+
+      // Re-setup the checkbox handlers
+      setupFlowItemHandlers();
+
+      // Clear arrows and dimming
+      renderFlowArrows();
+      updateModuleDimming();
+    }
+
+    // Setup flow item click/checkbox handlers (extracted for reuse)
+    function setupFlowItemHandlers() {
+      // Flow checkbox handlers (single-select)
+      document.querySelectorAll('.flow-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+          const flowId = parseInt(e.target.dataset.flowId);
+
+          // Clear all other selections (single-select mode)
+          selectedFlows.clear();
+          selectedFlows.add(flowId);
+
+          // Render arrows and dimming
+          renderFlowArrows();
+          updateModuleDimming();
+
+          // Show steps in sidebar
+          showFlowSteps(flowId);
+        });
+      });
+
+      // Click on flow item toggles checkbox
+      document.querySelectorAll('.flow-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          if (e.target.classList.contains('flow-checkbox')) return;
+          const checkbox = item.querySelector('.flow-checkbox');
+          checkbox.checked = true;
+          checkbox.dispatchEvent(new Event('change'));
+        });
+      });
+    }
+
     // Setup sidebar interactions
     function setupSidebarInteractions() {
       // Toggle sidebar collapse
@@ -3106,33 +3292,8 @@ function getEmbeddedHTML(): string {
         sidebar.classList.remove('collapsed');
       });
 
-      // Flow checkbox handlers
-      document.querySelectorAll('.flow-checkbox').forEach(checkbox => {
-        checkbox.addEventListener('change', (e) => {
-          const flowId = parseInt(e.target.dataset.flowId);
-          const flowItem = e.target.closest('.flow-item');
-
-          if (e.target.checked) {
-            selectedFlows.add(flowId);
-            flowItem.classList.add('selected');
-          } else {
-            selectedFlows.delete(flowId);
-            flowItem.classList.remove('selected');
-          }
-
-          renderFlowArrows();
-        });
-      });
-
-      // Click on flow item toggles checkbox
-      document.querySelectorAll('.flow-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-          if (e.target.classList.contains('flow-checkbox')) return;
-          const checkbox = item.querySelector('.flow-checkbox');
-          checkbox.checked = !checkbox.checked;
-          checkbox.dispatchEvent(new Event('change'));
-        });
-      });
+      // Setup flow item handlers
+      setupFlowItemHandlers();
     }
 
     // Render flow arrows for selected flows (connecting nested boxes)
@@ -3236,6 +3397,32 @@ function getEmbeddedHTML(): string {
       }
     }
 
+    // Update module dimming based on selected flow
+    function updateModuleDimming() {
+      const svg = d3.select('#flows-svg');
+
+      // Get all module IDs that are part of selected flows
+      const activeModuleIds = new Set();
+
+      if (selectedFlows.size > 0) {
+        flowsDagData.rootFlows.forEach(rootFlow => {
+          if (selectedFlows.has(rootFlow.id)) {
+            rootFlow.leafFlows.forEach(leaf => {
+              activeModuleIds.add(leaf.fromModuleId);
+              activeModuleIds.add(leaf.toModuleId);
+            });
+          }
+        });
+      }
+
+      // Apply dimming to all module boxes
+      svg.selectAll('.module-box').each(function() {
+        const moduleId = parseInt(d3.select(this).attr('data-module-id'));
+        const isDimmed = selectedFlows.size > 0 && !activeModuleIds.has(moduleId);
+        d3.select(this).classed('module-dimmed', isDimmed);
+      });
+    }
+
     // Keyboard shortcuts for flows view
     function setupFlowsKeyboardShortcuts() {
       const handleKeydown = (e) => {
@@ -3248,16 +3435,9 @@ function getEmbeddedHTML(): string {
           sidebar.classList.toggle('collapsed');
         }
 
-        // Escape: Deselect all flows
+        // Escape: Go back to flows list (clears selection and dimming)
         if (e.key === 'Escape') {
-          selectedFlows.clear();
-          document.querySelectorAll('.flow-checkbox').forEach(cb => {
-            cb.checked = false;
-          });
-          document.querySelectorAll('.flow-item').forEach(item => {
-            item.classList.remove('selected');
-          });
-          renderFlowArrows();
+          goBackToFlowsList();
         }
       };
 
