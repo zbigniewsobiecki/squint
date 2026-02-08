@@ -373,44 +373,8 @@ export function formatCoverageStats(stats: FlowCoverageStats): string {
 
   parts.push('## Flow Coverage Statistics');
   parts.push('');
-  parts.push(`Total definitions: ${stats.totalDefinitions}`);
-  parts.push(`Covered by flows: ${stats.coveredByFlows} (${stats.coveragePercentage.toFixed(1)}%)`);
-  parts.push('');
-  parts.push('### Hierarchy Metrics');
-  parts.push(`Top-level flows: ${stats.topLevelFlows}`);
-  parts.push(`Sub-flows: ${stats.subFlows}`);
-  parts.push(`Avg composition depth: ${stats.avgCompositionDepth.toFixed(2)}`);
-  parts.push('');
-
-  if (stats.uncoveredEntryPoints.length > 0) {
-    parts.push('### Uncovered Entry Points');
-    for (const ep of stats.uncoveredEntryPoints.slice(0, 10)) {
-      parts.push(`- ${ep.name} (#${ep.id}): ${ep.outgoingDeps} outgoing deps`);
-    }
-    if (stats.uncoveredEntryPoints.length > 10) {
-      parts.push(`  ... and ${stats.uncoveredEntryPoints.length - 10} more`);
-    }
-    parts.push('');
-  }
-
-  if (stats.coverageByDomain.size > 0) {
-    parts.push('### Coverage by Domain');
-    const sortedDomains = Array.from(stats.coverageByDomain.entries())
-      .sort((a, b) => b[1].total - a[1].total);
-    for (const [domain, { covered, total }] of sortedDomains.slice(0, 10)) {
-      const pct = total > 0 ? ((covered / total) * 100).toFixed(1) : '0.0';
-      parts.push(`- ${domain}: ${covered}/${total} (${pct}%)`);
-    }
-    parts.push('');
-  }
-
-  if (stats.orphanedSubflows.length > 0) {
-    parts.push('### Orphaned Sub-flows');
-    for (const sf of stats.orphanedSubflows) {
-      parts.push(`- ${sf.name} (#${sf.id})`);
-    }
-    parts.push('');
-  }
+  parts.push(`Total module edges: ${stats.totalModuleEdges}`);
+  parts.push(`Covered by flows: ${stats.coveredByFlows} (${stats.percentage.toFixed(1)}%)`);
 
   return parts.join('\n');
 }

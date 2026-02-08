@@ -207,9 +207,6 @@ export default class Hierarchy extends Command {
       this.error(`Definition with ID ${resolved.id} not found`);
     }
 
-    // Trace the call graph from this point
-    const trace = db.traceFlowFromEntry(resolved.id, maxDepth);
-
     // Build call graph adjacency list
     const edges = db.getCallGraph();
     const adjacency = new Map<number, number[]>();
@@ -220,10 +217,22 @@ export default class Hierarchy extends Command {
       adjacency.get(edge.fromId)!.push(edge.toId);
     }
 
-    // Build depth map
+    // Trace the call graph from this point using BFS
     const depthMap = new Map<number, number>();
-    for (const t of trace) {
-      depthMap.set(t.definitionId, t.depth);
+    const queue: Array<{ id: number; depth: number }> = [{ id: resolved.id, depth: 0 }];
+
+    while (queue.length > 0) {
+      const { id, depth } = queue.shift()!;
+      if (depthMap.has(id)) continue;
+      if (depth > maxDepth) continue;
+      depthMap.set(id, depth);
+
+      const neighbors = adjacency.get(id) ?? [];
+      for (const neighborId of neighbors) {
+        if (!depthMap.has(neighborId)) {
+          queue.push({ id: neighborId, depth: depth + 1 });
+        }
+      }
     }
 
     // Build tree

@@ -146,149 +146,74 @@ export interface CallGraphEdge {
 }
 
 // ============================================================
-// Flow Types
+// Flow Types (Hierarchical Tree Structure)
 // ============================================================
 
+/**
+ * Flow: A hierarchical tree structure mirroring modules.
+ *
+ * Leaf flows: Single module-to-module transition with semantic description
+ * Parent flows: Composition of child flows in ordered sequence
+ * Root flows: User-story level flows (depth = 0)
+ */
 export interface Flow {
   id: number;
+  parentId: number | null;
+  stepOrder: number;  // Position within parent (1, 2, 3...)
   name: string;
+  slug: string;
+  fullPath: string;  // e.g., "user-journey.authentication.validate-credentials"
   description: string | null;
-  entryPointId: number;
+
+  // For leaf flows only: the module transition
+  fromModuleId: number | null;
+  toModuleId: number | null;
+  semantic: string | null;  // What happens in this transition
+
+  // Metadata
+  depth: number;
   domain: string | null;
   createdAt: string;
 }
 
-export interface FlowStep {
-  flowId: number;
-  stepOrder: number;
-  definitionId: number;
-  moduleId: number | null;
-  layer: string | null;
+/**
+ * Flow tree node for hierarchical display
+ */
+export interface FlowTreeNode extends Flow {
+  children: FlowTreeNode[];  // Ordered by stepOrder
+  // Enriched for display
+  fromModuleName?: string;
+  toModuleName?: string;
 }
 
-export interface FlowWithSteps extends Flow {
-  entryPointName: string;
-  entryPointKind: string;
-  entryPointFilePath: string;
-  steps: Array<{
-    stepOrder: number;
-    definitionId: number;
-    name: string;
-    kind: string;
-    filePath: string;
-    moduleId: number | null;
-    moduleName: string | null;
-    layer: string | null;
-  }>;
+/**
+ * Module call graph edge for flow detection
+ */
+export interface ModuleCallEdge {
+  fromModuleId: number;
+  toModuleId: number;
+  weight: number;  // Number of symbol-level calls
+  fromModulePath: string;
+  toModulePath: string;
 }
 
-export interface FlowDAGNode {
-  id: number;
-  name: string;
-  kind: string;
-  filePath: string;
-  stepOrder: number;
-  layer: string | null;
-  moduleName: string | null;
-  isEntryPoint: boolean;
-}
-
-export interface FlowDAGEdge {
-  source: number;
-  target: number;
-  weight: number;
-}
-
-export interface FlowDAG {
-  flow: FlowWithSteps;
-  nodes: FlowDAGNode[];
-  edges: FlowDAGEdge[];
-}
-
-// ============================================================
-// Flow Composition Types (Hierarchical Flows)
-// ============================================================
-
-export type FlowCompositionRelationship = 'includes' | 'delegates_to' | 'branches_to';
-
-export interface FlowComposition {
-  id: number;
-  parentFlowId: number;
-  childFlowId: number;
-  stepOrder: number;
-  relationshipType: FlowCompositionRelationship;
-  semantic: string | null;
-  createdAt: string;
-}
-
-export interface FlowCompositionWithDetails extends FlowComposition {
-  childFlowName: string;
-  childFlowDescription: string | null;
-  childFlowEntryPointId: number;
-}
-
-export interface FlowMetadata {
-  id: number;
-  flowId: number;
-  key: string;
-  value: string;
-}
-
-export interface FlowHierarchyNode {
+/**
+ * Expanded flow showing flattened leaf flows in order
+ */
+export interface ExpandedFlow {
   flow: Flow;
-  children: Array<{
-    composition: FlowComposition;
-    node: FlowHierarchyNode;
-  }>;
+  leafFlows: Flow[];  // All leaf flows in order
 }
 
-export interface ExpandedFlowStep {
-  stepOrder: number;
-  definitionId: number;
-  name: string;
-  kind: string;
-  filePath: string;
-  moduleId: number | null;
-  moduleName: string | null;
-  layer: string | null;
-  fromSubflowId: number | null;  // null if direct step, subflow ID if from composition
-}
-
-export interface ExpandedFlow extends Flow {
-  steps: ExpandedFlowStep[];
-  compositionDepth: number;
-}
-
-// ============================================================
-// Coverage Tracking Types
-// ============================================================
-
+/**
+ * Flow coverage statistics
+ */
 export interface FlowCoverageStats {
-  totalDefinitions: number;
+  totalModuleEdges: number;
   coveredByFlows: number;
-  coveragePercentage: number;
-  topLevelFlows: number;
-  subFlows: number;
-  avgCompositionDepth: number;
-  uncoveredEntryPoints: Array<{
-    id: number;
-    name: string;
-    kind: string;
-    filePath: string;
-    incomingDeps: number;
-    outgoingDeps: number;
-  }>;
-  uncoveredHighConnectivity: Array<{
-    id: number;
-    name: string;
-    kind: string;
-    filePath: string;
-    incomingDeps: number;
-    outgoingDeps: number;
-  }>;
-  orphanedSubflows: Flow[];
-  coverageByDomain: Map<string, { covered: number; total: number }>;
+  percentage: number;
 }
+
 
 // ============================================================
 // Annotated Symbol/Edge Types for LLM Context
@@ -531,53 +456,38 @@ CREATE TABLE module_members (
 
 CREATE INDEX idx_module_members_module ON module_members(module_id);
 
--- End-to-end execution flows
+-- Flows: hierarchical tree structure mirroring modules, with ordering
+-- Leaf flows: module-to-module transitions
+-- Parent flows: compositions of child flows
 CREATE TABLE flows (
   id INTEGER PRIMARY KEY,
+  parent_id INTEGER REFERENCES flows(id) ON DELETE CASCADE,
+  step_order INTEGER NOT NULL DEFAULT 0,  -- Position within parent (1, 2, 3...)
   name TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  full_path TEXT NOT NULL UNIQUE,  -- e.g., "user-journey.authentication.validate-credentials"
   description TEXT,
-  entry_point_id INTEGER NOT NULL REFERENCES definitions(id),
+
+  -- For leaf flows only: the module transition
+  from_module_id INTEGER REFERENCES modules(id),
+  to_module_id INTEGER REFERENCES modules(id),
+  semantic TEXT,  -- What happens in this transition
+
+  -- Metadata
+  depth INTEGER NOT NULL DEFAULT 0,
   domain TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE flow_steps (
-  flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
-  step_order INTEGER NOT NULL,
-  definition_id INTEGER NOT NULL REFERENCES definitions(id),
-  module_id INTEGER REFERENCES modules(id),
-  layer TEXT,
-  PRIMARY KEY (flow_id, step_order)
-);
-
-CREATE INDEX idx_flow_steps_def ON flow_steps(definition_id);
-CREATE INDEX idx_flows_entry ON flows(entry_point_id);
-
--- Flow compositions for hierarchical flows
-CREATE TABLE flow_compositions (
-  id INTEGER PRIMARY KEY,
-  parent_flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
-  child_flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
-  step_order INTEGER NOT NULL,
-  relationship_type TEXT NOT NULL,
-  semantic TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(parent_flow_id, step_order)
+
+  UNIQUE(parent_id, slug)
+  -- Note: step_order ordering is enforced by application logic, not DB constraint
+  -- to allow flexible reparenting without constraint conflicts
 );
 
-CREATE INDEX idx_flow_compositions_parent ON flow_compositions(parent_flow_id);
-CREATE INDEX idx_flow_compositions_child ON flow_compositions(child_flow_id);
-
--- Flow metadata for additional properties
-CREATE TABLE flow_metadata (
-  id INTEGER PRIMARY KEY,
-  flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
-  key TEXT NOT NULL,
-  value TEXT NOT NULL,
-  UNIQUE(flow_id, key)
-);
-
-CREATE INDEX idx_flow_metadata_flow ON flow_metadata(flow_id);
+CREATE INDEX idx_flows_parent ON flows(parent_id);
+CREATE INDEX idx_flows_path ON flows(full_path);
+CREATE INDEX idx_flows_depth ON flows(depth);
+CREATE INDEX idx_flows_from_module ON flows(from_module_id);
+CREATE INDEX idx_flows_to_module ON flows(to_module_id);
 `;
 
 // ============================================================

@@ -22,18 +22,9 @@ export {
   type ModuleWithMembers,
   type CallGraphEdge,
   type Flow,
-  type FlowStep,
-  type FlowWithSteps,
-  type FlowDAG,
-  type FlowDAGNode,
-  type FlowDAGEdge,
-  type FlowComposition,
-  type FlowCompositionWithDetails,
-  type FlowCompositionRelationship,
-  type FlowMetadata,
-  type FlowHierarchyNode,
+  type FlowTreeNode,
+  type ModuleCallEdge,
   type ExpandedFlow,
-  type ExpandedFlowStep,
   type FlowCoverageStats,
   type AnnotatedSymbolInfo,
   type AnnotatedEdgeInfo,
@@ -60,13 +51,8 @@ import {
   type ModuleWithMembers,
   type CallGraphEdge,
   type Flow,
-  type FlowWithSteps,
-  type FlowDAG,
-  type FlowCompositionWithDetails,
-  type FlowCompositionRelationship,
-  type FlowHierarchyNode,
-  type ExpandedFlow,
-  type ExpandedFlowStep,
+  type FlowTreeNode,
+  type ModuleCallEdge,
   type FlowCoverageStats,
   type AnnotatedSymbolInfo,
   type AnnotatedEdgeInfo,
@@ -3336,11 +3322,11 @@ export class IndexDatabase implements IIndexWriter {
   }
 
   // ============================================
-  // Flow detection methods
+  // Flow Tree Methods (Hierarchical Flows)
   // ============================================
 
   /**
-   * Ensure the flows tables exist (for existing databases).
+   * Ensure the flows table exists with the new hierarchical schema.
    */
   private ensureFlowsTables(): void {
     const tableExists = this.db.prepare(`
@@ -3351,355 +3337,387 @@ export class IndexDatabase implements IIndexWriter {
       this.db.exec(`
         CREATE TABLE flows (
           id INTEGER PRIMARY KEY,
+          parent_id INTEGER REFERENCES flows(id) ON DELETE CASCADE,
+          step_order INTEGER NOT NULL DEFAULT 0,
           name TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          full_path TEXT NOT NULL UNIQUE,
           description TEXT,
-          entry_point_id INTEGER NOT NULL REFERENCES definitions(id),
-          domain TEXT,
-          created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE flow_steps (
-          flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
-          step_order INTEGER NOT NULL,
-          definition_id INTEGER NOT NULL REFERENCES definitions(id),
-          module_id INTEGER REFERENCES modules(id),
-          layer TEXT,
-          PRIMARY KEY (flow_id, step_order)
-        );
-
-        CREATE INDEX idx_flow_steps_def ON flow_steps(definition_id);
-        CREATE INDEX idx_flows_entry ON flows(entry_point_id);
-      `);
-    }
-
-    // Ensure composition tables exist (for hierarchical flows)
-    const compositionsExists = this.db.prepare(`
-      SELECT name FROM sqlite_master WHERE type='table' AND name='flow_compositions'
-    `).get();
-
-    if (!compositionsExists) {
-      this.db.exec(`
-        CREATE TABLE flow_compositions (
-          id INTEGER PRIMARY KEY,
-          parent_flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
-          child_flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
-          step_order INTEGER NOT NULL,
-          relationship_type TEXT NOT NULL,
+          from_module_id INTEGER REFERENCES modules(id),
+          to_module_id INTEGER REFERENCES modules(id),
           semantic TEXT,
+          depth INTEGER NOT NULL DEFAULT 0,
+          domain TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
-          UNIQUE(parent_flow_id, step_order)
+          UNIQUE(parent_id, slug),
+          UNIQUE(parent_id, step_order)
         );
 
-        CREATE INDEX idx_flow_compositions_parent ON flow_compositions(parent_flow_id);
-        CREATE INDEX idx_flow_compositions_child ON flow_compositions(child_flow_id);
-      `);
-    }
-
-    // Ensure metadata table exists
-    const metadataExists = this.db.prepare(`
-      SELECT name FROM sqlite_master WHERE type='table' AND name='flow_metadata'
-    `).get();
-
-    if (!metadataExists) {
-      this.db.exec(`
-        CREATE TABLE flow_metadata (
-          id INTEGER PRIMARY KEY,
-          flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
-          key TEXT NOT NULL,
-          value TEXT NOT NULL,
-          UNIQUE(flow_id, key)
-        );
-
-        CREATE INDEX idx_flow_metadata_flow ON flow_metadata(flow_id);
+        CREATE INDEX idx_flows_parent ON flows(parent_id);
+        CREATE INDEX idx_flows_path ON flows(full_path);
+        CREATE INDEX idx_flows_depth ON flows(depth);
+        CREATE INDEX idx_flows_from_module ON flows(from_module_id);
+        CREATE INDEX idx_flows_to_module ON flows(to_module_id);
       `);
     }
   }
 
   /**
-   * Find entry points (controllers, routes, handlers).
-   * Identifies symbols that are likely entry points based on their role metadata or naming patterns.
+   * Ensure a root flow exists with the given slug and return it.
+   * Root flows have depth 0 and null parentId.
+   * If a flow with the given slug already exists at root level, return it.
    */
-  getEntryPoints(): Array<{
-    id: number;
-    name: string;
-    kind: string;
-    filePath: string;
-    line: number;
-    domain: string | null;
-  }> {
+  ensureRootFlow(slug: string): Flow {
     this.ensureFlowsTables();
-    this.ensureModulesTables();
 
-    // Look for symbols with role=controller, or with 'Controller' in name,
-    // or exported functions in route files
+    // Convert slug to name (capitalize each word)
+    const name = slug
+      .split('-')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+
+    // Check if a root flow with this slug already exists
+    const existing = this.db.prepare(`
+      SELECT
+        id,
+        parent_id as parentId,
+        step_order as stepOrder,
+        name,
+        slug,
+        full_path as fullPath,
+        description,
+        from_module_id as fromModuleId,
+        to_module_id as toModuleId,
+        semantic,
+        depth,
+        domain,
+        created_at as createdAt
+      FROM flows
+      WHERE slug = ? AND parent_id IS NULL
+    `).get(slug) as Flow | undefined;
+
+    if (existing) return existing;
+
+    // Create new root flow
     const stmt = this.db.prepare(`
-      SELECT DISTINCT
-        d.id,
-        d.name,
-        d.kind,
-        f.path as filePath,
-        d.line,
-        dm_domain.value as domain
-      FROM definitions d
-      JOIN files f ON d.file_id = f.id
-      LEFT JOIN definition_metadata dm_role ON dm_role.definition_id = d.id AND dm_role.key = 'role'
-      LEFT JOIN definition_metadata dm_domain ON dm_domain.definition_id = d.id AND dm_domain.key = 'domain'
-      WHERE
-        -- Explicit controller role
-        dm_role.value = 'controller'
-        -- Or Controller/Handler in name (case-sensitive)
-        OR d.name LIKE '%Controller%'
-        OR d.name LIKE '%Handler%'
-        -- Or exported methods in files with route/controller/handler in path
-        OR (
-          d.is_exported = 1
-          AND d.kind IN ('function', 'method', 'class')
-          AND (
-            f.path LIKE '%/routes/%'
-            OR f.path LIKE '%/controllers/%'
-            OR f.path LIKE '%/handlers/%'
-            OR f.path LIKE '%.routes.%'
-            OR f.path LIKE '%.controller.%'
-            OR f.path LIKE '%.handler.%'
-          )
-        )
-      ORDER BY f.path, d.line
+      INSERT INTO flows (parent_id, step_order, slug, full_path, name, depth)
+      VALUES (NULL, 0, ?, ?, ?, 0)
     `);
+    const result = stmt.run(slug, slug, name);
+    const flowId = result.lastInsertRowid as number;
 
-    const rows = stmt.all() as Array<{
-      id: number;
-      name: string;
-      kind: string;
-      filePath: string;
-      line: number;
-      domain: string | null;
-    }>;
-
-    // Parse domain JSON array and return first domain
-    return rows.map(row => {
-      let domain: string | null = null;
-      if (row.domain) {
-        try {
-          const domains = JSON.parse(row.domain) as string[];
-          domain = domains[0] ?? null;
-        } catch {
-          domain = row.domain;
-        }
-      }
-      return { ...row, domain };
-    });
+    // Return the newly created flow
+    return this.getFlowById(flowId)!;
   }
 
   /**
-   * Trace reachable symbols from an entry point using call graph.
-   * Returns definitions reachable via BFS with their depth.
-   */
-  traceFlowFromEntry(
-    entryId: number,
-    maxDepth: number = 15
-  ): Array<{
-    definitionId: number;
-    depth: number;
-    moduleId: number | null;
-    layer: string | null;
-  }> {
-    this.ensureFlowsTables();
-    this.ensureModulesTables();
-
-    // Build call graph adjacency list with usage line info
-    const edges = this.getCallGraph();
-    const adjacency = new Map<number, Array<{ toId: number; minUsageLine: number }>>();
-    for (const edge of edges) {
-      if (!adjacency.has(edge.fromId)) {
-        adjacency.set(edge.fromId, []);
-      }
-      adjacency.get(edge.fromId)!.push({
-        toId: edge.toId,
-        minUsageLine: edge.minUsageLine,
-      });
-    }
-
-    // BFS traversal tracking usage line for ordering
-    const visited = new Map<number, { depth: number; usageLine: number }>();
-    const queue: Array<{ id: number; depth: number; usageLine: number }> = [
-      { id: entryId, depth: 0, usageLine: 0 },
-    ];
-
-    while (queue.length > 0) {
-      const { id, depth, usageLine } = queue.shift()!;
-
-      if (visited.has(id)) continue;
-      if (depth > maxDepth) continue;
-
-      visited.set(id, { depth, usageLine });
-
-      const neighbors = adjacency.get(id) ?? [];
-      for (const neighbor of neighbors) {
-        if (!visited.has(neighbor.toId)) {
-          queue.push({
-            id: neighbor.toId,
-            depth: depth + 1,
-            usageLine: neighbor.minUsageLine,
-          });
-        }
-      }
-    }
-
-    // Get module and layer info for each visited definition
-    const result: Array<{
-      definitionId: number;
-      depth: number;
-      usageLine: number;
-      moduleId: number | null;
-      layer: string | null;
-    }> = [];
-
-    for (const [definitionId, info] of visited) {
-      // Get module membership
-      const moduleInfo = this.getDefinitionModule(definitionId);
-      result.push({
-        definitionId,
-        depth: info.depth,
-        usageLine: info.usageLine,
-        moduleId: moduleInfo?.module.id ?? null,
-        layer: null, // Layer is now determined at flow step level, not from modules
-      });
-    }
-
-    // Sort by depth first, then by usage line (source code order within same depth)
-    result.sort((a, b) => {
-      if (a.depth !== b.depth) return a.depth - b.depth;
-      return a.usageLine - b.usageLine;
-    });
-
-    return result;
-  }
-
-  /**
-   * Insert a new flow.
+   * Insert a new flow in the tree.
+   * For leaf flows, provide fromModuleId, toModuleId, and semantic.
+   * For parent flows, these can be null.
    */
   insertFlow(
+    parentId: number | null,
+    slug: string,
     name: string,
-    entryPointId: number,
-    description?: string,
-    domain?: string
+    options?: {
+      description?: string;
+      fromModuleId?: number;
+      toModuleId?: number;
+      semantic?: string;
+      domain?: string;
+      stepOrder?: number;
+    }
   ): number {
     this.ensureFlowsTables();
+
+    // Calculate full_path and depth
+    let fullPath: string;
+    let depth: number;
+    let stepOrder = options?.stepOrder ?? 0;
+
+    if (parentId === null) {
+      fullPath = slug;
+      depth = 0;
+    } else {
+      const parent = this.db.prepare(`
+        SELECT full_path, depth FROM flows WHERE id = ?
+      `).get(parentId) as { full_path: string; depth: number } | undefined;
+
+      if (!parent) {
+        throw new Error(`Parent flow ${parentId} not found`);
+      }
+
+      fullPath = `${parent.full_path}.${slug}`;
+      depth = parent.depth + 1;
+
+      // Auto-calculate step_order if not provided
+      if (stepOrder === 0) {
+        const maxOrder = this.db.prepare(`
+          SELECT COALESCE(MAX(step_order), 0) as max FROM flows WHERE parent_id = ?
+        `).get(parentId) as { max: number };
+        stepOrder = maxOrder.max + 1;
+      }
+    }
+
     const stmt = this.db.prepare(`
-      INSERT INTO flows (name, entry_point_id, description, domain)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO flows (parent_id, step_order, slug, full_path, name, description, from_module_id, to_module_id, semantic, depth, domain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(name, entryPointId, description ?? null, domain ?? null);
+    const result = stmt.run(
+      parentId,
+      stepOrder,
+      slug,
+      fullPath,
+      name,
+      options?.description ?? null,
+      options?.fromModuleId ?? null,
+      options?.toModuleId ?? null,
+      options?.semantic ?? null,
+      depth,
+      options?.domain ?? null
+    );
     return result.lastInsertRowid as number;
   }
 
   /**
-   * Add a step to a flow.
+   * Get a flow by its full path.
    */
-  addFlowStep(
-    flowId: number,
-    stepOrder: number,
-    definitionId: number,
-    moduleId?: number,
-    layer?: string
-  ): void {
-    this.ensureFlowsTables();
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO flow_steps (flow_id, step_order, definition_id, module_id, layer)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    stmt.run(flowId, stepOrder, definitionId, moduleId ?? null, layer ?? null);
-  }
-
-  /**
-   * Get all flows.
-   */
-  getFlows(): Flow[] {
+  getFlowByPath(fullPath: string): Flow | null {
     this.ensureFlowsTables();
     const stmt = this.db.prepare(`
       SELECT
         id,
+        parent_id as parentId,
+        step_order as stepOrder,
         name,
+        slug,
+        full_path as fullPath,
         description,
-        entry_point_id as entryPointId,
+        from_module_id as fromModuleId,
+        to_module_id as toModuleId,
+        semantic,
+        depth,
         domain,
         created_at as createdAt
       FROM flows
-      ORDER BY name
+      WHERE full_path = ?
+    `);
+    const result = stmt.get(fullPath) as Flow | undefined;
+    return result ?? null;
+  }
+
+  /**
+   * Get a flow by ID.
+   */
+  getFlowById(flowId: number): Flow | null {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        parent_id as parentId,
+        step_order as stepOrder,
+        name,
+        slug,
+        full_path as fullPath,
+        description,
+        from_module_id as fromModuleId,
+        to_module_id as toModuleId,
+        semantic,
+        depth,
+        domain,
+        created_at as createdAt
+      FROM flows
+      WHERE id = ?
+    `);
+    return stmt.get(flowId) as Flow | null;
+  }
+
+  /**
+   * Get direct children of a flow.
+   */
+  getFlowChildren(flowId: number): Flow[] {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        parent_id as parentId,
+        step_order as stepOrder,
+        name,
+        slug,
+        full_path as fullPath,
+        description,
+        from_module_id as fromModuleId,
+        to_module_id as toModuleId,
+        semantic,
+        depth,
+        domain,
+        created_at as createdAt
+      FROM flows
+      WHERE parent_id = ?
+      ORDER BY step_order
+    `);
+    return stmt.all(flowId) as Flow[];
+  }
+
+  /**
+   * Get all flows as a flat list.
+   */
+  getAllFlows(): Flow[] {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        parent_id as parentId,
+        step_order as stepOrder,
+        name,
+        slug,
+        full_path as fullPath,
+        description,
+        from_module_id as fromModuleId,
+        to_module_id as toModuleId,
+        semantic,
+        depth,
+        domain,
+        created_at as createdAt
+      FROM flows
+      ORDER BY depth, full_path
     `);
     return stmt.all() as Flow[];
   }
 
   /**
-   * Get a flow with all its steps.
+   * Alias for getAllFlows() for backward compatibility.
    */
-  getFlowWithSteps(flowId: number): FlowWithSteps | null {
-    this.ensureFlowsTables();
-
-    // Get flow
-    const flowStmt = this.db.prepare(`
-      SELECT
-        f.id,
-        f.name,
-        f.description,
-        f.entry_point_id as entryPointId,
-        f.domain,
-        f.created_at as createdAt,
-        d.name as entryPointName,
-        d.kind as entryPointKind,
-        files.path as entryPointFilePath
-      FROM flows f
-      JOIN definitions d ON f.entry_point_id = d.id
-      JOIN files ON d.file_id = files.id
-      WHERE f.id = ?
-    `);
-    const flow = flowStmt.get(flowId) as (Flow & {
-      entryPointName: string;
-      entryPointKind: string;
-      entryPointFilePath: string;
-    }) | undefined;
-
-    if (!flow) return null;
-
-    // Get steps
-    const stepsStmt = this.db.prepare(`
-      SELECT
-        fs.step_order as stepOrder,
-        fs.definition_id as definitionId,
-        d.name,
-        d.kind,
-        f.path as filePath,
-        fs.module_id as moduleId,
-        m.name as moduleName,
-        fs.layer
-      FROM flow_steps fs
-      JOIN definitions d ON fs.definition_id = d.id
-      JOIN files f ON d.file_id = f.id
-      LEFT JOIN modules m ON fs.module_id = m.id
-      WHERE fs.flow_id = ?
-      ORDER BY fs.step_order
-    `);
-    const steps = stepsStmt.all(flowId) as Array<{
-      stepOrder: number;
-      definitionId: number;
-      name: string;
-      kind: string;
-      filePath: string;
-      moduleId: number | null;
-      moduleName: string | null;
-      layer: string | null;
-    }>;
-
-    return { ...flow, steps };
+  getFlows(): Flow[] {
+    return this.getAllFlows();
   }
 
   /**
-   * Get all flows with their steps.
+   * Get all flow trees as an array of root nodes with their children.
    */
-  getAllFlowsWithSteps(): FlowWithSteps[] {
+  getFlowTree(): FlowTreeNode[] {
     this.ensureFlowsTables();
-    const flows = this.getFlows();
-    return flows.map(f => this.getFlowWithSteps(f.id)!).filter(f => f !== null);
+    this.ensureModulesTables();
+
+    const flows = this.getAllFlows();
+    if (flows.length === 0) return [];
+
+    // Get module names for enrichment
+    const modules = this.getAllModules();
+    const moduleNameMap = new Map(modules.map(m => [m.id, m.fullPath]));
+
+    // Build a map for quick lookup
+    const flowMap = new Map<number, FlowTreeNode>();
+    for (const f of flows) {
+      flowMap.set(f.id, {
+        ...f,
+        children: [],
+        fromModuleName: f.fromModuleId ? moduleNameMap.get(f.fromModuleId) : undefined,
+        toModuleName: f.toModuleId ? moduleNameMap.get(f.toModuleId) : undefined,
+      });
+    }
+
+    // Build tree structure - collect all root flows
+    const roots: FlowTreeNode[] = [];
+    for (const f of flows) {
+      const node = flowMap.get(f.id)!;
+      if (f.parentId === null) {
+        roots.push(node);
+      } else {
+        const parent = flowMap.get(f.parentId);
+        if (parent) {
+          parent.children.push(node);
+        }
+      }
+    }
+
+    // Sort children by stepOrder
+    for (const node of flowMap.values()) {
+      node.children.sort((a, b) => a.stepOrder - b.stepOrder);
+    }
+
+    return roots;
+  }
+
+  /**
+   * Get all leaf flows (flows with module transitions).
+   */
+  getLeafFlows(): Flow[] {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        parent_id as parentId,
+        step_order as stepOrder,
+        name,
+        slug,
+        full_path as fullPath,
+        description,
+        from_module_id as fromModuleId,
+        to_module_id as toModuleId,
+        semantic,
+        depth,
+        domain,
+        created_at as createdAt
+      FROM flows
+      WHERE from_module_id IS NOT NULL AND to_module_id IS NOT NULL
+      ORDER BY full_path
+    `);
+    return stmt.all() as Flow[];
+  }
+
+  /**
+   * Get flows for a specific module transition.
+   */
+  getFlowsForModuleTransition(fromModuleId: number, toModuleId: number): Flow[] {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        parent_id as parentId,
+        step_order as stepOrder,
+        name,
+        slug,
+        full_path as fullPath,
+        description,
+        from_module_id as fromModuleId,
+        to_module_id as toModuleId,
+        semantic,
+        depth,
+        domain,
+        created_at as createdAt
+      FROM flows
+      WHERE from_module_id = ? AND to_module_id = ?
+      ORDER BY full_path
+    `);
+    return stmt.all(fromModuleId, toModuleId) as Flow[];
+  }
+
+  /**
+   * Expand a composite flow to its ordered list of descendant leaf flows.
+   * Returns an empty array if the flow itself is a leaf (no children).
+   */
+  expandFlow(flowId: number): Flow[] {
+    this.ensureFlowsTables();
+
+    const flow = this.getFlowById(flowId);
+    if (!flow) return [];
+
+    // Get children and recursively expand
+    const children = this.getFlowChildren(flowId);
+    const result: Flow[] = [];
+
+    for (const child of children) {
+      // If child is a leaf flow, add it
+      if (child.fromModuleId !== null && child.toModuleId !== null) {
+        result.push(child);
+      } else {
+        // Otherwise recursively expand
+        result.push(...this.expandFlow(child.id));
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -3727,69 +3745,122 @@ export class IndexDatabase implements IIndexWriter {
    */
   getFlowStats(): {
     flowCount: number;
-    totalSteps: number;
-    avgStepsPerFlow: number;
-    modulesCovered: number;
+    leafFlowCount: number;
+    rootFlowCount: number;
+    maxDepth: number;
   } {
     this.ensureFlowsTables();
 
     const flowCount = this.getFlowCount();
-    const stepsStmt = this.db.prepare('SELECT COUNT(*) as count FROM flow_steps');
-    const totalSteps = (stepsStmt.get() as { count: number }).count;
+    const leafFlowCount = this.getLeafFlows().length;
 
-    const modulesStmt = this.db.prepare(`
-      SELECT COUNT(DISTINCT module_id) as count
-      FROM flow_steps
-      WHERE module_id IS NOT NULL
+    const rootStmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM flows WHERE parent_id IS NULL
     `);
-    const modulesCovered = (modulesStmt.get() as { count: number }).count;
+    const rootFlowCount = (rootStmt.get() as { count: number }).count;
+
+    const depthStmt = this.db.prepare(`
+      SELECT COALESCE(MAX(depth), 0) as maxDepth FROM flows
+    `);
+    const maxDepth = (depthStmt.get() as { maxDepth: number }).maxDepth;
 
     return {
       flowCount,
-      totalSteps,
-      avgStepsPerFlow: flowCount > 0 ? totalSteps / flowCount : 0,
-      modulesCovered,
+      leafFlowCount,
+      rootFlowCount,
+      maxDepth,
     };
   }
 
+  // ============================================
+  // Module Call Graph (for flow detection)
+  // ============================================
+
   /**
-   * Get a flow as a DAG with nodes and edges for visualization.
-   * Nodes are the flow steps, edges are call graph relationships between steps.
+   * Get the module-level call graph.
+   * Aggregates symbol-level calls into module-to-module edges.
    */
-  getFlowDAG(flowId: number): FlowDAG | null {
-    const flow = this.getFlowWithSteps(flowId);
-    if (!flow) return null;
+  getModuleCallGraph(): ModuleCallEdge[] {
+    this.ensureModulesTables();
 
-    // Build set of definition IDs in this flow
-    const stepDefIds = new Set(flow.steps.map(s => s.definitionId));
-    stepDefIds.add(flow.entryPointId);
+    // Get symbol-level call graph
+    const symbolEdges = this.getCallGraph();
 
-    // Get call graph edges filtered to only those between flow steps
-    const allEdges = this.getCallGraph();
-    const flowEdges = allEdges.filter(
-      e => stepDefIds.has(e.fromId) && stepDefIds.has(e.toId)
-    );
+    // Build module lookup for definitions
+    const defModuleMap = new Map<number, { moduleId: number; modulePath: string }>();
+    const moduleMembers = this.db.prepare(`
+      SELECT mm.definition_id, mm.module_id, m.full_path
+      FROM module_members mm
+      JOIN modules m ON mm.module_id = m.id
+    `).all() as Array<{ definition_id: number; module_id: number; full_path: string }>;
 
-    // Build nodes from flow steps
-    const nodes = flow.steps.map(step => ({
-      id: step.definitionId,
-      name: step.name,
-      kind: step.kind,
-      filePath: step.filePath,
-      stepOrder: step.stepOrder,
-      layer: step.layer,
-      moduleName: step.moduleName,
-      isEntryPoint: step.definitionId === flow.entryPointId,
-    }));
+    for (const mm of moduleMembers) {
+      defModuleMap.set(mm.definition_id, {
+        moduleId: mm.module_id,
+        modulePath: mm.full_path,
+      });
+    }
 
-    // Build edges
-    const edges = flowEdges.map(e => ({
-      source: e.fromId,
-      target: e.toId,
-      weight: e.weight,
-    }));
+    // Aggregate to module-level edges
+    const edgeMap = new Map<string, ModuleCallEdge>();
 
-    return { flow, nodes, edges };
+    for (const edge of symbolEdges) {
+      const fromModule = defModuleMap.get(edge.fromId);
+      const toModule = defModuleMap.get(edge.toId);
+
+      if (!fromModule || !toModule) continue;
+
+      // Skip self-edges (calls within same module)
+      if (fromModule.moduleId === toModule.moduleId) continue;
+
+      const key = `${fromModule.moduleId}->${toModule.moduleId}`;
+      const existing = edgeMap.get(key);
+
+      if (existing) {
+        existing.weight += edge.weight;
+      } else {
+        edgeMap.set(key, {
+          fromModuleId: fromModule.moduleId,
+          toModuleId: toModule.moduleId,
+          weight: edge.weight,
+          fromModulePath: fromModule.modulePath,
+          toModulePath: toModule.modulePath,
+        });
+      }
+    }
+
+    return Array.from(edgeMap.values()).sort((a, b) => b.weight - a.weight);
+  }
+
+  /**
+   * Get flow coverage statistics.
+   */
+  getFlowCoverage(): FlowCoverageStats {
+    this.ensureFlowsTables();
+    this.ensureModulesTables();
+
+    // Get all module edges
+    const moduleEdges = this.getModuleCallGraph();
+    const totalModuleEdges = moduleEdges.length;
+
+    // Get covered edges (edges that have a flow)
+    const leafFlows = this.getLeafFlows();
+    const coveredEdges = new Set<string>();
+
+    for (const flow of leafFlows) {
+      if (flow.fromModuleId && flow.toModuleId) {
+        coveredEdges.add(`${flow.fromModuleId}->${flow.toModuleId}`);
+      }
+    }
+
+    const coveredByFlows = coveredEdges.size;
+    const percentage = totalModuleEdges > 0 ? (coveredByFlows / totalModuleEdges) * 100 : 0;
+
+    return {
+      totalModuleEdges,
+      coveredByFlows,
+      percentage,
+    };
   }
 
   /**
@@ -3800,6 +3871,7 @@ export class IndexDatabase implements IIndexWriter {
     updates: {
       name?: string;
       description?: string;
+      semantic?: string;
       domain?: string;
     }
   ): boolean {
@@ -3816,6 +3888,10 @@ export class IndexDatabase implements IIndexWriter {
       sets.push('description = ?');
       params.push(updates.description);
     }
+    if (updates.semantic !== undefined) {
+      sets.push('semantic = ?');
+      params.push(updates.semantic);
+    }
     if (updates.domain !== undefined) {
       sets.push('domain = ?');
       params.push(updates.domain);
@@ -3827,6 +3903,130 @@ export class IndexDatabase implements IIndexWriter {
     const stmt = this.db.prepare(`UPDATE flows SET ${sets.join(', ')} WHERE id = ?`);
     const result = stmt.run(...params);
     return result.changes > 0;
+  }
+
+  /**
+   * Get a flow by its slug.
+   * Note: Slugs may not be unique across the tree, this returns the first match.
+   * For more precise matching, use getFlowByPath with the full path.
+   */
+  getFlowBySlug(slug: string): Flow | null {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        parent_id as parentId,
+        step_order as stepOrder,
+        name,
+        slug,
+        full_path as fullPath,
+        description,
+        from_module_id as fromModuleId,
+        to_module_id as toModuleId,
+        semantic,
+        depth,
+        domain,
+        created_at as createdAt
+      FROM flows
+      WHERE slug = ?
+      LIMIT 1
+    `);
+    const result = stmt.get(slug) as Flow | undefined;
+    return result ?? null;
+  }
+
+  /**
+   * Reparent a single flow under a new parent.
+   * Updates parent_id, full_path (recursive), depth (recursive), step_order.
+   *
+   * @param flowId The flow to reparent
+   * @param newParentId The new parent (or null for root level)
+   * @param stepOrder Optional step order (auto-assigned if not provided)
+   */
+  reparentFlow(flowId: number, newParentId: number | null, stepOrder?: number): void {
+    this.ensureFlowsTables();
+
+    const flow = this.getFlowById(flowId);
+    if (!flow) {
+      throw new Error(`Flow ${flowId} not found`);
+    }
+
+    // Calculate new values
+    let newFullPath: string;
+    let newDepth: number;
+
+    if (newParentId === null) {
+      newFullPath = flow.slug;
+      newDepth = 0;
+    } else {
+      const parent = this.getFlowById(newParentId);
+      if (!parent) {
+        throw new Error(`Parent flow ${newParentId} not found`);
+      }
+      newFullPath = `${parent.fullPath}.${flow.slug}`;
+      newDepth = parent.depth + 1;
+    }
+
+    // Auto-assign step_order if not provided
+    if (stepOrder === undefined) {
+      const maxOrder = this.db.prepare(
+        `SELECT COALESCE(MAX(step_order), 0) as max FROM flows WHERE parent_id ${newParentId === null ? 'IS NULL' : '= ?'}`
+      ).get(...(newParentId === null ? [] : [newParentId])) as { max: number };
+      stepOrder = maxOrder.max + 1;
+    }
+
+    // Update the flow
+    this.db.prepare(`
+      UPDATE flows
+      SET parent_id = ?, full_path = ?, depth = ?, step_order = ?
+      WHERE id = ?
+    `).run(newParentId, newFullPath, newDepth, stepOrder, flowId);
+
+    // Recursively update all descendants' full_path and depth
+    this.updateDescendantPaths(flowId, newFullPath, newDepth);
+  }
+
+  /**
+   * Recursively update full_path and depth for all descendants of a flow.
+   * Called internally after a parent changes.
+   */
+  private updateDescendantPaths(parentId: number, parentPath: string, parentDepth: number): void {
+    const children = this.getFlowChildren(parentId);
+    for (const child of children) {
+      const newPath = `${parentPath}.${child.slug}`;
+      const newDepth = parentDepth + 1;
+
+      this.db.prepare(`
+        UPDATE flows SET full_path = ?, depth = ? WHERE id = ?
+      `).run(newPath, newDepth, child.id);
+
+      this.updateDescendantPaths(child.id, newPath, newDepth);
+    }
+  }
+
+  /**
+   * Reparent multiple flows under a new parent in the order provided.
+   * Step orders are assigned 1, 2, 3... in the array order.
+   *
+   * @param flowIds Array of flow IDs to reparent (in desired order)
+   * @param newParentId The new parent for all flows
+   */
+  reparentFlows(flowIds: number[], newParentId: number): void {
+    for (let i = 0; i < flowIds.length; i++) {
+      this.reparentFlow(flowIds[i], newParentId, i + 1);
+    }
+  }
+
+  /**
+   * Delete a flow and all its descendants.
+   * Returns the number of flows deleted.
+   */
+  deleteFlow(flowId: number): number {
+    this.ensureFlowsTables();
+    // CASCADE will handle descendants
+    const stmt = this.db.prepare('DELETE FROM flows WHERE id = ?');
+    const result = stmt.run(flowId);
+    return result.changes;
   }
 
   /**
@@ -3890,331 +4090,6 @@ export class IndexDatabase implements IIndexWriter {
     }
 
     return sccs;
-  }
-
-  // ============================================
-  // Flow Composition Methods (Hierarchical Flows)
-  // ============================================
-
-  /**
-   * Insert a flow composition (sub-flow reference).
-   */
-  insertFlowComposition(
-    parentId: number,
-    childId: number,
-    stepOrder: number,
-    relationshipType: FlowCompositionRelationship,
-    semantic?: string
-  ): number {
-    this.ensureFlowsTables();
-    const stmt = this.db.prepare(`
-      INSERT INTO flow_compositions (parent_flow_id, child_flow_id, step_order, relationship_type, semantic)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(parentId, childId, stepOrder, relationshipType, semantic ?? null);
-    return result.lastInsertRowid as number;
-  }
-
-  /**
-   * Get all compositions for a flow (sub-flows it includes).
-   */
-  getFlowCompositions(flowId: number): FlowCompositionWithDetails[] {
-    this.ensureFlowsTables();
-    const stmt = this.db.prepare(`
-      SELECT
-        fc.id,
-        fc.parent_flow_id as parentFlowId,
-        fc.child_flow_id as childFlowId,
-        fc.step_order as stepOrder,
-        fc.relationship_type as relationshipType,
-        fc.semantic,
-        fc.created_at as createdAt,
-        f.name as childFlowName,
-        f.description as childFlowDescription,
-        f.entry_point_id as childFlowEntryPointId
-      FROM flow_compositions fc
-      JOIN flows f ON fc.child_flow_id = f.id
-      WHERE fc.parent_flow_id = ?
-      ORDER BY fc.step_order
-    `);
-    return stmt.all(flowId) as FlowCompositionWithDetails[];
-  }
-
-  /**
-   * Get all flows that use a given sub-flow.
-   */
-  getFlowsUsingSubflow(subflowId: number): Flow[] {
-    this.ensureFlowsTables();
-    const stmt = this.db.prepare(`
-      SELECT DISTINCT
-        f.id,
-        f.name,
-        f.description,
-        f.entry_point_id as entryPointId,
-        f.domain,
-        f.created_at as createdAt
-      FROM flows f
-      JOIN flow_compositions fc ON fc.parent_flow_id = f.id
-      WHERE fc.child_flow_id = ?
-      ORDER BY f.name
-    `);
-    return stmt.all(subflowId) as Flow[];
-  }
-
-  /**
-   * Check if adding a composition would create a circular reference.
-   */
-  isCircularReference(parentId: number, childId: number): boolean {
-    this.ensureFlowsTables();
-
-    // If child is the same as parent, it's circular
-    if (parentId === childId) return true;
-
-    // BFS to check if parent is reachable from child
-    const visited = new Set<number>();
-    const queue = [childId];
-
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      if (current === parentId) return true;
-      if (visited.has(current)) continue;
-      visited.add(current);
-
-      // Get all flows that this flow includes
-      const compositions = this.getFlowCompositions(current);
-      for (const comp of compositions) {
-        queue.push(comp.childFlowId);
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Get the composition depth for a flow.
-   */
-  getFlowCompositionDepth(flowId: number): number {
-    this.ensureFlowsTables();
-
-    const compositions = this.getFlowCompositions(flowId);
-    if (compositions.length === 0) return 0;
-
-    let maxChildDepth = 0;
-    for (const comp of compositions) {
-      const childDepth = this.getFlowCompositionDepth(comp.childFlowId);
-      maxChildDepth = Math.max(maxChildDepth, childDepth);
-    }
-
-    return 1 + maxChildDepth;
-  }
-
-  /**
-   * Get the flow hierarchy as a tree structure.
-   */
-  getFlowHierarchy(flowId: number): FlowHierarchyNode | null {
-    this.ensureFlowsTables();
-
-    const flow = this.getFlowById(flowId);
-    if (!flow) return null;
-
-    const compositions = this.getFlowCompositions(flowId);
-    const children: FlowHierarchyNode['children'] = [];
-
-    for (const comp of compositions) {
-      const childNode = this.getFlowHierarchy(comp.childFlowId);
-      if (childNode) {
-        children.push({
-          composition: comp,
-          node: childNode,
-        });
-      }
-    }
-
-    return { flow, children };
-  }
-
-  /**
-   * Get a flow by ID.
-   */
-  getFlowById(flowId: number): Flow | null {
-    this.ensureFlowsTables();
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        name,
-        description,
-        entry_point_id as entryPointId,
-        domain,
-        created_at as createdAt
-      FROM flows
-      WHERE id = ?
-    `);
-    return (stmt.get(flowId) as Flow) || null;
-  }
-
-  /**
-   * Get all top-level flows (flows that are not sub-flows of any other flow).
-   */
-  getTopLevelFlows(): Flow[] {
-    this.ensureFlowsTables();
-    const stmt = this.db.prepare(`
-      SELECT
-        f.id,
-        f.name,
-        f.description,
-        f.entry_point_id as entryPointId,
-        f.domain,
-        f.created_at as createdAt
-      FROM flows f
-      WHERE NOT EXISTS (
-        SELECT 1 FROM flow_compositions fc
-        WHERE fc.child_flow_id = f.id
-      )
-      ORDER BY f.name
-    `);
-    return stmt.all() as Flow[];
-  }
-
-  /**
-   * Get all sub-flows (flows that are referenced by other flows).
-   */
-  getSubFlows(): Flow[] {
-    this.ensureFlowsTables();
-    const stmt = this.db.prepare(`
-      SELECT DISTINCT
-        f.id,
-        f.name,
-        f.description,
-        f.entry_point_id as entryPointId,
-        f.domain,
-        f.created_at as createdAt
-      FROM flows f
-      JOIN flow_compositions fc ON fc.child_flow_id = f.id
-      ORDER BY f.name
-    `);
-    return stmt.all() as Flow[];
-  }
-
-  /**
-   * Get orphaned sub-flows (flows marked as sub-flows but not used by any parent).
-   */
-  getOrphanedSubflows(): Flow[] {
-    this.ensureFlowsTables();
-    const stmt = this.db.prepare(`
-      SELECT
-        f.id,
-        f.name,
-        f.description,
-        f.entry_point_id as entryPointId,
-        f.domain,
-        f.created_at as createdAt
-      FROM flows f
-      JOIN flow_metadata fm ON fm.flow_id = f.id AND fm.key = 'is_subflow' AND fm.value = 'true'
-      WHERE NOT EXISTS (
-        SELECT 1 FROM flow_compositions fc
-        WHERE fc.child_flow_id = f.id
-      )
-      ORDER BY f.name
-    `);
-    return stmt.all() as Flow[];
-  }
-
-  /**
-   * Expand a composite flow to all definition steps (flattening sub-flows).
-   */
-  expandCompositeFlow(flowId: number): ExpandedFlow | null {
-    const flow = this.getFlowById(flowId);
-    if (!flow) return null;
-
-    const expandedSteps: ExpandedFlowStep[] = [];
-    const flowWithSteps = this.getFlowWithSteps(flowId);
-    if (!flowWithSteps) return null;
-
-    const compositions = this.getFlowCompositions(flowId);
-    const compositionsByStep = new Map(compositions.map(c => [c.stepOrder, c]));
-
-    let stepOrder = 1;
-    for (const step of flowWithSteps.steps) {
-      const composition = compositionsByStep.get(step.stepOrder);
-      if (composition) {
-        // Expand the sub-flow
-        const subflow = this.expandCompositeFlow(composition.childFlowId);
-        if (subflow) {
-          for (const subStep of subflow.steps) {
-            expandedSteps.push({
-              ...subStep,
-              stepOrder: stepOrder++,
-              fromSubflowId: composition.childFlowId,
-            });
-          }
-        }
-      } else {
-        // Direct step
-        expandedSteps.push({
-          stepOrder: stepOrder++,
-          definitionId: step.definitionId,
-          name: step.name,
-          kind: step.kind,
-          filePath: step.filePath,
-          moduleId: step.moduleId,
-          moduleName: step.moduleName,
-          layer: step.layer,
-          fromSubflowId: null,
-        });
-      }
-    }
-
-    return {
-      ...flow,
-      steps: expandedSteps,
-      compositionDepth: this.getFlowCompositionDepth(flowId),
-    };
-  }
-
-  // ============================================
-  // Flow Metadata Methods
-  // ============================================
-
-  /**
-   * Set a metadata value for a flow.
-   */
-  setFlowMetadata(flowId: number, key: string, value: string): void {
-    this.ensureFlowsTables();
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO flow_metadata (flow_id, key, value)
-      VALUES (?, ?, ?)
-    `);
-    stmt.run(flowId, key, value);
-  }
-
-  /**
-   * Get a metadata value for a flow.
-   */
-  getFlowMetadataValue(flowId: number, key: string): string | null {
-    this.ensureFlowsTables();
-    const stmt = this.db.prepare(`
-      SELECT value FROM flow_metadata
-      WHERE flow_id = ? AND key = ?
-    `);
-    const row = stmt.get(flowId, key) as { value: string } | undefined;
-    return row?.value ?? null;
-  }
-
-  /**
-   * Get all metadata for a flow.
-   */
-  getFlowMetadata(flowId: number): Record<string, string> {
-    this.ensureFlowsTables();
-    const stmt = this.db.prepare(`
-      SELECT key, value FROM flow_metadata
-      WHERE flow_id = ?
-    `);
-    const rows = stmt.all(flowId) as Array<{ key: string; value: string }>;
-    const result: Record<string, string> = {};
-    for (const row of rows) {
-      result[row.key] = row.value;
-    }
-    return result;
   }
 
   // ============================================
@@ -4398,202 +4273,6 @@ export class IndexDatabase implements IIndexWriter {
     // Sort by total connectivity and limit
     results.sort((a, b) => (b.incomingDeps + b.outgoingDeps) - (a.incomingDeps + a.outgoingDeps));
     return results.slice(0, limit);
-  }
-
-  // ============================================
-  // Flow Coverage Methods
-  // ============================================
-
-  /**
-   * Get symbols not covered by any flow.
-   */
-  getSymbolsNotInFlows(options: { minDeps?: number } = {}): Array<{
-    id: number;
-    name: string;
-    kind: string;
-    filePath: string;
-    incomingDeps: number;
-    outgoingDeps: number;
-  }> {
-    this.ensureFlowsTables();
-
-    const minDeps = options.minDeps ?? 0;
-
-    // Get all definition IDs in flows
-    const stmt = this.db.prepare(`
-      SELECT DISTINCT definition_id FROM flow_steps
-      UNION
-      SELECT DISTINCT entry_point_id FROM flows
-    `);
-    const coveredIds = new Set(
-      (stmt.all() as Array<{ definition_id: number }>).map(r => r.definition_id)
-    );
-
-    // Get connectivity info
-    const edges = this.getCallGraph();
-    const incomingCount = new Map<number, number>();
-    const outgoingCount = new Map<number, number>();
-
-    for (const edge of edges) {
-      incomingCount.set(edge.toId, (incomingCount.get(edge.toId) ?? 0) + 1);
-      outgoingCount.set(edge.fromId, (outgoingCount.get(edge.fromId) ?? 0) + 1);
-    }
-
-    // Get all definitions not in flows
-    const allDefs = this.db.prepare(`
-      SELECT
-        d.id,
-        d.name,
-        d.kind,
-        f.path as filePath
-      FROM definitions d
-      JOIN files f ON d.file_id = f.id
-    `).all() as Array<{ id: number; name: string; kind: string; filePath: string }>;
-
-    const results: Array<{
-      id: number;
-      name: string;
-      kind: string;
-      filePath: string;
-      incomingDeps: number;
-      outgoingDeps: number;
-    }> = [];
-
-    for (const def of allDefs) {
-      if (coveredIds.has(def.id)) continue;
-
-      const incoming = incomingCount.get(def.id) ?? 0;
-      const outgoing = outgoingCount.get(def.id) ?? 0;
-      const totalDeps = incoming + outgoing;
-
-      if (totalDeps >= minDeps) {
-        results.push({
-          ...def,
-          incomingDeps: incoming,
-          outgoingDeps: outgoing,
-        });
-      }
-    }
-
-    // Sort by total connectivity
-    results.sort((a, b) => (b.incomingDeps + b.outgoingDeps) - (a.incomingDeps + a.outgoingDeps));
-    return results;
-  }
-
-  /**
-   * Get comprehensive flow coverage statistics.
-   */
-  getFlowCoverageStats(): FlowCoverageStats {
-    this.ensureFlowsTables();
-
-    // Total definitions
-    const totalDefs = (this.db.prepare('SELECT COUNT(*) as count FROM definitions').get() as { count: number }).count;
-
-    // Covered by flows
-    const coveredStmt = this.db.prepare(`
-      SELECT COUNT(DISTINCT definition_id) as count FROM (
-        SELECT definition_id FROM flow_steps
-        UNION
-        SELECT entry_point_id as definition_id FROM flows
-      )
-    `);
-    const coveredByFlows = (coveredStmt.get() as { count: number }).count;
-
-    // Coverage percentage
-    const coveragePercentage = totalDefs > 0 ? (coveredByFlows / totalDefs) * 100 : 0;
-
-    // Top-level flows count
-    const topLevelFlows = this.getTopLevelFlows().length;
-
-    // Sub-flows count
-    const subFlows = this.getSubFlows().length;
-
-    // Average composition depth
-    let totalDepth = 0;
-    const allFlows = this.getFlows();
-    for (const flow of allFlows) {
-      totalDepth += this.getFlowCompositionDepth(flow.id);
-    }
-    const avgCompositionDepth = allFlows.length > 0 ? totalDepth / allFlows.length : 0;
-
-    // Uncovered entry points
-    const entryPoints = this.getEntryPoints();
-    const coveredIds = new Set<number>();
-    const entriesStmt = this.db.prepare(`
-      SELECT DISTINCT entry_point_id as id FROM flows
-      UNION
-      SELECT DISTINCT definition_id as id FROM flow_steps
-    `);
-    for (const row of entriesStmt.all() as Array<{ id: number }>) {
-      coveredIds.add(row.id);
-    }
-
-    // Get connectivity for entry points
-    const edges = this.getCallGraph();
-    const incomingCount = new Map<number, number>();
-    const outgoingCount = new Map<number, number>();
-    for (const edge of edges) {
-      incomingCount.set(edge.toId, (incomingCount.get(edge.toId) ?? 0) + 1);
-      outgoingCount.set(edge.fromId, (outgoingCount.get(edge.fromId) ?? 0) + 1);
-    }
-
-    const uncoveredEntryPoints = entryPoints
-      .filter(ep => !coveredIds.has(ep.id))
-      .map(ep => ({
-        id: ep.id,
-        name: ep.name,
-        kind: ep.kind,
-        filePath: ep.filePath,
-        incomingDeps: incomingCount.get(ep.id) ?? 0,
-        outgoingDeps: outgoingCount.get(ep.id) ?? 0,
-      }));
-
-    // Uncovered high-connectivity symbols
-    const uncoveredHighConnectivity = this.getSymbolsNotInFlows({ minDeps: 5 });
-
-    // Orphaned sub-flows
-    const orphanedSubflows = this.getOrphanedSubflows();
-
-    // Coverage by domain
-    const coverageByDomain = new Map<string, { covered: number; total: number }>();
-
-    // Get all definitions with domains
-    const defsWithDomains = this.db.prepare(`
-      SELECT
-        d.id,
-        dm.value as domain
-      FROM definitions d
-      JOIN definition_metadata dm ON dm.definition_id = d.id AND dm.key = 'domain'
-    `).all() as Array<{ id: number; domain: string }>;
-
-    for (const def of defsWithDomains) {
-      try {
-        const domains = JSON.parse(def.domain) as string[];
-        for (const domain of domains) {
-          if (!coverageByDomain.has(domain)) {
-            coverageByDomain.set(domain, { covered: 0, total: 0 });
-          }
-          const stats = coverageByDomain.get(domain)!;
-          stats.total++;
-          if (coveredIds.has(def.id)) {
-            stats.covered++;
-          }
-        }
-      } catch { /* ignore */ }
-    }
-
-    return {
-      totalDefinitions: totalDefs,
-      coveredByFlows,
-      coveragePercentage,
-      topLevelFlows,
-      subFlows,
-      avgCompositionDepth,
-      uncoveredEntryPoints,
-      uncoveredHighConnectivity,
-      orphanedSubflows,
-      coverageByDomain,
-    };
   }
 
   /**

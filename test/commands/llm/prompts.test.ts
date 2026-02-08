@@ -210,43 +210,42 @@ describe('Flow Prompts v2', () => {
   describe('Coverage Stats Formatting', () => {
     it('formats coverage stats correctly', () => {
       const stats: FlowCoverageStats = {
-        totalDefinitions: 100,
+        totalModuleEdges: 100,
         coveredByFlows: 75,
-        coveragePercentage: 75.0,
-        topLevelFlows: 5,
-        subFlows: 3,
-        avgCompositionDepth: 1.5,
-        uncoveredEntryPoints: [
-          {
-            id: 99,
-            name: 'UncoveredHandler',
-            kind: 'function',
-            filePath: '/project/handlers/uncovered.ts',
-            incomingDeps: 0,
-            outgoingDeps: 8,
-          },
-        ],
-        uncoveredHighConnectivity: [],
-        orphanedSubflows: [],
-        coverageByDomain: new Map([
-          ['auth', { covered: 10, total: 15 }],
-          ['payments', { covered: 5, total: 10 }],
-        ]),
+        percentage: 75.0,
       };
 
       const formatted = formatCoverageStats(stats);
 
       expect(formatted).toContain('## Flow Coverage Statistics');
-      expect(formatted).toContain('Total definitions: 100');
+      expect(formatted).toContain('Total module edges: 100');
       expect(formatted).toContain('Covered by flows: 75 (75.0%)');
-      expect(formatted).toContain('Top-level flows: 5');
-      expect(formatted).toContain('Sub-flows: 3');
-      expect(formatted).toContain('Avg composition depth: 1.50');
-      expect(formatted).toContain('### Uncovered Entry Points');
-      expect(formatted).toContain('UncoveredHandler (#99): 8 outgoing deps');
-      expect(formatted).toContain('### Coverage by Domain');
-      expect(formatted).toContain('auth: 10/15 (66.7%)');
-      expect(formatted).toContain('payments: 5/10 (50.0%)');
+    });
+
+    it('handles zero coverage', () => {
+      const stats: FlowCoverageStats = {
+        totalModuleEdges: 50,
+        coveredByFlows: 0,
+        percentage: 0.0,
+      };
+
+      const formatted = formatCoverageStats(stats);
+
+      expect(formatted).toContain('Total module edges: 50');
+      expect(formatted).toContain('Covered by flows: 0 (0.0%)');
+    });
+
+    it('handles 100% coverage', () => {
+      const stats: FlowCoverageStats = {
+        totalModuleEdges: 25,
+        coveredByFlows: 25,
+        percentage: 100.0,
+      };
+
+      const formatted = formatCoverageStats(stats);
+
+      expect(formatted).toContain('Total module edges: 25');
+      expect(formatted).toContain('Covered by flows: 25 (100.0%)');
     });
   });
 });

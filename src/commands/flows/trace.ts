@@ -1,6 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { withDatabase, SymbolResolver, SharedFlags, outputJsonOrPlain } from '../_shared/index.js';
+import type { IndexDatabase } from '../../db/database.js';
 
 interface TraceNode {
   id: number;
@@ -11,12 +12,11 @@ interface TraceNode {
   depth: number;
   moduleId: number | null;
   moduleName: string | null;
-  layer: string | null;
   children: TraceNode[];
 }
 
 export default class FlowsTrace extends Command {
-  static override description = 'Trace execution path from entry point';
+  static override description = 'Trace call graph from a symbol';
 
   static override examples = [
     '<%= config.bin %> flows trace --name handleRegister',
@@ -66,8 +66,8 @@ export default class FlowsTrace extends Command {
         this.error(chalk.red(`Definition with ID ${definition.id} not found`));
       }
 
-      // Trace the flow from this entry point
-      const trace = db.traceFlowFromEntry(definition.id, flags.depth);
+      // Trace the call graph from this entry point
+      const trace = this.traceFromEntry(db, definition.id, flags.depth);
 
       // Build a tree structure for display
       const tree = this.buildTree(db, definition.id, trace);
@@ -102,10 +102,66 @@ export default class FlowsTrace extends Command {
     });
   }
 
+  /**
+   * Trace reachable symbols from an entry point using call graph (BFS).
+   */
+  private traceFromEntry(
+    db: IndexDatabase,
+    entryId: number,
+    maxDepth: number
+  ): Array<{ definitionId: number; depth: number; moduleId: number | null }> {
+    // Build call graph adjacency list
+    const edges = db.getCallGraph();
+    const adjacency = new Map<number, number[]>();
+    for (const edge of edges) {
+      if (!adjacency.has(edge.fromId)) {
+        adjacency.set(edge.fromId, []);
+      }
+      adjacency.get(edge.fromId)!.push(edge.toId);
+    }
+
+    // BFS traversal
+    const visited = new Map<number, number>();  // defId -> depth
+    const queue: Array<{ id: number; depth: number }> = [{ id: entryId, depth: 0 }];
+
+    while (queue.length > 0) {
+      const { id, depth } = queue.shift()!;
+
+      if (visited.has(id)) continue;
+      if (depth > maxDepth) continue;
+
+      visited.set(id, depth);
+
+      const neighbors = adjacency.get(id) ?? [];
+      for (const neighborId of neighbors) {
+        if (!visited.has(neighborId)) {
+          queue.push({ id: neighborId, depth: depth + 1 });
+        }
+      }
+    }
+
+    // Get module info for each visited definition
+    const result: Array<{ definitionId: number; depth: number; moduleId: number | null }> = [];
+
+    for (const [definitionId, depth] of visited) {
+      const moduleInfo = db.getDefinitionModule(definitionId);
+      result.push({
+        definitionId,
+        depth,
+        moduleId: moduleInfo?.module.id ?? null,
+      });
+    }
+
+    // Sort by depth
+    result.sort((a, b) => a.depth - b.depth);
+
+    return result;
+  }
+
   private buildTree(
-    db: { getDefinitionById: (id: number) => { id: number; name: string; kind: string; filePath: string; line: number } | null; getDefinitionModule: (id: number) => { module: { id: number; name: string } } | null; getCallGraph: () => Array<{ fromId: number; toId: number; weight: number }> },
+    db: IndexDatabase,
     rootId: number,
-    trace: Array<{ definitionId: number; depth: number; moduleId: number | null; layer: string | null }>
+    trace: Array<{ definitionId: number; depth: number; moduleId: number | null }>
   ): TraceNode {
     // Build adjacency list from call graph
     const edges = db.getCallGraph();
@@ -158,7 +214,6 @@ export default class FlowsTrace extends Command {
         depth,
         moduleId: moduleInfo?.module.id ?? null,
         moduleName: moduleInfo?.module.name ?? null,
-        layer: null, // Layer is no longer part of module tree
         children,
       };
     };
@@ -172,7 +227,6 @@ export default class FlowsTrace extends Command {
       depth: 0,
       moduleId: null,
       moduleName: null,
-      layer: null,
       children: [],
     };
   }
@@ -185,7 +239,6 @@ export default class FlowsTrace extends Command {
     line: number;
     depth: number;
     moduleName: string | null;
-    layer: string | null;
   }> {
     const result: Array<{
       id: number;
@@ -195,7 +248,6 @@ export default class FlowsTrace extends Command {
       line: number;
       depth: number;
       moduleName: string | null;
-      layer: string | null;
     }> = [];
 
     const visit = (n: TraceNode) => {
@@ -207,7 +259,6 @@ export default class FlowsTrace extends Command {
         line: n.line,
         depth: n.depth,
         moduleName: n.moduleName,
-        layer: n.layer,
       });
       for (const child of n.children) {
         visit(child);
@@ -222,12 +273,11 @@ export default class FlowsTrace extends Command {
     const connector = isLast ? '└── ' : '├── ';
     const depthLabel = node.depth === 0 ? '' : `${chalk.gray(`[${node.depth}]`)} `;
     const moduleLabel = node.moduleName ? chalk.magenta(` (${node.moduleName})`) : '';
-    const layerLabel = node.layer ? chalk.yellow(` [${node.layer}]`) : '';
 
     if (node.depth === 0) {
-      this.log(`${depthLabel}${chalk.cyan(node.name)}${moduleLabel}${layerLabel}`);
+      this.log(`${depthLabel}${chalk.cyan(node.name)}${moduleLabel}`);
     } else {
-      this.log(`${prefix}${connector}${depthLabel}${chalk.cyan(node.name)}${moduleLabel}${layerLabel}`);
+      this.log(`${prefix}${connector}${depthLabel}${chalk.cyan(node.name)}${moduleLabel}`);
     }
 
     const childPrefix = prefix + (isLast ? '    ' : '│   ');

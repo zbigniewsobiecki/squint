@@ -15,6 +15,9 @@ describe('flows commands', () => {
   let controllerDefId: number;
   let serviceDefId: number;
   let repoDefId: number;
+  let controllerModuleId: number;
+  let serviceModuleId: number;
+  let repoModuleId: number;
 
   beforeEach(() => {
     // Create a temporary directory for test files
@@ -78,7 +81,7 @@ describe('flows commands', () => {
       endPosition: { row: 8, column: 1 },
     });
 
-    // Create a second flow entry point
+    // Create a second set of definitions for login flow
     const loginHandlerId = db.insertDefinition(controllerFileId, {
       name: 'handleLogin',
       kind: 'function',
@@ -100,9 +103,9 @@ describe('flows commands', () => {
     // Create module tree
     const rootId = db.ensureRootModule();
 
-    const controllerModuleId = db.insertModule(rootId, 'user-controller', 'User Controller', 'User API endpoints');
-    const serviceModuleId = db.insertModule(rootId, 'user-service', 'User Service', 'User business logic');
-    const repoModuleId = db.insertModule(rootId, 'user-repo', 'User Repository', 'User data access');
+    controllerModuleId = db.insertModule(rootId, 'user-controller', 'User Controller', 'User API endpoints');
+    serviceModuleId = db.insertModule(rootId, 'user-service', 'User Service', 'User business logic');
+    repoModuleId = db.insertModule(rootId, 'user-repo', 'User Repository', 'User data access');
 
     // Assign symbols to modules
     db.assignSymbolToModule(controllerDefId, controllerModuleId);
@@ -111,15 +114,35 @@ describe('flows commands', () => {
     db.assignSymbolToModule(authServiceId, serviceModuleId);
     db.assignSymbolToModule(repoDefId, repoModuleId);
 
-    // Create flows
-    const registerFlowId = db.insertFlow('user-registration', controllerDefId, 'User registration flow', 'user');
-    db.addFlowStep(registerFlowId, 0, controllerDefId, controllerModuleId, 'controller');
-    db.addFlowStep(registerFlowId, 1, serviceDefId, serviceModuleId, 'service');
-    db.addFlowStep(registerFlowId, 2, repoDefId, repoModuleId, 'repository');
+    // Create hierarchical flows
+    // Registration flow: controller -> service -> repo
+    const registerFlow = db.ensureRootFlow('user-registration');
+    db.updateFlow(registerFlow.id, {
+      description: 'User registration flow',
+      domain: 'user',
+    });
+    db.insertFlow(registerFlow.id, 'controller-to-service', 'Controller to Service', {
+      fromModuleId: controllerModuleId,
+      toModuleId: serviceModuleId,
+      semantic: 'Controller validates and passes to service',
+    });
+    db.insertFlow(registerFlow.id, 'service-to-repo', 'Service to Repository', {
+      fromModuleId: serviceModuleId,
+      toModuleId: repoModuleId,
+      semantic: 'Service persists user data',
+    });
 
-    const loginFlowId = db.insertFlow('user-login', loginHandlerId, 'User login flow', 'auth');
-    db.addFlowStep(loginFlowId, 0, loginHandlerId, controllerModuleId, 'controller');
-    db.addFlowStep(loginFlowId, 1, authServiceId, serviceModuleId, 'service');
+    // Login flow: controller -> service
+    const loginFlow = db.ensureRootFlow('user-login');
+    db.updateFlow(loginFlow.id, {
+      description: 'User login flow',
+      domain: 'auth',
+    });
+    db.insertFlow(loginFlow.id, 'controller-to-auth', 'Controller to Auth Service', {
+      fromModuleId: controllerModuleId,
+      toModuleId: serviceModuleId,
+      semantic: 'Controller authenticates via service',
+    });
 
     db.close();
   });
@@ -143,22 +166,24 @@ describe('flows commands', () => {
   }
 
   describe('flows list', () => {
-    it('lists all flows with step counts', () => {
+    it('lists all flows', () => {
       const output = runCommand(`flows -d ${dbPath}`);
       expect(output).toContain('Flows');
       expect(output).toContain('user-registration');
       expect(output).toContain('user-login');
     });
 
-    it('shows entry points', () => {
-      const output = runCommand(`flows -d ${dbPath}`);
-      expect(output).toContain('handleRegister');
-      expect(output).toContain('handleLogin');
+    it('shows flow tree structure with --tree flag', () => {
+      const output = runCommand(`flows --tree -d ${dbPath}`);
+      expect(output).toContain('User Registration');
+      expect(output).toContain('User Login');
     });
 
-    it('shows step counts', () => {
-      const output = runCommand(`flows -d ${dbPath}`);
-      expect(output).toContain('5 steps'); // 3 + 2 total
+    it('shows leaf flows with --leaf flag', () => {
+      const output = runCommand(`flows --leaf -d ${dbPath}`);
+      expect(output).toContain('Leaf Flows');
+      expect(output).toContain('Controller to Service');
+      expect(output).toContain('Service to Repository');
     });
 
     it('filters by domain', () => {
@@ -174,59 +199,56 @@ describe('flows commands', () => {
       emptyDb.close();
 
       const output = runCommand(`flows -d ${emptyDbPath}`);
-      expect(output).toContain('No flows found');
+      expect(output).toContain('No flows detected yet');
     });
 
     it('outputs JSON with --json flag', () => {
       const output = runCommand(`flows --json -d ${dbPath}`);
       const json = JSON.parse(output);
       expect(json.flows).toBeDefined();
-      expect(json.flows).toHaveLength(2);
+      expect(json.flows.length).toBeGreaterThanOrEqual(2);
       expect(json.stats).toBeDefined();
-      expect(json.stats.flowCount).toBe(2);
-      expect(json.stats.totalSteps).toBe(5);
+      expect(json.stats.flowCount).toBeGreaterThanOrEqual(2);
     });
 
-    it('shows modules crossed in output', () => {
+    it('shows leaf flow indicators in output', () => {
       const output = runCommand(`flows -d ${dbPath}`);
-      expect(output).toContain('User Controller');
-      expect(output).toContain('User Service');
+      // Leaf flows are marked with [leaf] indicator
+      expect(output).toContain('[leaf]');
+      expect(output).toContain('Controller to Service');
+      expect(output).toContain('Service to Repository');
     });
   });
 
   describe('flows show', () => {
     it('shows flow details', () => {
       const output = runCommand(`flows show user-registration -d ${dbPath}`);
-      expect(output).toContain('Flow: user-registration');
-      expect(output).toContain('handleRegister');
-      expect(output).toContain('Domain: user');
+      expect(output).toContain('Flow: User Registration');
+      expect(output).toContain('user-registration');
     });
 
-    it('lists all steps in order', () => {
+    it('shows flow description', () => {
       const output = runCommand(`flows show user-registration -d ${dbPath}`);
-      expect(output).toContain('Steps (3)');
-      expect(output).toContain('handleRegister');
-      expect(output).toContain('createUser');
-      expect(output).toContain('insertUser');
+      expect(output).toContain('User registration flow');
     });
 
-    it('shows step layers', () => {
+    it('shows child flows (module transitions)', () => {
       const output = runCommand(`flows show user-registration -d ${dbPath}`);
-      expect(output).toContain('controller');
-      expect(output).toContain('service');
-      expect(output).toContain('repository');
+      expect(output).toContain('Controller to Service');
+      expect(output).toContain('Service to Repository');
     });
 
-    it('shows step module names', () => {
+    it('shows module transition details for leaf flows', () => {
       const output = runCommand(`flows show user-registration -d ${dbPath}`);
-      expect(output).toContain('User Controller');
-      expect(output).toContain('User Service');
-      expect(output).toContain('User Repository');
+      // Modules are shown by their full path
+      expect(output).toContain('user-controller');
+      expect(output).toContain('user-service');
+      expect(output).toContain('user-repo');
     });
 
     it('handles partial name match', () => {
       const output = runCommand(`flows show registration -d ${dbPath}`);
-      expect(output).toContain('Flow: user-registration');
+      expect(output).toContain('User Registration');
     });
 
     it('shows disambiguation for multiple matches', () => {
@@ -245,11 +267,18 @@ describe('flows commands', () => {
     it('outputs JSON with --json flag', () => {
       const output = runCommand(`flows show user-registration --json -d ${dbPath}`);
       const json = JSON.parse(output);
-      expect(json.name).toBe('user-registration');
-      expect(json.domain).toBe('user');
-      expect(json.steps).toHaveLength(3);
-      expect(json.steps[0].name).toBe('handleRegister');
-      expect(json.steps[0].layer).toBe('controller');
+      // Flow details are wrapped in a "flow" property
+      expect(json.flow).toBeDefined();
+      expect(json.flow.name).toBe('User Registration');
+      expect(json.flow.slug).toBe('user-registration');
+      expect(json.children).toBeDefined();
+      expect(json.children.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('expands to leaf flows with --expand flag', () => {
+      const output = runCommand(`flows show user-registration --expand -d ${dbPath}`);
+      expect(output).toContain('Expanded');
+      expect(output).toContain('leaf');
     });
   });
 

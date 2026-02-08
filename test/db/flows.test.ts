@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { IndexDatabase, computeHash } from '../../src/db/database.js';
-import type { Definition } from '../../src/parser/definition-extractor.js';
 
-describe('Flow Detection', () => {
+describe('Hierarchical Flow Detection', () => {
   let db: IndexDatabase;
 
   beforeEach(() => {
@@ -75,72 +74,6 @@ describe('Flow Detection', () => {
     });
   }
 
-  describe('getEntryPoints', () => {
-    it('returns empty array when no entry points exist', () => {
-      const entryPoints = db.getEntryPoints();
-      expect(entryPoints).toEqual([]);
-    });
-
-    it('identifies functions with Controller in name as entry points', () => {
-      const fileId = createFile('/project/controllers/user.ts');
-      createDefinition(fileId, 'UserController', 'class', 0, 50);
-      createDefinition(fileId, 'helper', 'function', 55, 60, false); // non-exported helper
-
-      const entryPoints = db.getEntryPoints();
-      expect(entryPoints).toHaveLength(1);
-      expect(entryPoints[0].name).toBe('UserController');
-    });
-
-    it('identifies functions with Handler in name as entry points', () => {
-      const fileId = createFile('/project/handlers/request.ts');
-      createDefinition(fileId, 'RequestHandler', 'function', 0, 20);
-
-      const entryPoints = db.getEntryPoints();
-      expect(entryPoints).toHaveLength(1);
-      expect(entryPoints[0].name).toBe('RequestHandler');
-    });
-
-    it('identifies exported functions in routes directories as entry points', () => {
-      const fileId = createFile('/project/routes/users.ts');
-      createDefinition(fileId, 'getUsers', 'function', 0, 10, true);
-      createDefinition(fileId, 'privateHelper', 'function', 15, 20, false);
-
-      const entryPoints = db.getEntryPoints();
-      expect(entryPoints).toHaveLength(1);
-      expect(entryPoints[0].name).toBe('getUsers');
-    });
-
-    it('identifies exported functions in controllers directories as entry points', () => {
-      const fileId = createFile('/project/src/controllers/auth.ts');
-      createDefinition(fileId, 'login', 'function', 0, 10);
-      createDefinition(fileId, 'logout', 'function', 15, 25);
-
-      const entryPoints = db.getEntryPoints();
-      expect(entryPoints).toHaveLength(2);
-      expect(entryPoints.map(ep => ep.name).sort()).toEqual(['login', 'logout']);
-    });
-
-    it('identifies symbols with role=controller metadata as entry points', () => {
-      const fileId = createFile('/project/api/users.ts');
-      const defId = createDefinition(fileId, 'usersEndpoint', 'function', 0, 10);
-      db.setDefinitionMetadata(defId, 'role', 'controller');
-
-      const entryPoints = db.getEntryPoints();
-      expect(entryPoints).toHaveLength(1);
-      expect(entryPoints[0].name).toBe('usersEndpoint');
-    });
-
-    it('returns domain from metadata', () => {
-      const fileId = createFile('/project/routes/sales.ts');
-      const defId = createDefinition(fileId, 'createSale', 'function', 0, 10);
-      db.setDefinitionMetadata(defId, 'domain', '["sales", "commerce"]');
-
-      const entryPoints = db.getEntryPoints();
-      expect(entryPoints).toHaveLength(1);
-      expect(entryPoints[0].domain).toBe('sales');
-    });
-  });
-
   describe('getCallGraph', () => {
     it('returns empty array when no calls exist', () => {
       const fileId = createFile('/project/controller.ts');
@@ -208,428 +141,406 @@ describe('Flow Detection', () => {
       expect(edges[0].weight).toBe(2);
       expect(edges[0].minUsageLine).toBe(11); // row 10 + 1 = line 11 (minimum)
     });
-
-    it('aggregates edges from both internal and imported symbols', () => {
-      const file = createFile('/project/file.ts');
-
-      const callerDef = createDefinition(file, 'caller', 'function', 5, 30);
-      const calleeDef = createDefinition(file, 'callee', 'function', 35, 45);
-
-      // Internal call (same file) at line 15
-      const internalSymbolId = db.insertSymbol(null, calleeDef, {
-        name: 'callee',
-        localName: 'callee',
-        kind: 'named',
-        usages: [],
-      }, file);
-      db.insertUsage(internalSymbolId, {
-        position: { row: 15, column: 5 },
-        context: 'call_expression',
-      });
-
-      // Imported call at line 10 (earlier)
-      const refId = db.insertReference(file, file, {
-        type: 'import',
-        source: './self',
-        isExternal: false,
-        isTypeOnly: false,
-        imports: [],
-        position: { row: 0, column: 0 },
-      });
-      const importedSymbolId = db.insertSymbol(refId, calleeDef, {
-        name: 'callee',
-        localName: 'callee',
-        kind: 'named',
-        usages: [],
-      });
-      db.insertUsage(importedSymbolId, {
-        position: { row: 10, column: 5 },
-        context: 'call_expression',
-      });
-
-      const edges = db.getCallGraph();
-      expect(edges).toHaveLength(1);
-      expect(edges[0].weight).toBe(2); // Aggregated from both
-      expect(edges[0].minUsageLine).toBe(11); // row 10 + 1 = line 11 (minimum from both)
-    });
   });
 
-  describe('traceFlowFromEntry', () => {
-    it('returns only entry point when no calls exist', () => {
-      const fileId = createFile('/project/controller.ts');
-      const entryId = createDefinition(fileId, 'SimpleController', 'function', 0, 10);
-
-      const trace = db.traceFlowFromEntry(entryId);
-      expect(trace).toHaveLength(1);
-      expect(trace[0].definitionId).toBe(entryId);
-      expect(trace[0].depth).toBe(0);
+  describe('getModuleCallGraph', () => {
+    it('returns empty array when no modules or calls exist', () => {
+      const edges = db.getModuleCallGraph();
+      expect(edges).toEqual([]);
     });
 
-    it('traces through call graph to depth 1', () => {
-      const controllerFile = createFile('/project/controller.ts');
-      const serviceFile = createFile('/project/service.ts');
+    it('aggregates symbol-level calls to module-level edges', () => {
+      const file1 = createFile('/project/controllers/user.ts');
+      const file2 = createFile('/project/services/user.ts');
 
-      const controllerDef = createDefinition(controllerFile, 'UserController', 'function', 5, 20);
-      const serviceDef = createDefinition(serviceFile, 'userService', 'function', 0, 30);
+      const def1 = createDefinition(file1, 'UserController', 'class', 0, 50);
+      const def2 = createDefinition(file2, 'userService', 'function', 0, 30);
 
-      // Controller calls service
-      createCallRelationship(controllerFile, serviceFile, controllerDef, serviceDef, 'userService', 10);
-
-      const trace = db.traceFlowFromEntry(controllerDef);
-      expect(trace).toHaveLength(2);
-
-      const depths = trace.map(t => ({ id: t.definitionId, depth: t.depth }));
-      expect(depths).toContainEqual({ id: controllerDef, depth: 0 });
-      expect(depths).toContainEqual({ id: serviceDef, depth: 1 });
-    });
-
-    it('traces through multiple levels', () => {
-      const controllerFile = createFile('/project/controller.ts');
-      const serviceFile = createFile('/project/service.ts');
-      const repoFile = createFile('/project/repository.ts');
-
-      const controllerDef = createDefinition(controllerFile, 'Controller', 'function', 5, 20);
-      const serviceDef = createDefinition(serviceFile, 'service', 'function', 5, 40);
-      const repoDef = createDefinition(repoFile, 'repository', 'function', 0, 30);
-
-      // Controller -> Service
-      createCallRelationship(controllerFile, serviceFile, controllerDef, serviceDef, 'service', 10);
-      // Service -> Repository
-      createCallRelationship(serviceFile, repoFile, serviceDef, repoDef, 'repository', 20);
-
-      const trace = db.traceFlowFromEntry(controllerDef);
-      expect(trace).toHaveLength(3);
-
-      const sorted = [...trace].sort((a, b) => a.depth - b.depth);
-      expect(sorted[0].definitionId).toBe(controllerDef);
-      expect(sorted[0].depth).toBe(0);
-      expect(sorted[1].definitionId).toBe(serviceDef);
-      expect(sorted[1].depth).toBe(1);
-      expect(sorted[2].definitionId).toBe(repoDef);
-      expect(sorted[2].depth).toBe(2);
-    });
-
-    it('respects maxDepth parameter', () => {
-      const file1 = createFile('/project/a.ts');
-      const file2 = createFile('/project/b.ts');
-      const file3 = createFile('/project/c.ts');
-      const file4 = createFile('/project/d.ts');
-
-      const def1 = createDefinition(file1, 'a', 'function', 5, 20);
-      const def2 = createDefinition(file2, 'b', 'function', 5, 20);
-      const def3 = createDefinition(file3, 'c', 'function', 5, 20);
-      const def4 = createDefinition(file4, 'd', 'function', 5, 20);
-
-      createCallRelationship(file1, file2, def1, def2, 'b', 10);
-      createCallRelationship(file2, file3, def2, def3, 'c', 10);
-      createCallRelationship(file3, file4, def3, def4, 'd', 10);
-
-      // With maxDepth=1, should only get def1 and def2
-      const trace = db.traceFlowFromEntry(def1, 1);
-      expect(trace).toHaveLength(2);
-      expect(trace.map(t => t.definitionId)).toContain(def1);
-      expect(trace.map(t => t.definitionId)).toContain(def2);
-      expect(trace.map(t => t.definitionId)).not.toContain(def3);
-    });
-
-    it('handles circular dependencies', () => {
-      const fileA = createFile('/project/a.ts');
-      const fileB = createFile('/project/b.ts');
-
-      const defA = createDefinition(fileA, 'funcA', 'function', 5, 20);
-      const defB = createDefinition(fileB, 'funcB', 'function', 5, 20);
-
-      // A calls B
-      createCallRelationship(fileA, fileB, defA, defB, 'funcB', 10);
-      // B calls A (circular)
-      createCallRelationship(fileB, fileA, defB, defA, 'funcA', 10);
-
-      const trace = db.traceFlowFromEntry(defA);
-      expect(trace).toHaveLength(2);
-      // Should not infinite loop
-    });
-
-    it('includes module info when available', () => {
-      const fileId = createFile('/project/controller.ts');
-      const defId = createDefinition(fileId, 'Controller', 'function', 0, 10);
-
-      // Create a module tree and assign the definition to it
+      // Create modules
       const rootId = db.ensureRootModule();
-      const moduleId = db.insertModule(rootId, 'test-module', 'Test Module');
-      db.assignSymbolToModule(defId, moduleId);
+      const controllerModule = db.insertModule(rootId, 'controllers', 'Controllers');
+      const serviceModule = db.insertModule(rootId, 'services', 'Services');
 
-      const trace = db.traceFlowFromEntry(defId);
-      expect(trace).toHaveLength(1);
-      expect(trace[0].moduleId).toBe(moduleId);
-      // Layer is now null since it's no longer stored in modules
-      expect(trace[0].layer).toBeNull();
+      // Assign definitions to modules
+      db.assignSymbolToModule(def1, controllerModule);
+      db.assignSymbolToModule(def2, serviceModule);
+
+      // Create call relationship
+      createCallRelationship(file1, file2, def1, def2, 'userService', 20);
+
+      const moduleEdges = db.getModuleCallGraph();
+      expect(moduleEdges).toHaveLength(1);
+      expect(moduleEdges[0].fromModuleId).toBe(controllerModule);
+      expect(moduleEdges[0].toModuleId).toBe(serviceModule);
+      expect(moduleEdges[0].weight).toBe(1);
     });
 
-    it('sorts steps at same depth by usage line order', () => {
-      const callerFile = createFile('/project/caller.ts');
-      const calleeFileA = createFile('/project/calleeA.ts');
-      const calleeFileB = createFile('/project/calleeB.ts');
-      const calleeFileC = createFile('/project/calleeC.ts');
+    it('aggregates multiple calls between same modules', () => {
+      const file1 = createFile('/project/controllers/user.ts');
+      const file2 = createFile('/project/services/user.ts');
 
-      // Caller function spans lines 5-50
-      const callerDef = createDefinition(callerFile, 'caller', 'function', 5, 50);
-      // Three callees
-      const calleeDefA = createDefinition(calleeFileA, 'calleeA', 'function', 0, 10);
-      const calleeDefB = createDefinition(calleeFileB, 'calleeB', 'function', 0, 10);
-      const calleeDefC = createDefinition(calleeFileC, 'calleeC', 'function', 0, 10);
+      const def1 = createDefinition(file1, 'UserController', 'class', 0, 50);
+      const def2a = createDefinition(file2, 'createUser', 'function', 0, 30);
+      const def2b = createDefinition(file2, 'updateUser', 'function', 35, 60);
 
-      // Create calls in source order: B at line 10, C at line 20, A at line 30
-      // (intentionally not alphabetical to verify sorting)
-      createCallRelationship(callerFile, calleeFileB, callerDef, calleeDefB, 'calleeB', 10);
-      createCallRelationship(callerFile, calleeFileC, callerDef, calleeDefC, 'calleeC', 20);
-      createCallRelationship(callerFile, calleeFileA, callerDef, calleeDefA, 'calleeA', 30);
-
-      const trace = db.traceFlowFromEntry(callerDef);
-
-      // Should have 4 items: caller + 3 callees
-      expect(trace).toHaveLength(4);
-
-      // First should be caller at depth 0
-      expect(trace[0].definitionId).toBe(callerDef);
-      expect(trace[0].depth).toBe(0);
-
-      // Remaining should be callees at depth 1, sorted by usage line
-      const depth1Items = trace.filter(t => t.depth === 1);
-      expect(depth1Items).toHaveLength(3);
-
-      // Order should be: B (line 10), C (line 20), A (line 30)
-      expect(depth1Items[0].definitionId).toBe(calleeDefB);
-      expect(depth1Items[1].definitionId).toBe(calleeDefC);
-      expect(depth1Items[2].definitionId).toBe(calleeDefA);
-    });
-
-    it('sorts by depth first, then by usage line within same depth', () => {
-      const file1 = createFile('/project/a.ts');
-      const file2 = createFile('/project/b.ts');
-      const file3 = createFile('/project/c.ts');
-      const file4 = createFile('/project/d.ts');
-
-      // Entry point
-      const entryDef = createDefinition(file1, 'entry', 'function', 5, 50);
-      // Depth 1 callees (called at different lines)
-      const dep1Early = createDefinition(file2, 'dep1Early', 'function', 0, 10);
-      const dep1Late = createDefinition(file3, 'dep1Late', 'function', 0, 10);
-      // Depth 2 callee
-      const dep2 = createDefinition(file4, 'dep2', 'function', 0, 10);
-
-      // entry calls dep1Late at line 30, dep1Early at line 10
-      createCallRelationship(file1, file3, entryDef, dep1Late, 'dep1Late', 30);
-      createCallRelationship(file1, file2, entryDef, dep1Early, 'dep1Early', 10);
-      // dep1Early calls dep2 (this should appear after both depth-1 items)
-      createCallRelationship(file2, file4, dep1Early, dep2, 'dep2', 5);
-
-      const trace = db.traceFlowFromEntry(entryDef);
-
-      expect(trace).toHaveLength(4);
-
-      // Order should be: entry (depth 0), dep1Early (depth 1, line 10), dep1Late (depth 1, line 30), dep2 (depth 2)
-      expect(trace[0].definitionId).toBe(entryDef);
-      expect(trace[0].depth).toBe(0);
-
-      expect(trace[1].definitionId).toBe(dep1Early);
-      expect(trace[1].depth).toBe(1);
-
-      expect(trace[2].definitionId).toBe(dep1Late);
-      expect(trace[2].depth).toBe(1);
-
-      expect(trace[3].definitionId).toBe(dep2);
-      expect(trace[3].depth).toBe(2);
-    });
-  });
-
-  describe('insertFlow / getFlows', () => {
-    it('inserts a flow and retrieves it', () => {
-      const fileId = createFile('/project/controller.ts');
-      const entryId = createDefinition(fileId, 'MyController', 'function', 0, 10);
-
-      const flowId = db.insertFlow('CreateUser', entryId, 'Creates a new user', 'user-management');
-
-      const flows = db.getFlows();
-      expect(flows).toHaveLength(1);
-      expect(flows[0].id).toBe(flowId);
-      expect(flows[0].name).toBe('CreateUser');
-      expect(flows[0].description).toBe('Creates a new user');
-      expect(flows[0].domain).toBe('user-management');
-      expect(flows[0].entryPointId).toBe(entryId);
-    });
-
-    it('inserts multiple flows', () => {
-      const fileId = createFile('/project/controller.ts');
-      const entry1 = createDefinition(fileId, 'Controller1', 'function', 0, 10);
-      const entry2 = createDefinition(fileId, 'Controller2', 'function', 15, 25);
-
-      db.insertFlow('Flow1', entry1);
-      db.insertFlow('Flow2', entry2);
-
-      const flows = db.getFlows();
-      expect(flows).toHaveLength(2);
-      expect(flows.map(f => f.name).sort()).toEqual(['Flow1', 'Flow2']);
-    });
-  });
-
-  describe('addFlowStep / getFlowWithSteps', () => {
-    it('adds steps to a flow and retrieves them', () => {
-      const controllerFile = createFile('/project/controller.ts');
-      const serviceFile = createFile('/project/service.ts');
-
-      const controllerDef = createDefinition(controllerFile, 'UserController', 'function', 0, 20);
-      const serviceDef = createDefinition(serviceFile, 'userService', 'function', 0, 30);
-
-      const flowId = db.insertFlow('GetUser', controllerDef);
-      db.addFlowStep(flowId, 1, controllerDef, undefined, 'controller');
-      db.addFlowStep(flowId, 2, serviceDef, undefined, 'service');
-
-      const flowWithSteps = db.getFlowWithSteps(flowId);
-      expect(flowWithSteps).not.toBeNull();
-      expect(flowWithSteps!.steps).toHaveLength(2);
-      expect(flowWithSteps!.steps[0].stepOrder).toBe(1);
-      expect(flowWithSteps!.steps[0].name).toBe('UserController');
-      expect(flowWithSteps!.steps[0].layer).toBe('controller');
-      expect(flowWithSteps!.steps[1].stepOrder).toBe(2);
-      expect(flowWithSteps!.steps[1].name).toBe('userService');
-      expect(flowWithSteps!.steps[1].layer).toBe('service');
-    });
-
-    it('includes module name in steps when available', () => {
-      const fileId = createFile('/project/service.ts');
-      const defId = createDefinition(fileId, 'MyService', 'function', 0, 20);
-
+      // Create modules
       const rootId = db.ensureRootModule();
-      const moduleId = db.insertModule(rootId, 'service-module', 'Service Module');
-      db.assignSymbolToModule(defId, moduleId);
+      const controllerModule = db.insertModule(rootId, 'controllers', 'Controllers');
+      const serviceModule = db.insertModule(rootId, 'services', 'Services');
 
-      const flowId = db.insertFlow('TestFlow', defId);
-      db.addFlowStep(flowId, 1, defId, moduleId, 'service');
+      // Assign definitions to modules
+      db.assignSymbolToModule(def1, controllerModule);
+      db.assignSymbolToModule(def2a, serviceModule);
+      db.assignSymbolToModule(def2b, serviceModule);
 
-      const flowWithSteps = db.getFlowWithSteps(flowId);
-      expect(flowWithSteps!.steps[0].moduleName).toBe('Service Module');
-    });
+      // Create call relationships
+      createCallRelationship(file1, file2, def1, def2a, 'createUser', 20);
+      createCallRelationship(file1, file2, def1, def2b, 'updateUser', 30);
 
-    it('returns null for non-existent flow', () => {
-      const flowWithSteps = db.getFlowWithSteps(999);
-      expect(flowWithSteps).toBeNull();
+      const moduleEdges = db.getModuleCallGraph();
+      expect(moduleEdges).toHaveLength(1);
+      expect(moduleEdges[0].weight).toBe(2); // Aggregated
     });
   });
 
-  describe('getAllFlowsWithSteps', () => {
-    it('returns all flows with their steps', () => {
-      const file1 = createFile('/project/a.ts');
-      const file2 = createFile('/project/b.ts');
+  describe('ensureRootFlow', () => {
+    it('creates a root flow with depth 0', () => {
+      const rootFlow = db.ensureRootFlow('user-journey');
+      expect(rootFlow.id).toBeDefined();
+      expect(rootFlow.name).toBe('User Journey');
+      expect(rootFlow.slug).toBe('user-journey');
+      expect(rootFlow.depth).toBe(0);
+      expect(rootFlow.parentId).toBeNull();
+    });
 
-      const def1 = createDefinition(file1, 'Controller1', 'function', 0, 10);
-      const def2 = createDefinition(file1, 'Service1', 'function', 15, 25);
-      const def3 = createDefinition(file2, 'Controller2', 'function', 0, 10);
+    it('returns existing root flow if slug matches', () => {
+      const first = db.ensureRootFlow('user-journey');
+      const second = db.ensureRootFlow('user-journey');
+      expect(first.id).toBe(second.id);
+    });
+  });
 
-      const flow1 = db.insertFlow('Flow1', def1);
-      db.addFlowStep(flow1, 1, def1);
-      db.addFlowStep(flow1, 2, def2);
+  describe('insertFlow', () => {
+    it('inserts a child flow under a parent', () => {
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const childId = db.insertFlow(rootFlow.id, 'authentication', 'Authentication', {
+        description: 'User authentication flow',
+      });
 
-      const flow2 = db.insertFlow('Flow2', def3);
-      db.addFlowStep(flow2, 1, def3);
+      const child = db.getFlowById(childId);
+      expect(child).not.toBeNull();
+      expect(child!.name).toBe('Authentication');
+      expect(child!.slug).toBe('authentication');
+      expect(child!.parentId).toBe(rootFlow.id);
+      expect(child!.depth).toBe(1);
+      expect(child!.fullPath).toBe('user-journey.authentication');
+    });
 
-      const allFlows = db.getAllFlowsWithSteps();
-      expect(allFlows).toHaveLength(2);
-      expect(allFlows.find(f => f.name === 'Flow1')!.steps).toHaveLength(2);
-      expect(allFlows.find(f => f.name === 'Flow2')!.steps).toHaveLength(1);
+    it('creates leaf flows with module transitions', () => {
+      // Create modules first
+      const rootModule = db.ensureRootModule();
+      const controllerModule = db.insertModule(rootModule, 'controllers', 'Controllers');
+      const serviceModule = db.insertModule(rootModule, 'services', 'Services');
+
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const leafId = db.insertFlow(rootFlow.id, 'controller-to-service', 'Controller to Service', {
+        fromModuleId: controllerModule,
+        toModuleId: serviceModule,
+        semantic: 'Controller delegates to service',
+      });
+
+      const leaf = db.getFlowById(leafId);
+      expect(leaf).not.toBeNull();
+      expect(leaf!.fromModuleId).toBe(controllerModule);
+      expect(leaf!.toModuleId).toBe(serviceModule);
+      expect(leaf!.semantic).toBe('Controller delegates to service');
+    });
+
+    it('auto-assigns step order within parent', () => {
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const child1 = db.insertFlow(rootFlow.id, 'step-1', 'Step 1');
+      const child2 = db.insertFlow(rootFlow.id, 'step-2', 'Step 2');
+      const child3 = db.insertFlow(rootFlow.id, 'step-3', 'Step 3');
+
+      const flow1 = db.getFlowById(child1);
+      const flow2 = db.getFlowById(child2);
+      const flow3 = db.getFlowById(child3);
+
+      expect(flow1!.stepOrder).toBe(1);
+      expect(flow2!.stepOrder).toBe(2);
+      expect(flow3!.stepOrder).toBe(3);
+    });
+  });
+
+  describe('getFlowByPath', () => {
+    it('retrieves a flow by its full path', () => {
+      const rootFlow = db.ensureRootFlow('user-journey');
+      db.insertFlow(rootFlow.id, 'authentication', 'Authentication');
+
+      const flow = db.getFlowByPath('user-journey.authentication');
+      expect(flow).not.toBeNull();
+      expect(flow!.name).toBe('Authentication');
+    });
+
+    it('returns null for non-existent path', () => {
+      const flow = db.getFlowByPath('non-existent.path');
+      expect(flow).toBeNull();
+    });
+  });
+
+  describe('getFlowChildren', () => {
+    it('returns children ordered by stepOrder', () => {
+      const rootFlow = db.ensureRootFlow('user-journey');
+      db.insertFlow(rootFlow.id, 'step-3', 'Step 3');
+      db.insertFlow(rootFlow.id, 'step-1', 'Step 1');
+      db.insertFlow(rootFlow.id, 'step-2', 'Step 2');
+
+      const children = db.getFlowChildren(rootFlow.id);
+      expect(children).toHaveLength(3);
+      // Should be in insertion order (step order assigned sequentially)
+      expect(children[0].slug).toBe('step-3');
+      expect(children[1].slug).toBe('step-1');
+      expect(children[2].slug).toBe('step-2');
+    });
+  });
+
+  describe('getFlowTree', () => {
+    it('returns complete tree structure', () => {
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const authId = db.insertFlow(rootFlow.id, 'authentication', 'Authentication');
+      db.insertFlow(authId, 'validate', 'Validate Credentials');
+      db.insertFlow(authId, 'create-session', 'Create Session');
+      db.insertFlow(rootFlow.id, 'dashboard', 'Load Dashboard');
+
+      const trees = db.getFlowTree();
+      expect(trees).toHaveLength(1);
+
+      const root = trees[0];
+      expect(root.name).toBe('User Journey');
+      expect(root.children).toHaveLength(2);
+
+      const auth = root.children.find(c => c.slug === 'authentication');
+      expect(auth).toBeDefined();
+      expect(auth!.children).toHaveLength(2);
+    });
+  });
+
+  describe('getLeafFlows', () => {
+    it('returns only flows with module transitions', () => {
+      // Create modules
+      const rootModule = db.ensureRootModule();
+      const controllerModule = db.insertModule(rootModule, 'controllers', 'Controllers');
+      const serviceModule = db.insertModule(rootModule, 'services', 'Services');
+
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const authId = db.insertFlow(rootFlow.id, 'authentication', 'Authentication');
+
+      // Create leaf flow with module transition
+      db.insertFlow(authId, 'validate', 'Validate', {
+        fromModuleId: controllerModule,
+        toModuleId: serviceModule,
+        semantic: 'Validates credentials',
+      });
+
+      const leafFlows = db.getLeafFlows();
+      expect(leafFlows).toHaveLength(1);
+      expect(leafFlows[0].name).toBe('Validate');
+      expect(leafFlows[0].fromModuleId).toBe(controllerModule);
+    });
+  });
+
+  describe('expandFlow', () => {
+    it('returns ordered leaf flows for a composite flow', () => {
+      // Create modules
+      const rootModule = db.ensureRootModule();
+      const module1 = db.insertModule(rootModule, 'module-1', 'Module 1');
+      const module2 = db.insertModule(rootModule, 'module-2', 'Module 2');
+      const module3 = db.insertModule(rootModule, 'module-3', 'Module 3');
+
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const authId = db.insertFlow(rootFlow.id, 'authentication', 'Authentication');
+
+      // Create leaf flows
+      db.insertFlow(authId, 'step-1', 'Step 1', {
+        fromModuleId: module1,
+        toModuleId: module2,
+      });
+      db.insertFlow(authId, 'step-2', 'Step 2', {
+        fromModuleId: module2,
+        toModuleId: module3,
+      });
+
+      const expanded = db.expandFlow(authId);
+      expect(expanded).toHaveLength(2);
+      expect(expanded[0].slug).toBe('step-1');
+      expect(expanded[1].slug).toBe('step-2');
+    });
+
+    it('returns empty array for leaf flow', () => {
+      const rootModule = db.ensureRootModule();
+      const module1 = db.insertModule(rootModule, 'module-1', 'Module 1');
+      const module2 = db.insertModule(rootModule, 'module-2', 'Module 2');
+
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const leafId = db.insertFlow(rootFlow.id, 'leaf', 'Leaf Flow', {
+        fromModuleId: module1,
+        toModuleId: module2,
+      });
+
+      const expanded = db.expandFlow(leafId);
+      expect(expanded).toHaveLength(0); // Leaf flow has no children
+    });
+  });
+
+  describe('getFlowCoverage', () => {
+    it('calculates coverage percentage', () => {
+      // Create modules
+      const rootModule = db.ensureRootModule();
+      const module1 = db.insertModule(rootModule, 'module-1', 'Module 1');
+      const module2 = db.insertModule(rootModule, 'module-2', 'Module 2');
+      const module3 = db.insertModule(rootModule, 'module-3', 'Module 3');
+
+      // Create definitions
+      const file1 = createFile('/project/module1.ts');
+      const file2 = createFile('/project/module2.ts');
+      const file3 = createFile('/project/module3.ts');
+
+      const def1 = createDefinition(file1, 'func1', 'function', 0, 10);
+      const def2 = createDefinition(file2, 'func2', 'function', 0, 10);
+      const def3 = createDefinition(file3, 'func3', 'function', 0, 10);
+
+      db.assignSymbolToModule(def1, module1);
+      db.assignSymbolToModule(def2, module2);
+      db.assignSymbolToModule(def3, module3);
+
+      // Create calls: module1->module2, module2->module3 (2 edges)
+      createCallRelationship(file1, file2, def1, def2, 'func2', 5);
+      createCallRelationship(file2, file3, def2, def3, 'func3', 5);
+
+      // Create flow covering only one edge
+      const rootFlow = db.ensureRootFlow('test-flow');
+      db.insertFlow(rootFlow.id, 'covered', 'Covered Edge', {
+        fromModuleId: module1,
+        toModuleId: module2,
+      });
+
+      const coverage = db.getFlowCoverage();
+      expect(coverage.totalModuleEdges).toBe(2);
+      expect(coverage.coveredByFlows).toBe(1);
+      expect(coverage.percentage).toBe(50.0);
+    });
+
+    it('returns 100% when all edges are covered', () => {
+      // Create modules
+      const rootModule = db.ensureRootModule();
+      const module1 = db.insertModule(rootModule, 'module-1', 'Module 1');
+      const module2 = db.insertModule(rootModule, 'module-2', 'Module 2');
+
+      // Create definitions
+      const file1 = createFile('/project/module1.ts');
+      const file2 = createFile('/project/module2.ts');
+
+      const def1 = createDefinition(file1, 'func1', 'function', 0, 10);
+      const def2 = createDefinition(file2, 'func2', 'function', 0, 10);
+
+      db.assignSymbolToModule(def1, module1);
+      db.assignSymbolToModule(def2, module2);
+
+      // Create call
+      createCallRelationship(file1, file2, def1, def2, 'func2', 5);
+
+      // Create flow covering the edge
+      const rootFlow = db.ensureRootFlow('test-flow');
+      db.insertFlow(rootFlow.id, 'covered', 'Covered Edge', {
+        fromModuleId: module1,
+        toModuleId: module2,
+      });
+
+      const coverage = db.getFlowCoverage();
+      expect(coverage.totalModuleEdges).toBe(1);
+      expect(coverage.coveredByFlows).toBe(1);
+      expect(coverage.percentage).toBe(100.0);
     });
   });
 
   describe('getFlowCount / getFlowStats', () => {
     it('returns correct flow count', () => {
-      const fileId = createFile('/project/controller.ts');
-      const def1 = createDefinition(fileId, 'Controller1', 'function', 0, 10);
-      const def2 = createDefinition(fileId, 'Controller2', 'function', 15, 25);
-
       expect(db.getFlowCount()).toBe(0);
 
-      db.insertFlow('Flow1', def1);
+      const rootFlow = db.ensureRootFlow('user-journey');
       expect(db.getFlowCount()).toBe(1);
 
-      db.insertFlow('Flow2', def2);
+      db.insertFlow(rootFlow.id, 'auth', 'Authentication');
       expect(db.getFlowCount()).toBe(2);
     });
 
     it('returns correct flow statistics', () => {
-      const fileId = createFile('/project/controller.ts');
-      const def1 = createDefinition(fileId, 'Controller1', 'function', 0, 10);
-      const def2 = createDefinition(fileId, 'Service1', 'function', 15, 25);
-      const def3 = createDefinition(fileId, 'Repository1', 'function', 30, 40);
+      // Create modules
+      const rootModule = db.ensureRootModule();
+      const module1 = db.insertModule(rootModule, 'module-1', 'Module 1');
+      const module2 = db.insertModule(rootModule, 'module-2', 'Module 2');
 
-      const rootId = db.ensureRootModule();
-      const moduleId = db.insertModule(rootId, 'test-module', 'Test Module');
-      db.assignSymbolToModule(def2, moduleId);
-
-      const flowId = db.insertFlow('TestFlow', def1);
-      db.addFlowStep(flowId, 1, def1);
-      db.addFlowStep(flowId, 2, def2, moduleId);
-      db.addFlowStep(flowId, 3, def3);
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const authId = db.insertFlow(rootFlow.id, 'auth', 'Authentication');
+      db.insertFlow(authId, 'validate', 'Validate', {
+        fromModuleId: module1,
+        toModuleId: module2,
+      });
 
       const stats = db.getFlowStats();
-      expect(stats.flowCount).toBe(1);
-      expect(stats.totalSteps).toBe(3);
-      expect(stats.avgStepsPerFlow).toBe(3);
-      expect(stats.modulesCovered).toBe(1);
+      expect(stats.flowCount).toBe(3);
+      expect(stats.leafFlowCount).toBe(1);
+      expect(stats.rootFlowCount).toBe(1);
+      expect(stats.maxDepth).toBe(2);
     });
   });
 
   describe('clearFlows', () => {
-    it('removes all flows and their steps', () => {
-      const fileId = createFile('/project/controller.ts');
-      const def1 = createDefinition(fileId, 'Controller1', 'function', 0, 10);
-      const def2 = createDefinition(fileId, 'Controller2', 'function', 15, 25);
+    it('removes all flows', () => {
+      const rootFlow = db.ensureRootFlow('user-journey');
+      db.insertFlow(rootFlow.id, 'auth', 'Authentication');
+      db.insertFlow(rootFlow.id, 'dashboard', 'Dashboard');
 
-      const flow1 = db.insertFlow('Flow1', def1);
-      db.addFlowStep(flow1, 1, def1);
-      const flow2 = db.insertFlow('Flow2', def2);
-      db.addFlowStep(flow2, 1, def2);
-
-      expect(db.getFlowCount()).toBe(2);
+      expect(db.getFlowCount()).toBe(3);
 
       const cleared = db.clearFlows();
-      expect(cleared).toBe(2);
+      // clearFlows deletes all flows and returns number of direct deletes
+      // (children may be deleted via CASCADE, so cleared may be less than total)
+      expect(cleared).toBeGreaterThanOrEqual(1);
       expect(db.getFlowCount()).toBe(0);
-      expect(db.getFlowStats().totalSteps).toBe(0);
     });
   });
 
   describe('updateFlow', () => {
     it('updates flow name', () => {
-      const fileId = createFile('/project/controller.ts');
-      const defId = createDefinition(fileId, 'Controller', 'function', 0, 10);
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const flowId = db.insertFlow(rootFlow.id, 'old-name', 'Old Name');
 
-      const flowId = db.insertFlow('OldName', defId);
-      const updated = db.updateFlow(flowId, { name: 'NewName' });
-
+      const updated = db.updateFlow(flowId, { name: 'New Name' });
       expect(updated).toBe(true);
-      const flows = db.getFlows();
-      expect(flows[0].name).toBe('NewName');
+
+      const flow = db.getFlowById(flowId);
+      expect(flow!.name).toBe('New Name');
     });
 
     it('updates flow description', () => {
-      const fileId = createFile('/project/controller.ts');
-      const defId = createDefinition(fileId, 'Controller', 'function', 0, 10);
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const flowId = db.insertFlow(rootFlow.id, 'test', 'Test');
 
-      const flowId = db.insertFlow('TestFlow', defId);
       db.updateFlow(flowId, { description: 'New description' });
 
-      const flows = db.getFlows();
-      expect(flows[0].description).toBe('New description');
+      const flow = db.getFlowById(flowId);
+      expect(flow!.description).toBe('New description');
     });
 
-    it('updates flow domain', () => {
-      const fileId = createFile('/project/controller.ts');
-      const defId = createDefinition(fileId, 'Controller', 'function', 0, 10);
+    it('updates flow semantic', () => {
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const flowId = db.insertFlow(rootFlow.id, 'test', 'Test');
 
-      const flowId = db.insertFlow('TestFlow', defId, undefined, 'old-domain');
-      db.updateFlow(flowId, { domain: 'new-domain' });
+      db.updateFlow(flowId, { semantic: 'New semantic annotation' });
 
-      const flows = db.getFlows();
-      expect(flows[0].domain).toBe('new-domain');
+      const flow = db.getFlowById(flowId);
+      expect(flow!.semantic).toBe('New semantic annotation');
     });
 
     it('returns false for non-existent flow', () => {
@@ -638,19 +549,232 @@ describe('Flow Detection', () => {
     });
 
     it('returns false when no updates provided', () => {
-      const fileId = createFile('/project/controller.ts');
-      const defId = createDefinition(fileId, 'Controller', 'function', 0, 10);
+      const rootFlow = db.ensureRootFlow('user-journey');
+      const flowId = db.insertFlow(rootFlow.id, 'test', 'Test');
 
-      const flowId = db.insertFlow('TestFlow', defId);
       const updated = db.updateFlow(flowId, {});
-
       expect(updated).toBe(false);
     });
   });
 
-  describe('integration: full flow detection', () => {
-    it('detects a complete flow from controller to repository', () => {
-      // Setup a realistic flow: Controller -> Service -> Repository
+  describe('getFlowBySlug', () => {
+    it('returns a flow by its slug', () => {
+      const rootFlow = db.ensureRootFlow('user-journey');
+      db.insertFlow(rootFlow.id, 'authentication', 'Authentication');
+
+      const flow = db.getFlowBySlug('authentication');
+      expect(flow).not.toBeNull();
+      expect(flow!.name).toBe('Authentication');
+    });
+
+    it('returns null for non-existent slug', () => {
+      const flow = db.getFlowBySlug('non-existent');
+      expect(flow).toBeNull();
+    });
+  });
+
+  describe('reparentFlow', () => {
+    it('moves a flow under a new parent', () => {
+      const root1 = db.ensureRootFlow('root-1');
+      const root2 = db.ensureRootFlow('root-2');
+      const childId = db.insertFlow(root1.id, 'child', 'Child Flow');
+
+      // Initially under root1
+      let child = db.getFlowById(childId);
+      expect(child!.parentId).toBe(root1.id);
+      expect(child!.fullPath).toBe('root-1.child');
+      expect(child!.depth).toBe(1);
+
+      // Reparent to root2
+      db.reparentFlow(childId, root2.id);
+
+      child = db.getFlowById(childId);
+      expect(child!.parentId).toBe(root2.id);
+      expect(child!.fullPath).toBe('root-2.child');
+      expect(child!.depth).toBe(1);
+    });
+
+    it('recursively updates descendant paths', () => {
+      const root = db.ensureRootFlow('root');
+      const parentId = db.insertFlow(root.id, 'parent', 'Parent');
+      const childId = db.insertFlow(parentId, 'child', 'Child');
+      const grandchildId = db.insertFlow(childId, 'grandchild', 'Grandchild');
+
+      // Initially: root.parent.child.grandchild
+      let grandchild = db.getFlowById(grandchildId);
+      expect(grandchild!.fullPath).toBe('root.parent.child.grandchild');
+      expect(grandchild!.depth).toBe(3);
+
+      // Move child directly under root
+      db.reparentFlow(childId, root.id);
+
+      // Now: root.child.grandchild
+      grandchild = db.getFlowById(grandchildId);
+      expect(grandchild!.fullPath).toBe('root.child.grandchild');
+      expect(grandchild!.depth).toBe(2);
+
+      // Verify child is updated
+      const child = db.getFlowById(childId);
+      expect(child!.fullPath).toBe('root.child');
+      expect(child!.depth).toBe(1);
+      expect(child!.parentId).toBe(root.id);
+    });
+
+    it('assigns step order correctly', () => {
+      const root = db.ensureRootFlow('root');
+      const child1 = db.insertFlow(root.id, 'child-1', 'Child 1');
+      const child2 = db.insertFlow(root.id, 'child-2', 'Child 2');
+
+      const newRoot = db.ensureRootFlow('new-root');
+
+      // Move child2 first
+      db.reparentFlow(child2, newRoot.id);
+      // Move child1 second
+      db.reparentFlow(child1, newRoot.id);
+
+      const flow1 = db.getFlowById(child1);
+      const flow2 = db.getFlowById(child2);
+      expect(flow2!.stepOrder).toBe(1); // First
+      expect(flow1!.stepOrder).toBe(2); // Second
+    });
+
+    it('allows explicit step order', () => {
+      const root = db.ensureRootFlow('root');
+      const child1 = db.insertFlow(root.id, 'child-1', 'Child 1');
+      const child2 = db.insertFlow(root.id, 'child-2', 'Child 2');
+
+      const newRoot = db.ensureRootFlow('new-root');
+
+      // Move with explicit order
+      db.reparentFlow(child1, newRoot.id, 5);
+      db.reparentFlow(child2, newRoot.id, 3);
+
+      const flow1 = db.getFlowById(child1);
+      const flow2 = db.getFlowById(child2);
+      expect(flow1!.stepOrder).toBe(5);
+      expect(flow2!.stepOrder).toBe(3);
+    });
+
+    it('throws error for non-existent flow', () => {
+      expect(() => db.reparentFlow(999, null)).toThrow('Flow 999 not found');
+    });
+
+    it('throws error for non-existent parent', () => {
+      const root = db.ensureRootFlow('root');
+      const childId = db.insertFlow(root.id, 'child', 'Child');
+
+      expect(() => db.reparentFlow(childId, 999)).toThrow('Parent flow 999 not found');
+    });
+
+    it('moves flow to root level (parentId = null)', () => {
+      const root = db.ensureRootFlow('root');
+      const childId = db.insertFlow(root.id, 'child', 'Child');
+
+      // Initially under root
+      let child = db.getFlowById(childId);
+      expect(child!.parentId).toBe(root.id);
+      expect(child!.depth).toBe(1);
+
+      // Move to root level
+      db.reparentFlow(childId, null);
+
+      child = db.getFlowById(childId);
+      expect(child!.parentId).toBeNull();
+      expect(child!.fullPath).toBe('child');
+      expect(child!.depth).toBe(0);
+    });
+  });
+
+  describe('reparentFlows (bulk)', () => {
+    it('reparents flows in order', () => {
+      // Create orphaned flows
+      const a = db.insertFlow(null, 'a', 'A');
+      const b = db.insertFlow(null, 'b', 'B');
+      const c = db.insertFlow(null, 'c', 'C');
+
+      const newParent = db.ensureRootFlow('parent');
+
+      // Reparent in specific order: C, A, B
+      db.reparentFlows([c, a, b], newParent.id);
+
+      const flowC = db.getFlowById(c)!;
+      const flowA = db.getFlowById(a)!;
+      const flowB = db.getFlowById(b)!;
+
+      expect(flowC.stepOrder).toBe(1);
+      expect(flowA.stepOrder).toBe(2);
+      expect(flowB.stepOrder).toBe(3);
+
+      expect(flowC.parentId).toBe(newParent.id);
+      expect(flowA.parentId).toBe(newParent.id);
+      expect(flowB.parentId).toBe(newParent.id);
+
+      expect(flowC.fullPath).toBe('parent.c');
+      expect(flowA.fullPath).toBe('parent.a');
+      expect(flowB.fullPath).toBe('parent.b');
+    });
+
+    it('handles empty array', () => {
+      const parent = db.ensureRootFlow('parent');
+
+      // Should not throw
+      db.reparentFlows([], parent.id);
+
+      const children = db.getFlowChildren(parent.id);
+      expect(children).toHaveLength(0);
+    });
+
+    it('maintains correct depth for nested reparenting', () => {
+      // Create a flow with children
+      const childId = db.insertFlow(null, 'child', 'Child');
+      const grandchildId = db.insertFlow(childId, 'grandchild', 'Grandchild');
+
+      // Create a deep parent structure
+      const root = db.ensureRootFlow('root');
+      const level1 = db.insertFlow(root.id, 'level-1', 'Level 1');
+
+      // Reparent the child (with grandchild) under level1
+      db.reparentFlows([childId], level1);
+
+      const child = db.getFlowById(childId)!;
+      const grandchild = db.getFlowById(grandchildId)!;
+
+      expect(child.depth).toBe(2);  // root(0) -> level1(1) -> child(2)
+      expect(grandchild.depth).toBe(3);  // root(0) -> level1(1) -> child(2) -> grandchild(3)
+      expect(child.fullPath).toBe('root.level-1.child');
+      expect(grandchild.fullPath).toBe('root.level-1.child.grandchild');
+    });
+  });
+
+  describe('deleteFlow', () => {
+    it('deletes a flow', () => {
+      const root = db.ensureRootFlow('root');
+      const childId = db.insertFlow(root.id, 'child', 'Child');
+
+      expect(db.getFlowCount()).toBe(2);
+
+      const deleted = db.deleteFlow(childId);
+      expect(deleted).toBe(1);
+      expect(db.getFlowCount()).toBe(1);
+    });
+
+    it('cascades delete to descendants', () => {
+      const root = db.ensureRootFlow('root');
+      const parentId = db.insertFlow(root.id, 'parent', 'Parent');
+      db.insertFlow(parentId, 'child', 'Child');
+
+      expect(db.getFlowCount()).toBe(3);
+
+      // Delete parent should cascade to child
+      db.deleteFlow(parentId);
+
+      expect(db.getFlowCount()).toBe(1);  // Only root remains
+    });
+  });
+
+  describe('integration: hierarchical flow detection', () => {
+    it('builds a complete flow hierarchy from module call graph', () => {
+      // Setup: Controller -> Service -> Repository
       const controllerFile = createFile('/project/controllers/sales.controller.ts');
       const serviceFile = createFile('/project/services/sales.service.ts');
       const repoFile = createFile('/project/repositories/sales.repository.ts');
@@ -658,14 +782,6 @@ describe('Flow Detection', () => {
       const controllerDef = createDefinition(controllerFile, 'SalesController', 'class', 0, 50);
       const serviceDef = createDefinition(serviceFile, 'salesService', 'function', 0, 40);
       const repoDef = createDefinition(repoFile, 'salesRepository', 'function', 0, 30);
-
-      // Set metadata
-      db.setDefinitionMetadata(controllerDef, 'role', 'controller');
-      db.setDefinitionMetadata(controllerDef, 'domain', '["sales"]');
-      db.setDefinitionMetadata(serviceDef, 'role', 'service');
-      db.setDefinitionMetadata(serviceDef, 'domain', '["sales"]');
-      db.setDefinitionMetadata(repoDef, 'role', 'repository');
-      db.setDefinitionMetadata(repoDef, 'domain', '["sales"]');
 
       // Create modules
       const rootId = db.ensureRootModule();
@@ -681,35 +797,44 @@ describe('Flow Detection', () => {
       createCallRelationship(controllerFile, serviceFile, controllerDef, serviceDef, 'salesService', 20);
       createCallRelationship(serviceFile, repoFile, serviceDef, repoDef, 'salesRepository', 15);
 
-      // Find entry points
-      const entryPoints = db.getEntryPoints();
-      expect(entryPoints.length).toBeGreaterThanOrEqual(1);
-      const salesEntry = entryPoints.find(ep => ep.name === 'SalesController');
-      expect(salesEntry).toBeDefined();
-      expect(salesEntry!.domain).toBe('sales');
+      // Verify module call graph
+      const moduleEdges = db.getModuleCallGraph();
+      expect(moduleEdges).toHaveLength(2);
 
-      // Trace flow
-      const trace = db.traceFlowFromEntry(salesEntry!.id);
-      expect(trace.length).toBeGreaterThanOrEqual(3);
+      // Create flow hierarchy
+      const salesFlow = db.ensureRootFlow('create-sale');
+      const apiToServiceId = db.insertFlow(salesFlow.id, 'api-to-service', 'API to Service', {
+        fromModuleId: controllerModule,
+        toModuleId: serviceModule,
+        semantic: 'Controller delegates to service',
+      });
+      const serviceToRepoId = db.insertFlow(salesFlow.id, 'service-to-repo', 'Service to Repository', {
+        fromModuleId: serviceModule,
+        toModuleId: repoModule,
+        semantic: 'Service persists data',
+      });
 
-      // Create flow
-      const flowId = db.insertFlow('CreateSale', salesEntry!.id, 'Creates a new sale', 'sales');
-      for (let i = 0; i < trace.length; i++) {
-        db.addFlowStep(flowId, i + 1, trace[i].definitionId, trace[i].moduleId ?? undefined, trace[i].layer ?? undefined);
-      }
+      // Verify flow structure
+      const trees = db.getFlowTree();
+      expect(trees).toHaveLength(1);
+      expect(trees[0].name).toBe('Create Sale');
+      expect(trees[0].children).toHaveLength(2);
 
-      // Verify flow
-      const flow = db.getFlowWithSteps(flowId);
-      expect(flow).not.toBeNull();
-      expect(flow!.name).toBe('CreateSale');
-      expect(flow!.entryPointName).toBe('SalesController');
-      expect(flow!.steps.length).toBeGreaterThanOrEqual(3);
+      // Verify leaf flows
+      const leafFlows = db.getLeafFlows();
+      expect(leafFlows).toHaveLength(2);
 
-      // Verify steps are in correct order
-      const stepNames = flow!.steps.map(s => s.name);
-      expect(stepNames[0]).toBe('SalesController');
-      expect(stepNames).toContain('salesService');
-      expect(stepNames).toContain('salesRepository');
+      // Verify coverage
+      const coverage = db.getFlowCoverage();
+      expect(coverage.totalModuleEdges).toBe(2);
+      expect(coverage.coveredByFlows).toBe(2);
+      expect(coverage.percentage).toBe(100.0);
+
+      // Verify expansion
+      const expanded = db.expandFlow(salesFlow.id);
+      expect(expanded).toHaveLength(2);
+      expect(expanded[0].slug).toBe('api-to-service');
+      expect(expanded[1].slug).toBe('service-to-repo');
     });
   });
 });

@@ -3,67 +3,54 @@ import chalk from 'chalk';
 import { LLMist } from 'llmist';
 import { openDatabase, SharedFlags } from '../_shared/index.js';
 import type { IndexDatabase } from '../../db/database.js';
-import type { FlowCompositionRelationship } from '../../db/schema.js';
-import {
-  parseEntryPointClassification,
-  parseFlowConstruction,
-  parseGapFillSuggestions,
-  type ClassifiedEntryPoint,
-  type ParsedFlow,
-} from './_shared/flow-csv.js';
-import {
-  FlowValidator,
-  detectAndSuggestOverlapAction,
-  type ValidationOptions,
-} from './_shared/flow-validation.js';
-import {
-  buildEntryPointSystemPrompt,
-  buildEntryPointUserPrompt,
-  buildFlowConstructionSystemPrompt,
-  buildFlowConstructionUserPrompt,
-  buildGapFillingSystemPrompt,
-  buildGapFillingUserPrompt,
-  formatCoverageStats,
-  type EntryPointCandidate,
-  type FlowConstructionContext,
-  type GapFillingContext,
-} from './_shared/flow-prompts.js';
-
-type PhaseType = 'all' | 'entry-points' | 'construct' | 'gaps';
+import type { ModuleCallEdge, Flow } from '../../db/schema.js';
 
 interface FlowsResult {
-  phase: PhaseType;
-  entryPoints?: {
-    total: number;
-    topLevel: number;
-    subflowCandidates: number;
-    internal: number;
-  };
-  flows?: {
-    created: number;
-    subflows: number;
-    composite: number;
-    failed: number;
-  };
+  phase: string;
+  moduleEdges?: number;
+  leafFlows?: number;
+  parentFlows?: number;
+  rootFlows?: number;
   coverage?: {
-    totalDefinitions: number;
+    totalModuleEdges: number;
     coveredByFlows: number;
-    coveragePercentage: number;
-    topLevelFlows: number;
-    subFlows: number;
+    percentage: number;
   };
-  iterations?: number;
+}
+
+interface LeafFlowSuggestion {
+  fromModuleId: number;
+  toModuleId: number;
+  fromModulePath: string;
+  toModulePath: string;
+  name: string;
+  slug: string;
+  semantic: string;
+}
+
+interface FlowGrouping {
+  name: string;
+  slug: string;
+  description: string;
+  domain: string | null;
+  orderedLeafFlowSlugs: string[];  // Ordered by execution sequence
+}
+
+interface RootFlowSuggestion {
+  name: string;
+  slug: string;
+  description: string;
+  orderedParentFlowSlugs: string[];  // Ordered by journey sequence
 }
 
 export default class Flows extends Command {
-  static override description = 'Detect hierarchical execution flows using LLM-driven analysis';
+  static override description = 'Detect hierarchical execution flows from module call graph using LLM analysis';
 
   static override examples = [
     '<%= config.bin %> llm flows',
-    '<%= config.bin %> llm flows --phase entry-points --dry-run',
-    '<%= config.bin %> llm flows --target-coverage 80 --max-gap-iterations 5',
-    '<%= config.bin %> llm flows --detect-subflows --min-subflow-reuse 3',
-    '<%= config.bin %> llm flows --strict-edges=false --force',
+    '<%= config.bin %> llm flows --phase leaf --dry-run',
+    '<%= config.bin %> llm flows --phase all --force',
+    '<%= config.bin %> llm flows -d car-dealership.db --verbose',
   ];
 
   static override flags = {
@@ -72,52 +59,8 @@ export default class Flows extends Command {
     // Phase control
     phase: Flags.string({
       description: 'Which phase to run',
-      options: ['all', 'entry-points', 'construct', 'gaps'],
+      options: ['all', 'leaf', 'group', 'root'],
       default: 'all',
-    }),
-
-    // Hierarchy options
-    'detect-subflows': Flags.boolean({
-      description: 'Detect reusable sub-flow patterns',
-      default: true,
-    }),
-    'min-subflow-reuse': Flags.integer({
-      description: 'Minimum times a pattern must appear to be a sub-flow',
-      default: 2,
-    }),
-
-    // Coverage targets
-    'target-coverage': Flags.integer({
-      description: 'Target symbol coverage percentage',
-      default: 80,
-    }),
-    'max-gap-iterations': Flags.integer({
-      description: 'Maximum gap-filling iterations',
-      default: 10,
-    }),
-
-    // Validation strictness
-    'strict-edges': Flags.boolean({
-      description: 'Require call graph edge between all consecutive steps',
-      default: true,
-      allowNo: true,
-    }),
-    'allow-layer-skip': Flags.boolean({
-      description: 'Allow flows that skip architectural layers',
-      default: true,
-      allowNo: true,
-    }),
-    'max-depth': Flags.integer({
-      description: 'Maximum neighborhood traversal depth',
-      default: 3,
-    }),
-    'max-nodes': Flags.integer({
-      description: 'Maximum nodes in neighborhood context',
-      default: 50,
-    }),
-    'min-steps': Flags.integer({
-      description: 'Minimum steps for a valid flow',
-      default: 2,
     }),
 
     // LLM options
@@ -127,12 +70,8 @@ export default class Flows extends Command {
       default: 'sonnet',
     }),
     'batch-size': Flags.integer({
-      description: 'Entry points per LLM batch',
-      default: 5,
-    }),
-    'max-iterations': Flags.integer({
-      description: 'Maximum LLM iterations per phase',
-      default: 100,
+      description: 'Module edges per LLM batch for semantic generation',
+      default: 10,
     }),
 
     // Output options
@@ -155,17 +94,12 @@ export default class Flows extends Command {
     const { flags } = await this.parse(Flows);
 
     const db = await openDatabase(flags.database, this);
-    const phase = flags.phase as PhaseType;
+    const phase = flags.phase;
     const isJson = flags.json;
     const dryRun = flags['dry-run'];
     const verbose = flags.verbose;
-
-    const validationOptions: ValidationOptions = {
-      strictEdges: flags['strict-edges'],
-      allowLayerSkip: flags['allow-layer-skip'],
-      maxCompositionDepth: 3,
-      minStepCount: flags['min-steps'],
-    };
+    const model = flags.model;
+    const batchSize = flags['batch-size'];
 
     try {
       // Check if flows already exist
@@ -185,8 +119,8 @@ export default class Flows extends Command {
       }
 
       if (!isJson) {
-        this.log(chalk.bold('LLM-Driven Flow Detection'));
-        this.log(chalk.gray(`Phase: ${phase}, Model: ${flags.model}`));
+        this.log(chalk.bold('Hierarchical Flow Detection'));
+        this.log(chalk.gray(`Phase: ${phase}, Model: ${model}`));
         this.log('');
       }
 
@@ -200,74 +134,52 @@ export default class Flows extends Command {
 
       const result: FlowsResult = { phase };
 
-      // Phase 1: Entry Point Classification
-      if (phase === 'all' || phase === 'entry-points') {
+      // Phase 1: Build module call graph and create leaf flows
+      if (phase === 'all' || phase === 'leaf') {
         if (!isJson) {
-          this.log(chalk.bold('Phase 1: Entry Point Classification'));
+          this.log(chalk.bold('Phase 1: Create Leaf Flows from Module Call Graph'));
         }
 
-        const classifiedEntries = await this.runPhase1(db, flags, isJson, verbose);
-        result.entryPoints = {
-          total: classifiedEntries.length,
-          topLevel: classifiedEntries.filter(e => e.classification === 'top_level').length,
-          subflowCandidates: classifiedEntries.filter(e => e.classification === 'subflow_candidate').length,
-          internal: classifiedEntries.filter(e => e.classification === 'internal').length,
-        };
-
-        if (phase === 'entry-points') {
-          if (isJson) {
-            this.log(JSON.stringify({ ...result, entries: classifiedEntries }, null, 2));
-          }
-          return;
-        }
-
-        // Store classifications for Phase 2
-        if (!dryRun) {
-          for (const entry of classifiedEntries) {
-            db.setDefinitionMetadata(entry.id, 'flow_classification', entry.classification);
-            db.setDefinitionMetadata(entry.id, 'flow_classification_confidence', entry.confidence);
-          }
-        }
+        const leafFlowCount = await this.runLeafFlowPhase(db, model, batchSize, isJson, verbose, dryRun);
+        result.leafFlows = leafFlowCount;
+        result.moduleEdges = db.getModuleCallGraph().length;
       }
 
-      // Phase 2: Flow Construction
-      if (phase === 'all' || phase === 'construct') {
+      // Phase 2: Group leaf flows into parent flows
+      if (phase === 'all' || phase === 'group') {
         if (!isJson) {
           this.log('');
-          this.log(chalk.bold('Phase 2: Flow Construction'));
+          this.log(chalk.bold('Phase 2: Group Leaf Flows into Parent Flows'));
         }
 
-        const flowResult = await this.runPhase2(db, flags, validationOptions, isJson, verbose, dryRun);
-        result.flows = flowResult;
+        const parentFlowCount = await this.runGroupingPhase(db, model, isJson, verbose, dryRun);
+        result.parentFlows = parentFlowCount;
       }
 
-      // Phase 3: Gap Filling
-      if (phase === 'all' || phase === 'gaps') {
+      // Phase 3: Create root-level flows
+      if (phase === 'all' || phase === 'root') {
         if (!isJson) {
           this.log('');
-          this.log(chalk.bold('Phase 3: Gap Filling'));
+          this.log(chalk.bold('Phase 3: Create Root-Level User Journey Flows'));
         }
 
-        const gapResult = await this.runPhase3(db, flags, validationOptions, isJson, verbose, dryRun);
-        result.iterations = gapResult.iterations;
+        const rootFlowCount = await this.runRootFlowPhase(db, model, isJson, verbose, dryRun);
+        result.rootFlows = rootFlowCount;
       }
 
       // Final coverage statistics
-      const coverage = db.getFlowCoverageStats();
-      result.coverage = {
-        totalDefinitions: coverage.totalDefinitions,
-        coveredByFlows: coverage.coveredByFlows,
-        coveragePercentage: coverage.coveragePercentage,
-        topLevelFlows: coverage.topLevelFlows,
-        subFlows: coverage.subFlows,
-      };
+      const coverage = db.getFlowCoverage();
+      result.coverage = coverage;
 
       if (isJson) {
         this.log(JSON.stringify(result, null, 2));
       } else {
         this.log('');
         this.log(chalk.bold('Final Results'));
-        this.log(formatCoverageStats(coverage));
+        this.log(`Module edges: ${coverage.totalModuleEdges}`);
+        this.log(`Covered by flows: ${coverage.coveredByFlows} (${coverage.percentage.toFixed(1)}%)`);
+        const stats = db.getFlowStats();
+        this.log(`Total flows: ${stats.flowCount} (${stats.leafFlowCount} leaf, max depth: ${stats.maxDepth})`);
       }
     } finally {
       db.close();
@@ -275,578 +187,560 @@ export default class Flows extends Command {
   }
 
   /**
-   * Phase 1: Entry Point Classification
+   * Phase 1: Create leaf flows from module call graph edges.
+   * For each unique module-to-module edge, create a leaf flow.
+   * Use LLM to generate semantic descriptions.
    */
-  private async runPhase1(
+  private async runLeafFlowPhase(
     db: IndexDatabase,
-    flags: Record<string, unknown>,
+    model: string,
+    batchSize: number,
     isJson: boolean,
-    verbose: boolean
-  ): Promise<ClassifiedEntryPoint[]> {
-    // Get entry point candidates
-    const heuristicEntries = db.getEntryPoints();
-    const highConnectivity = db.getHighConnectivitySymbols({
-      minIncoming: 0,
-      exported: true,
-      limit: 100,
-    });
+    verbose: boolean,
+    dryRun: boolean
+  ): Promise<number> {
+    // Get module call graph
+    const moduleEdges = db.getModuleCallGraph();
 
-    // Combine and deduplicate
-    const candidateIds = new Set<number>();
-    const candidates: EntryPointCandidate[] = [];
-
-    for (const ep of heuristicEntries) {
-      if (candidateIds.has(ep.id)) continue;
-      candidateIds.add(ep.id);
-
-      const metadata = db.getDefinitionMetadata(ep.id);
-      let domains: string[] | null = null;
-      if (metadata['domain']) {
-        try {
-          domains = JSON.parse(metadata['domain']);
-        } catch { /* ignore */ }
+    if (moduleEdges.length === 0) {
+      if (!isJson) {
+        this.log(chalk.yellow('  No module call graph edges found.'));
+        this.log(chalk.gray('  Ensure modules are assigned first with `ats llm modules`'));
       }
-
-      const hc = highConnectivity.find(h => h.id === ep.id);
-      candidates.push({
-        id: ep.id,
-        name: ep.name,
-        kind: ep.kind,
-        filePath: ep.filePath,
-        incomingDeps: hc?.incomingDeps ?? 0,
-        outgoingDeps: hc?.outgoingDeps ?? 0,
-        purpose: metadata['purpose'] ?? null,
-        domain: domains,
-        role: metadata['role'] ?? null,
-      });
-    }
-
-    // Add high-connectivity symbols not already included
-    for (const hc of highConnectivity) {
-      if (candidateIds.has(hc.id)) continue;
-      if (hc.outgoingDeps < 3) continue; // Skip low outgoing
-
-      candidateIds.add(hc.id);
-      const metadata = db.getDefinitionMetadata(hc.id);
-      let domains: string[] | null = null;
-      if (metadata['domain']) {
-        try {
-          domains = JSON.parse(metadata['domain']);
-        } catch { /* ignore */ }
-      }
-
-      candidates.push({
-        id: hc.id,
-        name: hc.name,
-        kind: hc.kind,
-        filePath: hc.filePath,
-        incomingDeps: hc.incomingDeps,
-        outgoingDeps: hc.outgoingDeps,
-        purpose: metadata['purpose'] ?? null,
-        domain: domains,
-        role: metadata['role'] ?? null,
-      });
+      return 0;
     }
 
     if (!isJson && verbose) {
-      this.log(chalk.gray(`  Found ${candidates.length} entry point candidates`));
+      this.log(chalk.gray(`  Found ${moduleEdges.length} module-to-module edges`));
     }
 
-    if (candidates.length === 0) {
-      if (!isJson) {
-        this.log(chalk.yellow('  No entry point candidates found'));
-      }
-      return [];
-    }
+    // Generate semantic descriptions for each edge using LLM
+    const leafFlows: LeafFlowSuggestion[] = [];
 
-    // Call LLM for classification
-    const systemPrompt = buildEntryPointSystemPrompt();
-    const allClassified: ClassifiedEntryPoint[] = [];
-    const batchSize = flags['batch-size'] as number;
-    const maxIterations = flags['max-iterations'] as number;
-    const model = flags.model as string;
-
-    let iteration = 0;
-    for (let i = 0; i < candidates.length && iteration < maxIterations; i += batchSize) {
-      iteration++;
-      const batch = candidates.slice(i, i + batchSize);
-      const userPrompt = buildEntryPointUserPrompt(batch);
+    for (let i = 0; i < moduleEdges.length; i += batchSize) {
+      const batch = moduleEdges.slice(i, i + batchSize);
 
       try {
-        const response = await LLMist.complete(userPrompt, {
-          model,
-          systemPrompt,
-          temperature: 0,
-        });
-
-        const { entries, errors } = parseEntryPointClassification(response);
-
-        if (errors.length > 0 && verbose && !isJson) {
-          for (const err of errors) {
-            this.log(chalk.yellow(`  Parse warning: ${err}`));
-          }
-        }
-
-        allClassified.push(...entries);
+        const suggestions = await this.generateLeafFlowSemantics(batch, model);
+        leafFlows.push(...suggestions);
 
         if (!isJson && verbose) {
-          this.log(chalk.gray(`  Batch ${iteration}: Classified ${entries.length} entries`));
+          this.log(chalk.gray(`  Batch ${Math.floor(i / batchSize) + 1}: Generated ${suggestions.length} leaf flows`));
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!isJson) {
-          this.log(chalk.yellow(`  Batch ${iteration} failed: ${message}`));
+          this.log(chalk.yellow(`  Batch ${Math.floor(i / batchSize) + 1} failed: ${message}`));
+        }
+        // Fall back to auto-generated names
+        for (const edge of batch) {
+          leafFlows.push(this.createDefaultLeafFlow(edge));
+        }
+      }
+    }
+
+    // Persist leaf flows as orphans (parentId = null) for later reparenting
+    if (!dryRun) {
+      for (const flow of leafFlows) {
+        try {
+          // Create orphaned leaf flow (will be reparented in Phase 2)
+          db.insertFlow(null, flow.slug, flow.name, {
+            fromModuleId: flow.fromModuleId,
+            toModuleId: flow.toModuleId,
+            semantic: flow.semantic,
+          });
+        } catch (error) {
+          // Handle duplicate slugs by appending module IDs for uniqueness
+          const uniqueSlug = `${flow.slug}-${flow.fromModuleId}-${flow.toModuleId}`;
+          try {
+            db.insertFlow(null, uniqueSlug, flow.name, {
+              fromModuleId: flow.fromModuleId,
+              toModuleId: flow.toModuleId,
+              semantic: flow.semantic,
+            });
+          } catch {
+            // Skip if still fails
+            if (verbose && !isJson) {
+              this.log(chalk.yellow(`  Skipping duplicate flow: ${flow.name}`));
+            }
+          }
         }
       }
     }
 
     if (!isJson) {
-      const topLevel = allClassified.filter(e => e.classification === 'top_level').length;
-      const subflow = allClassified.filter(e => e.classification === 'subflow_candidate').length;
-      this.log(chalk.gray(`  Classified: ${topLevel} top-level, ${subflow} sub-flow candidates`));
+      this.log(chalk.gray(`  Created ${leafFlows.length} leaf flows from module edges`));
     }
 
-    return allClassified;
+    return leafFlows.length;
   }
 
   /**
-   * Phase 2: Flow Construction
+   * Generate semantic descriptions for module edges using LLM.
    */
-  private async runPhase2(
-    db: IndexDatabase,
-    flags: Record<string, unknown>,
-    validationOptions: ValidationOptions,
-    isJson: boolean,
-    verbose: boolean,
-    dryRun: boolean
-  ): Promise<{ created: number; subflows: number; composite: number; failed: number }> {
-    const model = flags.model as string;
-    const batchSize = flags['batch-size'] as number;
-    const maxIterations = flags['max-iterations'] as number;
-    const maxDepth = flags['max-depth'] as number;
-    const maxNodes = flags['max-nodes'] as number;
-    const detectSubflows = flags['detect-subflows'] as boolean;
+  private async generateLeafFlowSemantics(
+    edges: ModuleCallEdge[],
+    model: string
+  ): Promise<LeafFlowSuggestion[]> {
+    const systemPrompt = `You are a software architect analyzing module-level call graph edges.
 
-    const validator = new FlowValidator(db, validationOptions);
+For each module-to-module transition, provide:
+1. A descriptive name for the flow (PascalCase, action-oriented)
+2. A slug (kebab-case, URL-safe)
+3. A semantic description of what happens in this transition
 
-    // Get entry points to process
-    // First try to get classified entry points, fall back to heuristic
-    let entryPoints = db.getEntryPoints();
+Output format - respond with ONLY a CSV table:
 
-    // Filter to only top-level (if we have classifications)
-    const topLevelIds = new Set<number>();
-    const subflowIds = new Set<number>();
+\`\`\`csv
+from_module,to_module,name,slug,semantic
+project.controllers,project.services.auth,"ValidateCredentials","validate-credentials","Controller validates user credentials through auth service"
+\`\`\`
 
-    for (const ep of entryPoints) {
-      const classification = db.getDefinitionMetadataValue(ep.id, 'flow_classification');
-      if (classification === 'top_level' || classification === null) {
-        topLevelIds.add(ep.id);
-      } else if (classification === 'subflow_candidate') {
-        subflowIds.add(ep.id);
-      }
-    }
+Guidelines:
+- Name should describe the business action (e.g., "ProcessPayment", "ValidateInput")
+- Slug should be lowercase-hyphenated version of the name
+- Semantic should explain WHY this module calls the other module
+- Keep descriptions concise (under 100 chars)`;
 
-    // Process sub-flow candidates first (if enabled)
-    const createdSubflows: string[] = [];
-    if (detectSubflows && subflowIds.size > 0) {
-      if (!isJson && verbose) {
-        this.log(chalk.gray(`  Processing ${subflowIds.size} sub-flow candidates...`));
-      }
+    const userPrompt = `## Module Transitions to Describe (${edges.length})
 
-      const subflowEntries = entryPoints.filter(ep => subflowIds.has(ep.id));
-      const subflowFlows = await this.constructFlows(
-        db,
-        subflowEntries,
-        model,
-        batchSize,
-        maxIterations,
-        maxDepth,
-        maxNodes,
-        validator,
-        [],
-        isJson,
-        verbose
+${edges.map((e, i) => `${i + 1}. ${e.fromModulePath} → ${e.toModulePath} (${e.weight} calls)`).join('\n')}
+
+Generate flow metadata for each transition in CSV format.`;
+
+    const response = await LLMist.complete(userPrompt, {
+      model,
+      systemPrompt,
+      temperature: 0,
+    });
+
+    return this.parseLeafFlowCSV(response, edges);
+  }
+
+  /**
+   * Parse LLM CSV response into leaf flow suggestions.
+   */
+  private parseLeafFlowCSV(response: string, edges: ModuleCallEdge[]): LeafFlowSuggestion[] {
+    const results: LeafFlowSuggestion[] = [];
+
+    // Find CSV block
+    const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/) ||
+      response.match(/```\n([\s\S]*?)\n```/);
+    const csvContent = csvMatch ? csvMatch[1] : response;
+
+    const lines = csvContent.split('\n').filter(l => l.trim() && !l.startsWith('from_module'));
+
+    for (const line of lines) {
+      // Parse CSV line (handle quoted fields)
+      const fields = this.parseCSVLine(line);
+      if (fields.length < 5) continue;
+
+      const [fromPath, toPath, name, slug, semantic] = fields;
+
+      // Find matching edge
+      const edge = edges.find(e =>
+        e.fromModulePath === fromPath && e.toModulePath === toPath
+      ) || edges.find(e =>
+        e.fromModulePath.endsWith(fromPath) && e.toModulePath.endsWith(toPath)
       );
 
-      // Persist sub-flows
-      for (const flow of subflowFlows.valid) {
-        if (!dryRun) {
-          this.persistFlow(db, flow, true);
-          createdSubflows.push(flow.name);
-          if (verbose && !isJson) {
-            this.log(chalk.gray(`    Created sub-flow: ${flow.name} (${flow.steps.length} steps)`));
-          }
-        } else {
-          createdSubflows.push(flow.name);
-        }
+      if (edge) {
+        results.push({
+          fromModuleId: edge.fromModuleId,
+          toModuleId: edge.toModuleId,
+          fromModulePath: edge.fromModulePath,
+          toModulePath: edge.toModulePath,
+          name: name.trim().replace(/"/g, ''),
+          slug: slug.trim().replace(/"/g, ''),
+          semantic: semantic.trim().replace(/"/g, ''),
+        });
       }
     }
 
-    // Process top-level flows
-    const topLevelEntries = entryPoints.filter(ep => topLevelIds.has(ep.id));
-    if (!isJson && verbose) {
-      this.log(chalk.gray(`  Processing ${topLevelEntries.length} top-level entry points...`));
-    }
-
-    const topLevelFlows = await this.constructFlows(
-      db,
-      topLevelEntries,
-      model,
-      batchSize,
-      maxIterations,
-      maxDepth,
-      maxNodes,
-      validator,
-      createdSubflows,
-      isJson,
-      verbose
-    );
-
-    // Persist top-level flows
-    let created = createdSubflows.length;
-    let composite = 0;
-
-    for (const flow of topLevelFlows.valid) {
-      // Check for overlap
-      const overlap = detectAndSuggestOverlapAction(flow, db);
-      if (overlap.suggestion === 'skip') {
-        if (verbose && !isJson) {
-          this.log(chalk.gray(`    Skipping duplicate flow: ${flow.name}`));
-        }
-        continue;
-      }
-
-      if (!dryRun) {
-        this.persistFlow(db, flow, false);
-        created++;
-        if (flow.isComposite) composite++;
-
-        if (verbose && !isJson) {
-          const compStr = flow.isComposite ? ' (composite)' : '';
-          this.log(chalk.gray(`    Created flow: ${flow.name}${compStr} (${flow.steps.length} steps)`));
-        }
-      } else {
-        created++;
-        if (flow.isComposite) composite++;
+    // Add defaults for any edges not covered
+    for (const edge of edges) {
+      if (!results.find(r => r.fromModuleId === edge.fromModuleId && r.toModuleId === edge.toModuleId)) {
+        results.push(this.createDefaultLeafFlow(edge));
       }
     }
 
-    if (!isJson) {
-      this.log(chalk.gray(`  Created ${created} flows (${createdSubflows.length} sub-flows, ${composite} composite)`));
-      if (topLevelFlows.failed > 0) {
-        this.log(chalk.yellow(`  ${topLevelFlows.failed} flows failed validation`));
-      }
-    }
+    return results;
+  }
+
+  /**
+   * Create a default leaf flow from an edge when LLM fails.
+   */
+  private createDefaultLeafFlow(edge: ModuleCallEdge): LeafFlowSuggestion {
+    const fromLast = edge.fromModulePath.split('.').pop() ?? 'source';
+    const toLast = edge.toModulePath.split('.').pop() ?? 'target';
+    const name = `${this.toPascalCase(fromLast)}To${this.toPascalCase(toLast)}`;
+    const slug = `${fromLast}-to-${toLast}`.toLowerCase();
 
     return {
-      created,
-      subflows: createdSubflows.length,
-      composite,
-      failed: topLevelFlows.failed,
+      fromModuleId: edge.fromModuleId,
+      toModuleId: edge.toModuleId,
+      fromModulePath: edge.fromModulePath,
+      toModulePath: edge.toModulePath,
+      name,
+      slug,
+      semantic: `Calls from ${edge.fromModulePath} to ${edge.toModulePath}`,
     };
   }
 
   /**
-   * Construct flows from entry points using LLM.
+   * Phase 2: Group leaf flows into parent flows.
+   * LLM analyzes leaf flows and groups them into logical parent flows.
+   * Leaf flows are reparented under their assigned parent flows.
    */
-  private async constructFlows(
+  private async runGroupingPhase(
     db: IndexDatabase,
-    entryPoints: Array<{ id: number; name: string; kind: string; filePath: string }>,
     model: string,
-    batchSize: number,
-    maxIterations: number,
-    maxDepth: number,
-    maxNodes: number,
-    validator: FlowValidator,
-    existingSubflows: string[],
-    isJson: boolean,
-    verbose: boolean
-  ): Promise<{ valid: ParsedFlow[]; failed: number }> {
-    const validFlows: ParsedFlow[] = [];
-    let failedCount = 0;
-
-    const systemPrompt = buildFlowConstructionSystemPrompt();
-    const existingFlows = db.getFlows().map(f => ({
-      id: f.id,
-      name: f.name,
-      description: f.description,
-      entryPointId: f.entryPointId,
-    }));
-
-    let iteration = 0;
-    for (let i = 0; i < entryPoints.length && iteration < maxIterations; i += batchSize) {
-      iteration++;
-      const batch = entryPoints.slice(i, i + batchSize);
-
-      // Build context for each entry point
-      const contexts: FlowConstructionContext[] = [];
-      for (const ep of batch) {
-        const neighborhood = db.getCallGraphNeighborhood(ep.id, maxDepth, maxNodes);
-        const entryInfo = neighborhood.nodes.find(n => n.id === ep.id);
-
-        if (!entryInfo) continue;
-
-        contexts.push({
-          entryPoint: entryInfo,
-          neighborhood,
-          existingFlows,
-          existingSubflows,
-        });
-      }
-
-      if (contexts.length === 0) continue;
-
-      const userPrompt = buildFlowConstructionUserPrompt(contexts);
-
-      try {
-        const response = await LLMist.complete(userPrompt, {
-          model,
-          systemPrompt,
-          temperature: 0,
-        });
-
-        const { flows, errors } = parseFlowConstruction(response);
-
-        if (errors.length > 0 && verbose && !isJson) {
-          for (const err of errors.slice(0, 5)) {
-            this.log(chalk.yellow(`    Parse warning: ${err}`));
-          }
-        }
-
-        // Validate flows
-        const validationResults = validator.validateBatch(flows);
-        for (const flow of flows) {
-          const result = validationResults.get(flow.id);
-          if (result?.valid) {
-            validFlows.push(flow);
-          } else {
-            failedCount++;
-            if (verbose && !isJson && result) {
-              for (const err of result.errors.slice(0, 3)) {
-                this.log(chalk.yellow(`    Validation error: ${err.message}`));
-              }
-            }
-          }
-        }
-
-        if (verbose && !isJson) {
-          this.log(chalk.gray(`    Batch ${iteration}: ${flows.length} flows, ${validFlows.length} valid`));
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!isJson) {
-          this.log(chalk.yellow(`    Batch ${iteration} failed: ${message}`));
-        }
-        failedCount += batch.length;
-      }
-    }
-
-    return { valid: validFlows, failed: failedCount };
-  }
-
-  /**
-   * Phase 3: Gap Filling
-   */
-  private async runPhase3(
-    db: IndexDatabase,
-    flags: Record<string, unknown>,
-    _validationOptions: ValidationOptions,
     isJson: boolean,
     verbose: boolean,
-    _dryRun: boolean
-  ): Promise<{ iterations: number }> {
-    const model = flags.model as string;
-    const targetCoverage = flags['target-coverage'] as number;
-    const maxGapIterations = flags['max-gap-iterations'] as number;
+    dryRun: boolean
+  ): Promise<number> {
+    const leafFlows = db.getLeafFlows();
 
-    const systemPrompt = buildGapFillingSystemPrompt();
-    let iteration = 0;
-
-    while (iteration < maxGapIterations) {
-      iteration++;
-
-      // Check current coverage
-      const coverage = db.getFlowCoverageStats();
-      if (coverage.coveragePercentage >= targetCoverage) {
-        if (!isJson && verbose) {
-          this.log(chalk.gray(`  Target coverage ${targetCoverage}% reached (${coverage.coveragePercentage.toFixed(1)}%)`));
-        }
-        break;
+    if (leafFlows.length === 0) {
+      if (!isJson && verbose) {
+        this.log(chalk.gray('  No leaf flows to group'));
       }
+      return 0;
+    }
 
-      // Get uncovered symbols
-      const uncovered = db.getSymbolsNotInFlows({ minDeps: 3 });
-      if (uncovered.length === 0) {
-        if (!isJson && verbose) {
-          this.log(chalk.gray('  No more symbols to cover'));
-        }
-        break;
-      }
+    if (!isJson && verbose) {
+      this.log(chalk.gray(`  Analyzing ${leafFlows.length} leaf flows for grouping...`));
+    }
 
-      // Build context
-      const existingFlows = db.getAllFlowsWithSteps().map(f => ({
-        id: f.id,
-        name: f.name,
-        description: f.description,
-        stepCount: f.steps.length,
-      }));
+    // Build a map of slug to flow for lookup
+    const slugToFlow = new Map<string, Flow>();
+    for (const flow of leafFlows) {
+      slugToFlow.set(flow.slug, flow);
+    }
 
-      const context: GapFillingContext = {
-        uncoveredSymbols: uncovered.slice(0, 30).map(s => {
-          const metadata = db.getDefinitionMetadata(s.id);
-          let domains: string[] | null = null;
-          if (metadata['domain']) {
-            try {
-              domains = JSON.parse(metadata['domain']);
-            } catch { /* ignore */ }
+    try {
+      const groupings = await this.generateFlowGroupings(leafFlows, model);
+
+      if (!dryRun) {
+        let reparentedCount = 0;
+
+        for (const group of groupings) {
+          // Create parent flow as orphan (will be reparented in Phase 3)
+          const parentFlowId = db.insertFlow(null, group.slug, group.name, {
+            description: group.description,
+            domain: group.domain ?? undefined,
+          });
+
+          // Find and reparent leaf flows under this parent in order
+          const leafFlowIds: number[] = [];
+          for (const leafSlug of group.orderedLeafFlowSlugs) {
+            const leaf = slugToFlow.get(leafSlug);
+            if (leaf) {
+              leafFlowIds.push(leaf.id);
+            } else if (verbose && !isJson) {
+              this.log(chalk.yellow(`  Warning: Leaf flow '${leafSlug}' not found for group '${group.name}'`));
+            }
           }
-          return {
-            ...s,
-            purpose: metadata['purpose'] ?? null,
-            domain: domains,
-            role: metadata['role'] ?? null,
-          };
-        }),
-        existingFlows,
-        coverageStats: {
-          covered: coverage.coveredByFlows,
-          total: coverage.totalDefinitions,
-          percentage: coverage.coveragePercentage,
-        },
-      };
 
-      const userPrompt = buildGapFillingUserPrompt(context);
+          // Reparent leaf flows under the parent in the order specified
+          if (leafFlowIds.length > 0) {
+            db.reparentFlows(leafFlowIds, parentFlowId);
+            reparentedCount += leafFlowIds.length;
+          }
 
-      try {
-        const response = await LLMist.complete(userPrompt, {
-          model,
-          systemPrompt,
-          temperature: 0,
-        });
-
-        const { suggestions, errors } = parseGapFillSuggestions(response);
-
-        if (errors.length > 0 && verbose && !isJson) {
-          for (const err of errors.slice(0, 3)) {
-            this.log(chalk.yellow(`    Parse warning: ${err}`));
+          if (verbose && !isJson) {
+            this.log(chalk.gray(`  Created parent flow '${group.name}' with ${leafFlowIds.length} children`));
           }
         }
 
-        if (suggestions.length === 0) {
-          if (!isJson && verbose) {
-            this.log(chalk.gray(`  Iteration ${iteration}: No suggestions`));
-          }
-          break;
-        }
-
-        // Process suggestions (simplified - just log for now)
-        if (!isJson && verbose) {
-          this.log(chalk.gray(`  Iteration ${iteration}: ${suggestions.length} suggestions`));
-          for (const s of suggestions.slice(0, 5)) {
-            this.log(chalk.gray(`    - ${s.type}: symbol ${s.symbolId} - ${s.reason}`));
-          }
-        }
-
-        // TODO: Implement suggestion processing
-        // For now, we break after first iteration to avoid infinite loops
-        break;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
         if (!isJson) {
-          this.log(chalk.yellow(`  Gap fill iteration ${iteration} failed: ${message}`));
+          this.log(chalk.gray(`  Created ${groupings.length} parent flows, reparented ${reparentedCount} leaf flows`));
         }
-        break;
+      } else if (!isJson) {
+        this.log(chalk.gray(`  Would create ${groupings.length} parent flow groups`));
       }
-    }
 
-    if (!isJson) {
-      const finalCoverage = db.getFlowCoverageStats();
-      this.log(chalk.gray(`  Final coverage: ${finalCoverage.coveragePercentage.toFixed(1)}%`));
+      return groupings.length;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isJson) {
+        this.log(chalk.yellow(`  Grouping failed: ${message}`));
+      }
+      return 0;
     }
-
-    return { iterations: iteration };
   }
 
   /**
-   * Persist a flow to the database.
+   * Generate flow groupings using LLM.
+   * Asks the LLM to group leaf flows and list them in execution order.
    */
-  private persistFlow(db: IndexDatabase, flow: ParsedFlow, isSubflow: boolean): number {
-    // Get entry point ID from first definition step
-    let entryPointId: number | undefined;
-    for (const step of flow.steps) {
-      if (step.type === 'definition' && step.id) {
-        entryPointId = step.id;
-        break;
-      }
+  private async generateFlowGroupings(
+    leafFlows: Flow[],
+    model: string
+  ): Promise<FlowGrouping[]> {
+    const systemPrompt = `You are a software architect grouping related module transitions into higher-level business flows.
+
+Analyze the leaf flows (module-to-module transitions) and group them into logical parent flows that represent:
+- Feature flows (e.g., "Authentication", "PaymentProcessing")
+- Domain operations (e.g., "UserManagement", "OrderFulfillment")
+- Technical concerns (e.g., "DataValidation", "ErrorHandling")
+
+Output format - respond with ONLY a CSV table:
+
+\`\`\`csv
+name,slug,description,domain,ordered_leaf_flows
+"Authentication","authentication","User authentication and session management","auth","validate-credentials,check-permissions,create-session"
+"PaymentProcessing","payment-processing","Payment validation and processing","payments","validate-payment,process-charge,update-balance"
+\`\`\`
+
+IMPORTANT Guidelines:
+- Group flows that work together to accomplish a business goal
+- Name groups with PascalCase describing the feature/domain
+- Include 2-6 related leaf flows per group
+- **List member flows IN EXECUTION ORDER (first to last)** - the order matters!
+- Leaf flows can appear in multiple groups if they're truly shared
+- Leave ungroupable flows for the next phase`;
+
+    const userPrompt = `## Leaf Flows to Group (${leafFlows.length})
+
+${leafFlows.map(f => `- ${f.slug}: ${f.name}${f.semantic ? ` - "${f.semantic}"` : ''}`).join('\n')}
+
+Group these into logical parent flows in CSV format. List member flows in their execution order.`;
+
+    const response = await LLMist.complete(userPrompt, {
+      model,
+      systemPrompt,
+      temperature: 0,
+    });
+
+    return this.parseGroupingCSV(response);
+  }
+
+  /**
+   * Parse grouping CSV response.
+   */
+  private parseGroupingCSV(response: string): FlowGrouping[] {
+    const results: FlowGrouping[] = [];
+
+    const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/) ||
+      response.match(/```\n([\s\S]*?)\n```/);
+    const csvContent = csvMatch ? csvMatch[1] : response;
+
+    const lines = csvContent.split('\n').filter(l => l.trim() && !l.startsWith('name,'));
+
+    for (const line of lines) {
+      const fields = this.parseCSVLine(line);
+      if (fields.length < 5) continue;
+
+      const [name, slug, description, domain, orderedLeafFlowsStr] = fields;
+
+      results.push({
+        name: name.trim().replace(/"/g, ''),
+        slug: slug.trim().replace(/"/g, ''),
+        description: description.trim().replace(/"/g, ''),
+        domain: domain.trim().replace(/"/g, '') || null,
+        orderedLeafFlowSlugs: orderedLeafFlowsStr.split(',').map(s => s.trim().replace(/"/g, '')),
+      });
     }
 
-    if (!entryPointId) {
-      throw new Error(`Flow ${flow.name} has no entry point`);
-    }
+    return results;
+  }
 
-    // Insert flow
-    const flowId = db.insertFlow(
-      flow.name,
-      entryPointId,
-      flow.description,
-      flow.domain ?? undefined
+  /**
+   * Phase 3: Create root-level user journey flows.
+   * LLM combines parent flows into user-story-level flows.
+   * Parent flows are reparented under their assigned root flows.
+   */
+  private async runRootFlowPhase(
+    db: IndexDatabase,
+    model: string,
+    isJson: boolean,
+    verbose: boolean,
+    dryRun: boolean
+  ): Promise<number> {
+    // Get parent flows that haven't been assigned to a root yet
+    // After Phase 2, parent flows are at depth 0 (orphaned)
+    const allFlows = db.getAllFlows();
+    const parentFlows = allFlows.filter(f =>
+      f.depth === 0 &&
+      f.fromModuleId === null &&  // Not a leaf flow
+      f.toModuleId === null
     );
 
-    // Set metadata
-    if (isSubflow) {
-      db.setFlowMetadata(flowId, 'is_subflow', 'true');
+    // Also check for parent flows at depth 1 if they exist under a temp root
+    const parentFlowsDepth1 = allFlows.filter(f =>
+      f.depth === 1 &&
+      f.fromModuleId === null &&
+      f.toModuleId === null
+    );
+
+    const candidateParentFlows = parentFlows.length > 0 ? parentFlows : parentFlowsDepth1;
+
+    if (candidateParentFlows.length === 0) {
+      if (!isJson && verbose) {
+        this.log(chalk.gray('  No parent flows to combine into root flows'));
+      }
+      return 0;
     }
-    if (flow.isComposite) {
-      db.setFlowMetadata(flowId, 'is_composite', 'true');
+
+    if (!isJson && verbose) {
+      this.log(chalk.gray(`  Analyzing ${candidateParentFlows.length} parent flows for root-level journeys...`));
     }
 
-    // Add steps
-    const subflowSteps: Array<{ order: number; flowName: string }> = [];
+    // Build a map of slug to flow for lookup
+    const slugToFlow = new Map<string, Flow>();
+    for (const flow of candidateParentFlows) {
+      slugToFlow.set(flow.slug, flow);
+    }
 
-    for (const step of flow.steps) {
-      if (step.type === 'definition' && step.id) {
-        const module = db.getDefinitionModule(step.id);
-        db.addFlowStep(
-          flowId,
-          step.order,
-          step.id,
-          module?.module.id,
-          undefined // Layer is no longer part of module tree
-        );
-      } else if (step.type === 'subflow' && step.flowName) {
-        // Track for later composition insertion
-        subflowSteps.push({ order: step.order, flowName: step.flowName });
+    try {
+      const rootFlowSuggestions = await this.generateRootFlows(candidateParentFlows, model);
 
-        // Add a placeholder step (using the subflow's entry point)
-        const subflowDb = db.getFlows().find(f => f.name === step.flowName);
-        if (subflowDb) {
-          const module = db.getDefinitionModule(subflowDb.entryPointId);
-          db.addFlowStep(
-            flowId,
-            step.order,
-            subflowDb.entryPointId,
-            module?.module.id,
-            undefined // Layer is no longer part of module tree
-          );
+      if (!dryRun && rootFlowSuggestions.length > 0) {
+        let reparentedCount = 0;
+
+        for (const rootSuggestion of rootFlowSuggestions) {
+          // Create root flow
+          const rootFlowId = db.insertFlow(null, rootSuggestion.slug, rootSuggestion.name, {
+            description: rootSuggestion.description,
+          });
+
+          // Find and reparent parent flows under this root in order
+          const parentFlowIds: number[] = [];
+          for (const parentSlug of rootSuggestion.orderedParentFlowSlugs) {
+            const parent = slugToFlow.get(parentSlug);
+            if (parent) {
+              parentFlowIds.push(parent.id);
+            } else if (verbose && !isJson) {
+              this.log(chalk.yellow(`  Warning: Parent flow '${parentSlug}' not found for root '${rootSuggestion.name}'`));
+            }
+          }
+
+          // Reparent parent flows under the root in the order specified
+          if (parentFlowIds.length > 0) {
+            db.reparentFlows(parentFlowIds, rootFlowId);
+            reparentedCount += parentFlowIds.length;
+          }
+
+          if (verbose && !isJson) {
+            this.log(chalk.gray(`  Created root flow '${rootSuggestion.name}' with ${parentFlowIds.length} parent flows`));
+          }
         }
+
+        if (!isJson) {
+          this.log(chalk.gray(`  Created ${rootFlowSuggestions.length} root flows, reparented ${reparentedCount} parent flows`));
+        }
+      } else if (!isJson) {
+        this.log(chalk.gray(`  Would create ${rootFlowSuggestions.length} root-level user journeys`));
       }
+
+      return rootFlowSuggestions.length;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isJson) {
+        this.log(chalk.yellow(`  Root flow generation failed: ${message}`));
+      }
+      return 0;
+    }
+  }
+
+  /**
+   * Generate root-level flows using LLM.
+   * Asks the LLM to combine parent flows into user journeys with execution order.
+   */
+  private async generateRootFlows(
+    parentFlows: Flow[],
+    model: string
+  ): Promise<RootFlowSuggestion[]> {
+    const systemPrompt = `You are a software architect identifying user journeys from feature-level flows.
+
+Analyze the parent flows and identify complete user journeys like:
+- "UserOnboarding": signup → email verification → profile setup
+- "CheckoutProcess": cart review → payment → confirmation
+- "ContentPublishing": draft → review → publish → notify
+
+Output format - respond with ONLY a CSV table:
+
+\`\`\`csv
+name,slug,description,ordered_parent_flows
+"UserOnboarding","user-onboarding","Complete new user signup journey from registration to active account","authentication,profile-setup,notification"
+\`\`\`
+
+IMPORTANT Guidelines:
+- Focus on end-to-end user experiences
+- Each journey should tell a complete user story
+- **List parent flows IN JOURNEY ORDER (first to last)** - the sequence matters!
+- Include 2-5 parent flows per journey
+- Parent flows can appear in multiple journeys if they're truly shared`;
+
+    const userPrompt = `## Parent Flows (${parentFlows.length})
+
+${parentFlows.map(f => `- ${f.slug}: ${f.name}${f.description ? ` - "${f.description}"` : ''}`).join('\n')}
+
+Identify user journeys combining these flows in CSV format. List parent flows in their journey sequence order.`;
+
+    const response = await LLMist.complete(userPrompt, {
+      model,
+      systemPrompt,
+      temperature: 0,
+    });
+
+    const results: RootFlowSuggestion[] = [];
+
+    const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/) ||
+      response.match(/```\n([\s\S]*?)\n```/);
+    const csvContent = csvMatch ? csvMatch[1] : response;
+
+    const lines = csvContent.split('\n').filter(l => l.trim() && !l.startsWith('name,'));
+
+    for (const line of lines) {
+      const fields = this.parseCSVLine(line);
+      if (fields.length < 4) continue;
+
+      const [name, slug, description, orderedParentFlowsStr] = fields;
+
+      results.push({
+        name: name.trim().replace(/"/g, ''),
+        slug: slug.trim().replace(/"/g, ''),
+        description: description.trim().replace(/"/g, ''),
+        orderedParentFlowSlugs: orderedParentFlowsStr.split(',').map(s => s.trim().replace(/"/g, '')),
+      });
     }
 
-    // Insert compositions
-    for (const { order, flowName } of subflowSteps) {
-      const subflowDb = db.getFlows().find(f => f.name === flowName);
-      if (subflowDb) {
-        const reason = flow.subflowReasons.get(order);
-        db.insertFlowComposition(
-          flowId,
-          subflowDb.id,
-          order,
-          'includes' as FlowCompositionRelationship,
-          reason
-        );
+    return results;
+  }
+
+  /**
+   * Parse a CSV line handling quoted fields.
+   */
+  private parseCSVLine(line: string): string[] {
+    const fields: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        fields.push(current);
+        current = '';
+      } else {
+        current += char;
       }
     }
+    fields.push(current);
 
-    return flowId;
+    return fields;
+  }
+
+  /**
+   * Convert to PascalCase.
+   */
+  private toPascalCase(str: string): string {
+    return str
+      .replace(/[-_](.)/g, (_, c) => c.toUpperCase())
+      .replace(/^(.)/, (_, c) => c.toUpperCase());
   }
 }
