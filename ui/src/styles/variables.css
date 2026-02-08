@@ -1,0 +1,105 @@
+/* CSS Variables for theming */
+:root {
+  /* Background colors */
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #252526;
+  --bg-tertiary: #2d2d2d;
+  --bg-elevated: #3c3c3c;
+  --bg-hover: #2d2d2d;
+
+  /* Border colors */
+  --border-primary: #3c3c3c;
+  --border-secondary: #4a4a4a;
+  --border-highlight: #4fc1ff;
+
+  /* Text colors */
+  --text-primary: #d4d4d4;
+  --text-secondary: #e0e0e0;
+  --text-muted: #858585;
+  --text-dimmed: #666;
+
+  /* Accent colors */
+  --accent-blue: #4fc1ff;
+  --accent-green: #6a9955;
+  --accent-orange: #ce9178;
+  --accent-purple: #c586c0;
+  --accent-yellow: #dcdcaa;
+
+  /* Kind colors */
+  --kind-function: #3d5a80;
+  --kind-function-text: #a8d0e6;
+  --kind-class: #5a3d80;
+  --kind-class-text: #d0a8e6;
+  --kind-interface: #3d8050;
+  --kind-interface-text: #a8e6b4;
+  --kind-type: #806a3d;
+  --kind-type-text: #e6d4a8;
+  --kind-variable: #803d3d;
+  --kind-variable-text: #e6a8a8;
+  --kind-enum: #3d6880;
+  --kind-enum-text: #a8cce6;
+  --kind-method: #4a6670;
+  --kind-method-text: #b8d4dc;
+
+  /* Layer colors */
+  --layer-controller: #3d5a80;
+  --layer-controller-text: #a8d0e6;
+  --layer-service: #5a3d80;
+  --layer-service-text: #d0a8e6;
+  --layer-repository: #3d8050;
+  --layer-repository-text: #a8e6b4;
+  --layer-adapter: #806a3d;
+  --layer-adapter-text: #e6d4a8;
+  --layer-utility: #4a6670;
+  --layer-utility-text: #b8d4dc;
+  --layer-default: #4a4a4a;
+
+  /* Hierarchy colors */
+  --hierarchy-directory: #2d4a5a;
+  --hierarchy-file: #3d4a5a;
+
+  /* Domain tag colors */
+  --domain-bg: #2d4a5a;
+  --domain-text: #8cc4d4;
+
+  /* Pure/Side effects colors */
+  --pure-bg: #2d5a3d;
+  --pure-text: #8cd4a8;
+  --side-effects-bg: #5a3d2d;
+  --side-effects-text: #d4a88c;
+
+  /* Shadows */
+  --shadow-tooltip: 0 2px 8px rgba(0, 0, 0, 0.3);
+
+  /* Transitions */
+  --transition-fast: 0.2s;
+  --transition-normal: 0.3s;
+
+  /* Font families */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  --font-mono: 'SF Mono', Monaco, Consolas, monospace;
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 20px;
+
+  /* Border radius */
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-pill: 10px;
+  --radius-full: 50%;
+
+  /* Flow colors palette */
+  --flow-color-1: #4fc1ff;
+  --flow-color-2: #ce9178;
+  --flow-color-3: #6a9955;
+  --flow-color-4: #c586c0;
+  --flow-color-5: #dcdcaa;
+  --flow-color-6: #9cdcfe;
+  --flow-color-7: #d7ba7d;
+  --flow-color-8: #b5cea8;
+}

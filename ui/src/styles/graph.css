@@ -1,0 +1,273 @@
+/* Force graph node styles */
+.node circle {
+  cursor: pointer;
+  transition: stroke-width var(--transition-fast);
+}
+
+.node circle:hover {
+  stroke-width: 3px;
+}
+
+.node text {
+  font-size: 10px;
+  fill: var(--text-primary);
+  pointer-events: none;
+}
+
+.node.greyed-out circle {
+  opacity: 0.3;
+}
+
+.node.greyed-out text {
+  opacity: 0.4;
+}
+
+/* Graph links */
+.link {
+  stroke-opacity: 0.6;
+  fill: none;
+}
+
+.link-label {
+  font-size: 9px;
+  fill: var(--text-muted);
+  pointer-events: none;
+}
+
+/* Arrow marker */
+marker path {
+  fill: var(--border-secondary);
+}
+
+/* Tree styles */
+.tree-link {
+  fill: none;
+  stroke: var(--border-secondary);
+  stroke-width: 1.5;
+}
+
+.tree-node {
+  cursor: pointer;
+}
+
+.tree-node circle {
+  transition: stroke-width var(--transition-fast);
+}
+
+.tree-node:hover circle {
+  stroke-width: 3px;
+}
+
+.tree-node text {
+  font-size: 10px;
+  fill: var(--text-primary);
+  pointer-events: none;
+}
+
+.tree-node.collapsed circle {
+  stroke-dasharray: 3,2;
+}
+
+/* DAG node styles */
+.dag-node {
+  cursor: pointer;
+}
+
+.dag-node rect {
+  rx: 4;
+  ry: 4;
+  stroke-width: 2;
+  transition: stroke-width var(--transition-fast);
+}
+
+.dag-node:hover rect {
+  stroke-width: 3;
+}
+
+.dag-node text {
+  font-size: 11px;
+  fill: var(--text-primary);
+  pointer-events: none;
+}
+
+.dag-node.entry-point rect {
+  stroke: var(--accent-blue);
+  stroke-width: 3;
+}
+
+.dag-node.entry-point text.entry-badge {
+  fill: var(--accent-blue);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+/* Layer colors for DAG nodes */
+.dag-node.layer-controller rect { fill: var(--layer-controller); stroke: #5a7a9a; }
+.dag-node.layer-service rect { fill: var(--layer-service); stroke: #7a5a9a; }
+.dag-node.layer-repository rect { fill: var(--layer-repository); stroke: #5a9a6a; }
+.dag-node.layer-adapter rect { fill: var(--layer-adapter); stroke: #9a8a5a; }
+.dag-node.layer-utility rect { fill: var(--layer-utility); stroke: #6a8690; }
+.dag-node.layer-default rect { fill: var(--layer-default); stroke: #6a6a6a; }
+
+/* DAG links */
+.dag-link {
+  fill: none;
+  stroke: var(--border-secondary);
+  stroke-width: 2;
+  stroke-opacity: 0.8;
+}
+
+.dag-link:hover {
+  stroke: #6a6a6a;
+  stroke-width: 3;
+}
+
+/* Card DAG container */
+.card-dag-container {
+  margin-top: var(--spacing-lg);
+  border-top: 1px solid var(--border-primary);
+  padding-top: var(--spacing-md);
+  display: none;
+}
+
+.card.expanded .card-dag-container {
+  display: block;
+}
+
+.card-dag-container h4 {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: var(--spacing-sm);
+}
+
+.card-dag-svg-container {
+  position: relative;
+  width: 100%;
+  height: 280px;
+  background: var(--bg-primary);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.card-dag-svg-container svg {
+  width: 100%;
+  height: 100%;
+}
+
+.card-dag-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Nested Module Boxes */
+.module-box {
+  cursor: pointer;
+}
+
+.module-box > rect {
+  rx: 8;
+  ry: 8;
+  transition: stroke var(--transition-fast), stroke-width var(--transition-fast);
+}
+
+.module-box:hover > rect {
+  stroke-width: 3;
+}
+
+.module-box.highlighted > rect {
+  stroke-width: 3;
+  filter: brightness(1.2);
+}
+
+/* Depth-based colors for nested boxes */
+.module-box.depth-0 > rect { fill: #1a2332; stroke: #3d5a80; }
+.module-box.depth-1 > rect { fill: #1e2a38; stroke: #4a6fa5; }
+.module-box.depth-2 > rect { fill: #232f3e; stroke: #5885af; }
+.module-box.depth-3 > rect { fill: #283544; stroke: #6699cc; }
+.module-box.depth-4 > rect { fill: #2d3b4a; stroke: #77aadd; }
+
+.module-box-header {
+  font-size: 12px;
+  fill: var(--text-primary);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.module-box-header.depth-0 { font-size: 16px; fill: var(--text-secondary); }
+.module-box-header.depth-1 { font-size: 14px; fill: var(--text-primary); }
+.module-box-header.depth-2 { font-size: 12px; fill: #c0c0c0; }
+.module-box-header.depth-3 { font-size: 11px; fill: #b0b0b0; }
+
+.module-box-count {
+  font-size: 9px;
+  fill: var(--text-muted);
+  pointer-events: none;
+}
+
+/* Leaf module (no children) */
+.module-box.leaf > rect {
+  fill: #2d3b4a;
+  stroke: #5885af;
+}
+
+.module-box.leaf .module-box-header {
+  font-size: 10px;
+  fill: #b0b0b0;
+}
+
+/* Dimmed modules (not part of selected flow) */
+.module-box.module-dimmed rect {
+  opacity: 0.3;
+}
+
+.module-box.module-dimmed text {
+  opacity: 0.3;
+}
+
+.module-box.module-dimmed:hover rect,
+.module-box.module-dimmed:hover text {
+  opacity: 0.5;
+}
+
+/* Flow Arrows */
+.flow-arrow {
+  fill: none;
+  stroke-width: 3;
+  stroke-opacity: 0.8;
+  pointer-events: stroke;
+  cursor: pointer;
+  transition: stroke-opacity var(--transition-fast), stroke-width var(--transition-fast);
+}
+
+.flow-arrow:hover {
+  stroke-opacity: 1;
+  stroke-width: 4;
+}
+
+.flow-arrow-label {
+  font-size: 10px;
+  fill: var(--text-primary);
+  pointer-events: none;
+  text-shadow: 0 0 3px var(--bg-primary), 0 0 3px var(--bg-primary);
+}
+
+.flow-step-number {
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  text-shadow: 0 0 4px var(--bg-primary), 0 0 4px var(--bg-primary), 0 0 4px var(--bg-primary);
+}
+
+/* Dimmed arrows when hovering over a specific step */
+.flow-arrow.arrow-dimmed {
+  stroke-opacity: 0.2;
+}
+
+.flow-step-number.number-dimmed {
+  opacity: 0.2;
+}

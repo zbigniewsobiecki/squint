@@ -1,0 +1,11 @@
+pre-commit:
+  parallel: true
+  commands:
+    typecheck:
+      glob: "*.{ts,tsx}"
+      run: pnpm run build:server
+    typecheck-ui:
+      glob: "ui/**/*.{ts,tsx}"
+      run: cd ui && pnpm run build
+    test:
+      run: pnpm test

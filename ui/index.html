@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ATS Symbol Graph</title>
+</head>
+<body>
+  <div id="app">
+    <div class="container">
+      <header>
+        <h1>ATS Symbol Graph</h1>
+        <div class="view-toggle">
+          <button class="view-btn active" data-view="force">Force</button>
+          <button class="view-btn" data-view="sunburst">Hierarchy</button>
+          <button class="view-btn" data-view="modules">Modules</button>
+          <button class="view-btn" data-view="flows">Flows</button>
+        </div>
+        <div class="relationship-filters" id="relationship-filters">
+          <span style="color: var(--text-muted); font-size: 11px;">Group by:</span>
+          <div class="filter-chip active" data-type="structure">
+            <span class="chip-dot" style="background: #6a9955;"></span>
+            <span>files</span>
+          </div>
+          <div class="filter-chip" data-type="extends">
+            <span class="chip-dot" style="background: #4a9eff;"></span>
+            <span>extends</span>
+          </div>
+          <div class="filter-chip" data-type="implements">
+            <span class="chip-dot" style="background: #4ad4d4;"></span>
+            <span>implements</span>
+          </div>
+          <div class="filter-chip" data-type="calls">
+            <span class="chip-dot" style="background: #ce9178;"></span>
+            <span>calls</span>
+          </div>
+          <div class="filter-chip" data-type="imports">
+            <span class="chip-dot" style="background: #9178ce;"></span>
+            <span>imports</span>
+          </div>
+          <div class="filter-chip" data-type="uses">
+            <span class="chip-dot" style="background: #858585;"></span>
+            <span>uses</span>
+          </div>
+        </div>
+        <div class="stats" id="stats">
+          <span class="stat">Symbols: <span class="stat-value" id="stat-symbols">-</span></span>
+          <span class="stat">Annotated: <span class="stat-value annotated" id="stat-annotated">-</span></span>
+          <span class="stat">Relationships: <span class="stat-value" id="stat-relationships">-</span></span>
+        </div>
+      </header>
+
+      <div class="graph-container" id="graph-container">
+        <svg id="graph-svg"></svg>
+        <div class="loading" id="loading">Loading symbol graph...</div>
+      </div>
+
+      <div class="legend" id="legend">
+        <div class="legend-title">Symbol Types</div>
+        <div class="legend-item">
+          <div class="legend-circle" style="background: #3d5a80;"></div>
+          <span>function</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-circle" style="background: #5a3d80;"></div>
+          <span>class</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-circle" style="background: #3d8050;"></div>
+          <span>interface</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-circle" style="background: #806a3d;"></div>
+          <span>type</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-circle greyed" style="background: #666;"></div>
+          <span>no annotations</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tooltip" id="tooltip" style="display: none;"></div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

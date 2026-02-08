@@ -9,13 +9,18 @@
     "ats": "./bin/run.js"
   },
   "scripts": {
-    "build": "tsc",
-    "clean": "rm -rf dist",
+    "build": "tsc && pnpm run build:ui",
+    "build:server": "tsc",
+    "build:ui": "cd ui && pnpm run build",
+    "clean": "rm -rf dist ui/dist",
     "prepack": "npm run build",
+    "prepare": "lefthook install",
     "start": "node ./bin/run.js",
     "dev": "node ./bin/dev.js",
+    "dev:ui": "cd ui && pnpm run dev",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:all": "pnpm test && cd ui && pnpm test"
   },
   "oclif": {
     "bin": "ats",
@@ -33,7 +38,8 @@
   },
   "files": [
     "/bin",
-    "/dist"
+    "/dist",
+    "/ui/dist"
   ],
   "dependencies": {
     "@oclif/core": "^4.0.0",
@@ -48,6 +54,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "lefthook": "^1.6.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },
