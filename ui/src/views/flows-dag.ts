@@ -354,34 +354,53 @@ function updateFlowArrows(store: Store) {
       const toX = toPos.x + toPos.width / 2;
       const toY = toPos.y + toPos.height / 2;
 
-      // Calculate positions slightly offset from the line endpoints
+      // Calculate curve parameters
       const dx = toX - fromX;
       const dy = toY - fromY;
       const len = Math.sqrt(dx * dx + dy * dy);
-      const offsetRatio = 20 / len; // 20px from endpoints
 
-      const startLabelX = fromX + dx * offsetRatio;
-      const startLabelY = fromY + dy * offsetRatio;
-      const endLabelX = toX - dx * offsetRatio;
-      const endLabelY = toY - dy * offsetRatio;
+      // Midpoint of the line
+      const midX = (fromX + toX) / 2;
+      const midY = (fromY + toY) / 2;
 
-      g.append('line')
+      // Perpendicular offset based on step number for separation
+      const perpX = -dy / len;  // perpendicular direction
+      const perpY = dx / len;
+      const curveOffset = (stepNum - 1) * 15;  // 15px offset per step
+
+      const ctrlX = midX + perpX * curveOffset;
+      const ctrlY = midY + perpY * curveOffset;
+
+      // Helper function to get point along quadratic bezier
+      function getQuadraticPoint(t: number, x0: number, y0: number, cx: number, cy: number, x1: number, y1: number) {
+        const mt = 1 - t;
+        return {
+          x: mt * mt * x0 + 2 * mt * t * cx + t * t * x1,
+          y: mt * mt * y0 + 2 * mt * t * cy + t * t * y1
+        };
+      }
+
+      // Position labels at 15% and 85% along the curve
+      const startLabel = getQuadraticPoint(0.15, fromX, fromY, ctrlX, ctrlY, toX, toY);
+      const endLabel = getQuadraticPoint(0.85, fromX, fromY, ctrlX, ctrlY, toX, toY);
+
+      // Draw quadratic bezier curve
+      g.append('path')
         .attr('class', 'flow-arrow')
         .attr('data-step-idx', stepNum - 1)
-        .attr('x1', fromX)
-        .attr('y1', fromY)
-        .attr('x2', toX)
-        .attr('y2', toY)
+        .attr('d', `M${fromX},${fromY} Q${ctrlX},${ctrlY} ${toX},${toY}`)
         .attr('stroke', color)
         .attr('stroke-width', 3)
-        .attr('marker-end', 'url(#arrowhead)');
+        .attr('fill', 'none')
+        .attr('marker-end', 'url(#arrowhead)')
+        .style('color', color);  // for marker fill inheritance
 
       // Add step number at start of arrow
       g.append('text')
         .attr('class', 'flow-step-number')
         .attr('data-step-idx', stepNum - 1)
-        .attr('x', startLabelX)
-        .attr('y', startLabelY)
+        .attr('x', startLabel.x)
+        .attr('y', startLabel.y)
         .attr('text-anchor', 'middle')
         .attr('dominant-baseline', 'middle')
         .attr('fill', color)
@@ -391,8 +410,8 @@ function updateFlowArrows(store: Store) {
       g.append('text')
         .attr('class', 'flow-step-number')
         .attr('data-step-idx', stepNum - 1)
-        .attr('x', endLabelX)
-        .attr('y', endLabelY)
+        .attr('x', endLabel.x)
+        .attr('y', endLabel.y)
         .attr('text-anchor', 'middle')
         .attr('dominant-baseline', 'middle')
         .attr('fill', color)
