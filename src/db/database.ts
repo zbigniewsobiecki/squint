@@ -9,11 +9,21 @@ export {
   type DependencyInfo,
   type ReadySymbolInfo,
   type DependencyWithMetadata,
+  type IncomingDependency,
+  type RelationshipType,
   type RelationshipAnnotation,
   type RelationshipWithDetails,
   type Domain,
   type DomainWithCount,
   type EnhancedRelationshipContext,
+  type ModuleLayer,
+  type Module,
+  type ModuleMember,
+  type ModuleWithMembers,
+  type CallGraphEdge,
+  type Flow,
+  type FlowStep,
+  type FlowWithSteps,
   type IIndexWriter,
   SCHEMA,
   computeHash,
@@ -26,11 +36,18 @@ import {
   type DependencyInfo,
   type ReadySymbolInfo,
   type DependencyWithMetadata,
+  type RelationshipType,
   type RelationshipAnnotation,
   type RelationshipWithDetails,
   type Domain,
   type DomainWithCount,
   type EnhancedRelationshipContext,
+  type ModuleLayer,
+  type Module,
+  type ModuleWithMembers,
+  type CallGraphEdge,
+  type Flow,
+  type FlowWithSteps,
   type IIndexWriter,
   SCHEMA,
 } from './schema.js';
@@ -1192,6 +1209,66 @@ export class IndexDatabase implements IIndexWriter {
   }
 
   /**
+   * Get incoming dependencies - symbols that use this definition.
+   * This finds all definitions that have usages pointing to this definition.
+   */
+  getIncomingDependencies(definitionId: number, limit: number = 5): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    line: number;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT
+        caller.id,
+        caller.name,
+        caller.kind,
+        f.path as filePath,
+        caller.line
+      FROM definitions caller
+      JOIN files f ON caller.file_id = f.id
+      JOIN usages u ON u.line >= caller.line AND u.line <= caller.end_line
+      JOIN symbols s ON u.symbol_id = s.id
+      WHERE s.definition_id = ?
+        AND caller.id != ?
+        AND (
+          s.reference_id IN (SELECT id FROM imports WHERE from_file_id = caller.file_id)
+          OR s.file_id = caller.file_id
+        )
+      ORDER BY f.path, caller.line
+      LIMIT ?
+    `);
+    return stmt.all(definitionId, definitionId, limit) as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      line: number;
+    }>;
+  }
+
+  /**
+   * Get count of incoming dependencies - how many symbols use this definition.
+   */
+  getIncomingDependencyCount(definitionId: number): number {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(DISTINCT caller.id) as count
+      FROM definitions caller
+      JOIN usages u ON u.line >= caller.line AND u.line <= caller.end_line
+      JOIN symbols s ON u.symbol_id = s.id
+      WHERE s.definition_id = ?
+        AND caller.id != ?
+        AND (
+          s.reference_id IN (SELECT id FROM imports WHERE from_file_id = caller.file_id)
+          OR s.file_id = caller.file_id
+        )
+    `);
+    const row = stmt.get(definitionId, definitionId) as { count: number };
+    return row.count;
+  }
+
+  /**
    * Get all symbols that a definition depends on (uses within its line range).
    * This finds usages within the definition's code that reference other definitions.
    */
@@ -1492,23 +1569,45 @@ export class IndexDatabase implements IIndexWriter {
   // ============================================
 
   /**
+   * Ensure the relationship_type column exists (for existing databases).
+   * Called automatically by relationship methods to support legacy databases.
+   */
+  private ensureRelationshipTypeColumn(): void {
+    try {
+      // Check if column exists by trying to select it
+      this.db.prepare('SELECT relationship_type FROM relationship_annotations LIMIT 1').get();
+    } catch {
+      // Column doesn't exist, add it
+      this.db.exec(`ALTER TABLE relationship_annotations ADD COLUMN relationship_type TEXT NOT NULL DEFAULT 'uses'`);
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_relationship_annotations_type ON relationship_annotations(relationship_type)`);
+    }
+  }
+
+  /**
    * Set (insert or update) a semantic annotation for a relationship between two definitions.
    */
-  setRelationshipAnnotation(fromDefinitionId: number, toDefinitionId: number, semantic: string): void {
+  setRelationshipAnnotation(
+    fromDefinitionId: number,
+    toDefinitionId: number,
+    semantic: string,
+    relationshipType: RelationshipType = 'uses'
+  ): void {
+    this.ensureRelationshipTypeColumn();
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO relationship_annotations (from_definition_id, to_definition_id, semantic, created_at)
-      VALUES (?, ?, ?, datetime('now'))
+      INSERT OR REPLACE INTO relationship_annotations (from_definition_id, to_definition_id, relationship_type, semantic, created_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
     `);
-    stmt.run(fromDefinitionId, toDefinitionId, semantic);
+    stmt.run(fromDefinitionId, toDefinitionId, relationshipType, semantic);
   }
 
   /**
    * Get a relationship annotation between two definitions.
    */
   getRelationshipAnnotation(fromDefinitionId: number, toDefinitionId: number): RelationshipAnnotation | null {
+    this.ensureRelationshipTypeColumn();
     const stmt = this.db.prepare(`
       SELECT id, from_definition_id as fromDefinitionId, to_definition_id as toDefinitionId,
-             semantic, created_at as createdAt
+             relationship_type as relationshipType, semantic, created_at as createdAt
       FROM relationship_annotations
       WHERE from_definition_id = ? AND to_definition_id = ?
     `);
@@ -1532,6 +1631,7 @@ export class IndexDatabase implements IIndexWriter {
    * Get all relationship annotations from a specific definition.
    */
   getRelationshipsFrom(fromDefinitionId: number): RelationshipWithDetails[] {
+    this.ensureRelationshipTypeColumn();
     const stmt = this.db.prepare(`
       SELECT
         ra.id,
@@ -1545,6 +1645,7 @@ export class IndexDatabase implements IIndexWriter {
         td.kind as toKind,
         tf.path as toFilePath,
         td.line as toLine,
+        ra.relationship_type as relationshipType,
         ra.semantic
       FROM relationship_annotations ra
       JOIN definitions fd ON ra.from_definition_id = fd.id
@@ -1561,6 +1662,7 @@ export class IndexDatabase implements IIndexWriter {
    * Get all relationship annotations to a specific definition.
    */
   getRelationshipsTo(toDefinitionId: number): RelationshipWithDetails[] {
+    this.ensureRelationshipTypeColumn();
     const stmt = this.db.prepare(`
       SELECT
         ra.id,
@@ -1574,6 +1676,7 @@ export class IndexDatabase implements IIndexWriter {
         td.kind as toKind,
         tf.path as toFilePath,
         td.line as toLine,
+        ra.relationship_type as relationshipType,
         ra.semantic
       FROM relationship_annotations ra
       JOIN definitions fd ON ra.from_definition_id = fd.id
@@ -1590,6 +1693,7 @@ export class IndexDatabase implements IIndexWriter {
    * Get all relationship annotations.
    */
   getAllRelationshipAnnotations(options?: { limit?: number }): RelationshipWithDetails[] {
+    this.ensureRelationshipTypeColumn();
     const limit = options?.limit ?? 100;
     const stmt = this.db.prepare(`
       SELECT
@@ -1604,6 +1708,7 @@ export class IndexDatabase implements IIndexWriter {
         td.kind as toKind,
         tf.path as toFilePath,
         td.line as toLine,
+        ra.relationship_type as relationshipType,
         ra.semantic
       FROM relationship_annotations ra
       JOIN definitions fd ON ra.from_definition_id = fd.id
@@ -1621,6 +1726,74 @@ export class IndexDatabase implements IIndexWriter {
    */
   getRelationshipAnnotationCount(): number {
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM relationship_annotations');
+    const row = stmt.get() as { count: number };
+    return row.count;
+  }
+
+  /**
+   * Get unannotated inheritance relationships (extends/implements with placeholder semantic).
+   * These are relationships created by createInheritanceRelationships() that need LLM annotation.
+   */
+  getUnannotatedInheritanceRelationships(limit: number = 50): Array<{
+    id: number;
+    fromId: number;
+    fromName: string;
+    fromKind: string;
+    fromFilePath: string;
+    toId: number;
+    toName: string;
+    toKind: string;
+    toFilePath: string;
+    relationshipType: 'extends' | 'implements';
+  }> {
+    this.ensureRelationshipTypeColumn();
+    const stmt = this.db.prepare(`
+      SELECT
+        ra.id,
+        ra.from_definition_id as fromId,
+        fd.name as fromName,
+        fd.kind as fromKind,
+        ff.path as fromFilePath,
+        ra.to_definition_id as toId,
+        td.name as toName,
+        td.kind as toKind,
+        tf.path as toFilePath,
+        ra.relationship_type as relationshipType
+      FROM relationship_annotations ra
+      JOIN definitions fd ON ra.from_definition_id = fd.id
+      JOIN files ff ON fd.file_id = ff.id
+      JOIN definitions td ON ra.to_definition_id = td.id
+      JOIN files tf ON td.file_id = tf.id
+      WHERE ra.semantic = 'PENDING_LLM_ANNOTATION'
+        AND ra.relationship_type IN ('extends', 'implements')
+      ORDER BY ff.path, fd.line
+      LIMIT ?
+    `);
+    return stmt.all(limit) as Array<{
+      id: number;
+      fromId: number;
+      fromName: string;
+      fromKind: string;
+      fromFilePath: string;
+      toId: number;
+      toName: string;
+      toKind: string;
+      toFilePath: string;
+      relationshipType: 'extends' | 'implements';
+    }>;
+  }
+
+  /**
+   * Get count of unannotated inheritance relationships.
+   */
+  getUnannotatedInheritanceRelationshipCount(): number {
+    this.ensureRelationshipTypeColumn();
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM relationship_annotations
+      WHERE semantic = 'PENDING_LLM_ANNOTATION'
+        AND relationship_type IN ('extends', 'implements')
+    `);
     const row = stmt.get() as { count: number };
     return row.count;
   }
@@ -2359,7 +2532,8 @@ export class IndexDatabase implements IIndexWriter {
       if (def.extends_name) {
         const targetId = findTargetDefinition(def.extends_name);
         if (targetId !== null) {
-          this.setRelationshipAnnotation(def.id, targetId, `extends ${def.extends_name}`);
+          // Use placeholder semantic for LLM to annotate later
+          this.setRelationshipAnnotation(def.id, targetId, 'PENDING_LLM_ANNOTATION', 'extends');
           extendsCreated++;
         } else {
           notFound++;
@@ -2373,7 +2547,8 @@ export class IndexDatabase implements IIndexWriter {
           for (const iface of interfaces) {
             const targetId = findTargetDefinition(iface);
             if (targetId !== null) {
-              this.setRelationshipAnnotation(def.id, targetId, `implements ${iface}`);
+              // Use placeholder semantic for LLM to annotate later
+              this.setRelationshipAnnotation(def.id, targetId, 'PENDING_LLM_ANNOTATION', 'implements');
               implementsCreated++;
             } else {
               notFound++;
@@ -2391,7 +2566,8 @@ export class IndexDatabase implements IIndexWriter {
           for (const parent of parents) {
             const targetId = findTargetDefinition(parent);
             if (targetId !== null) {
-              this.setRelationshipAnnotation(def.id, targetId, `extends ${parent}`);
+              // Use placeholder semantic for LLM to annotate later
+              this.setRelationshipAnnotation(def.id, targetId, 'PENDING_LLM_ANNOTATION', 'extends');
               extendsCreated++;
             } else {
               notFound++;
@@ -2497,6 +2673,728 @@ export class IndexDatabase implements IIndexWriter {
       symbols,
       total: countResult.total,
     };
+  }
+
+  // ============================================
+  // Module detection methods
+  // ============================================
+
+  /**
+   * Ensure the modules and module_members tables exist (for existing databases).
+   * Called automatically by module methods to support legacy databases.
+   */
+  private ensureModulesTables(): void {
+    const tableExists = this.db.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='modules'
+    `).get();
+
+    if (!tableExists) {
+      this.db.exec(`
+        CREATE TABLE modules (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          layer TEXT,
+          subsystem TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE module_members (
+          module_id INTEGER NOT NULL,
+          definition_id INTEGER NOT NULL,
+          cohesion REAL,
+          PRIMARY KEY (module_id, definition_id),
+          FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE,
+          FOREIGN KEY (definition_id) REFERENCES definitions(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_module_members_def ON module_members(definition_id);
+      `);
+    }
+  }
+
+  /**
+   * Extract the call graph from the database.
+   * Returns edges weighted by number of call sites between definitions.
+   */
+  getCallGraph(): CallGraphEdge[] {
+    const stmt = this.db.prepare(`
+      SELECT
+        caller.id as from_id,
+        s.definition_id as to_id,
+        COUNT(*) as weight
+      FROM definitions caller
+      JOIN files f ON caller.file_id = f.id
+      JOIN symbols s ON s.file_id = f.id AND s.definition_id IS NOT NULL
+      JOIN usages u ON u.symbol_id = s.id
+      WHERE u.context IN ('call_expression', 'new_expression')
+        AND caller.line <= u.line AND u.line <= caller.end_line
+        AND s.definition_id != caller.id
+      GROUP BY caller.id, s.definition_id
+      UNION ALL
+      SELECT
+        caller.id as from_id,
+        s.definition_id as to_id,
+        COUNT(*) as weight
+      FROM definitions caller
+      JOIN files f ON caller.file_id = f.id
+      JOIN imports i ON i.from_file_id = f.id
+      JOIN symbols s ON s.reference_id = i.id AND s.definition_id IS NOT NULL
+      JOIN usages u ON u.symbol_id = s.id
+      WHERE u.context IN ('call_expression', 'new_expression')
+        AND caller.line <= u.line AND u.line <= caller.end_line
+        AND s.definition_id != caller.id
+      GROUP BY caller.id, s.definition_id
+    `);
+
+    const rows = stmt.all() as Array<{ from_id: number; to_id: number; weight: number }>;
+
+    // Aggregate duplicate edges (from the UNION)
+    const edgeMap = new Map<string, CallGraphEdge>();
+    for (const row of rows) {
+      const key = `${row.from_id}-${row.to_id}`;
+      const existing = edgeMap.get(key);
+      if (existing) {
+        existing.weight += row.weight;
+      } else {
+        edgeMap.set(key, { fromId: row.from_id, toId: row.to_id, weight: row.weight });
+      }
+    }
+
+    return Array.from(edgeMap.values());
+  }
+
+  /**
+   * Insert a new module.
+   */
+  insertModule(
+    name: string,
+    options?: {
+      description?: string;
+      layer?: ModuleLayer;
+      subsystem?: string;
+    }
+  ): number {
+    this.ensureModulesTables();
+    const stmt = this.db.prepare(`
+      INSERT INTO modules (name, description, layer, subsystem)
+      VALUES (?, ?, ?, ?)
+    `);
+    const result = stmt.run(
+      name,
+      options?.description ?? null,
+      options?.layer ?? null,
+      options?.subsystem ?? null
+    );
+    return result.lastInsertRowid as number;
+  }
+
+  /**
+   * Add a member to a module.
+   */
+  addModuleMember(moduleId: number, definitionId: number, confidence?: number): void {
+    this.ensureModulesTables();
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO module_members (module_id, definition_id, confidence)
+      VALUES (?, ?, ?)
+    `);
+    stmt.run(moduleId, definitionId, confidence ?? null);
+  }
+
+  /**
+   * Get all modules.
+   */
+  getModules(): Module[] {
+    this.ensureModulesTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        name,
+        description,
+        layer,
+        subsystem,
+        created_at as createdAt
+      FROM modules
+      ORDER BY name
+    `);
+    return stmt.all() as Module[];
+  }
+
+  /**
+   * Get a module by ID with all its members.
+   */
+  getModuleWithMembers(moduleId: number): ModuleWithMembers | null {
+    this.ensureModulesTables();
+
+    const moduleStmt = this.db.prepare(`
+      SELECT
+        id,
+        name,
+        description,
+        layer,
+        subsystem,
+        created_at as createdAt
+      FROM modules
+      WHERE id = ?
+    `);
+    const module = moduleStmt.get(moduleId) as Module | undefined;
+    if (!module) return null;
+
+    const membersStmt = this.db.prepare(`
+      SELECT
+        mm.definition_id as definitionId,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        mm.confidence
+      FROM module_members mm
+      JOIN definitions d ON mm.definition_id = d.id
+      JOIN files f ON d.file_id = f.id
+      WHERE mm.module_id = ?
+      ORDER BY f.path, d.line
+    `);
+    const members = membersStmt.all(moduleId) as Array<{
+      definitionId: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      confidence: number | null;
+    }>;
+
+    return { ...module, members };
+  }
+
+  /**
+   * Get all modules with their members.
+   */
+  getAllModulesWithMembers(): ModuleWithMembers[] {
+    this.ensureModulesTables();
+
+    const modules = this.getModules();
+    return modules.map(m => {
+      const withMembers = this.getModuleWithMembers(m.id);
+      return withMembers!;
+    });
+  }
+
+  /**
+   * Get module membership for a definition.
+   */
+  getDefinitionModule(definitionId: number): { module: Module; confidence: number | null } | null {
+    this.ensureModulesTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        m.id,
+        m.name,
+        m.description,
+        m.layer,
+        m.subsystem,
+        m.created_at as createdAt,
+        mm.confidence
+      FROM module_members mm
+      JOIN modules m ON mm.module_id = m.id
+      WHERE mm.definition_id = ?
+    `);
+    const row = stmt.get(definitionId) as (Module & { confidence: number | null }) | undefined;
+    if (!row) return null;
+
+    return {
+      module: {
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        layer: row.layer,
+        subsystem: row.subsystem,
+        createdAt: row.createdAt,
+      },
+      confidence: row.confidence,
+    };
+  }
+
+  /**
+   * Get count of modules.
+   */
+  getModuleCount(): number {
+    this.ensureModulesTables();
+    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM modules');
+    const row = stmt.get() as { count: number };
+    return row.count;
+  }
+
+  /**
+   * Update a module's metadata.
+   */
+  updateModule(
+    moduleId: number,
+    updates: {
+      name?: string;
+      description?: string;
+      layer?: ModuleLayer;
+      subsystem?: string;
+    }
+  ): boolean {
+    this.ensureModulesTables();
+
+    const sets: string[] = [];
+    const params: (string | null)[] = [];
+
+    if (updates.name !== undefined) {
+      sets.push('name = ?');
+      params.push(updates.name);
+    }
+    if (updates.description !== undefined) {
+      sets.push('description = ?');
+      params.push(updates.description);
+    }
+    if (updates.layer !== undefined) {
+      sets.push('layer = ?');
+      params.push(updates.layer);
+    }
+    if (updates.subsystem !== undefined) {
+      sets.push('subsystem = ?');
+      params.push(updates.subsystem);
+    }
+
+    if (sets.length === 0) return false;
+
+    params.push(String(moduleId));
+    const stmt = this.db.prepare(`UPDATE modules SET ${sets.join(', ')} WHERE id = ?`);
+    const result = stmt.run(...params);
+    return result.changes > 0;
+  }
+
+  /**
+   * Delete all modules and their memberships.
+   */
+  clearModules(): number {
+    this.ensureModulesTables();
+    const stmt = this.db.prepare('DELETE FROM modules');
+    const result = stmt.run();
+    return result.changes;
+  }
+
+  /**
+   * Get module statistics.
+   */
+  getModuleStats(): {
+    moduleCount: number;
+    memberCount: number;
+    avgMembersPerModule: number;
+    unassignedDefinitions: number;
+  } {
+    this.ensureModulesTables();
+
+    const moduleCount = this.getModuleCount();
+    const memberCountStmt = this.db.prepare('SELECT COUNT(*) as count FROM module_members');
+    const memberCount = (memberCountStmt.get() as { count: number }).count;
+
+    const defCountStmt = this.db.prepare('SELECT COUNT(*) as count FROM definitions');
+    const totalDefinitions = (defCountStmt.get() as { count: number }).count;
+
+    return {
+      moduleCount,
+      memberCount,
+      avgMembersPerModule: moduleCount > 0 ? memberCount / moduleCount : 0,
+      unassignedDefinitions: totalDefinitions - memberCount,
+    };
+  }
+
+  // ============================================
+  // Flow detection methods
+  // ============================================
+
+  /**
+   * Ensure the flows tables exist (for existing databases).
+   */
+  private ensureFlowsTables(): void {
+    const tableExists = this.db.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='flows'
+    `).get();
+
+    if (!tableExists) {
+      this.db.exec(`
+        CREATE TABLE flows (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          entry_point_id INTEGER NOT NULL REFERENCES definitions(id),
+          domain TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE flow_steps (
+          flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+          step_order INTEGER NOT NULL,
+          definition_id INTEGER NOT NULL REFERENCES definitions(id),
+          module_id INTEGER REFERENCES modules(id),
+          layer TEXT,
+          PRIMARY KEY (flow_id, step_order)
+        );
+
+        CREATE INDEX idx_flow_steps_def ON flow_steps(definition_id);
+        CREATE INDEX idx_flows_entry ON flows(entry_point_id);
+      `);
+    }
+  }
+
+  /**
+   * Find entry points (controllers, routes, handlers).
+   * Identifies symbols that are likely entry points based on their role metadata or naming patterns.
+   */
+  getEntryPoints(): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    line: number;
+    domain: string | null;
+  }> {
+    this.ensureFlowsTables();
+    this.ensureModulesTables();
+
+    // Look for symbols with role=controller, or with 'Controller' in name,
+    // or exported functions in route files
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT
+        d.id,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        d.line,
+        dm_domain.value as domain
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      LEFT JOIN definition_metadata dm_role ON dm_role.definition_id = d.id AND dm_role.key = 'role'
+      LEFT JOIN definition_metadata dm_domain ON dm_domain.definition_id = d.id AND dm_domain.key = 'domain'
+      WHERE
+        -- Explicit controller role
+        dm_role.value = 'controller'
+        -- Or Controller/Handler in name (case-sensitive)
+        OR d.name LIKE '%Controller%'
+        OR d.name LIKE '%Handler%'
+        -- Or exported methods in files with route/controller/handler in path
+        OR (
+          d.is_exported = 1
+          AND d.kind IN ('function', 'method', 'class')
+          AND (
+            f.path LIKE '%/routes/%'
+            OR f.path LIKE '%/controllers/%'
+            OR f.path LIKE '%/handlers/%'
+            OR f.path LIKE '%.routes.%'
+            OR f.path LIKE '%.controller.%'
+            OR f.path LIKE '%.handler.%'
+          )
+        )
+      ORDER BY f.path, d.line
+    `);
+
+    const rows = stmt.all() as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      line: number;
+      domain: string | null;
+    }>;
+
+    // Parse domain JSON array and return first domain
+    return rows.map(row => {
+      let domain: string | null = null;
+      if (row.domain) {
+        try {
+          const domains = JSON.parse(row.domain) as string[];
+          domain = domains[0] ?? null;
+        } catch {
+          domain = row.domain;
+        }
+      }
+      return { ...row, domain };
+    });
+  }
+
+  /**
+   * Trace reachable symbols from an entry point using call graph.
+   * Returns definitions reachable via BFS with their depth.
+   */
+  traceFlowFromEntry(
+    entryId: number,
+    maxDepth: number = 15
+  ): Array<{
+    definitionId: number;
+    depth: number;
+    moduleId: number | null;
+    layer: string | null;
+  }> {
+    this.ensureFlowsTables();
+    this.ensureModulesTables();
+
+    // Build call graph adjacency list
+    const edges = this.getCallGraph();
+    const adjacency = new Map<number, number[]>();
+    for (const edge of edges) {
+      if (!adjacency.has(edge.fromId)) {
+        adjacency.set(edge.fromId, []);
+      }
+      adjacency.get(edge.fromId)!.push(edge.toId);
+    }
+
+    // BFS traversal
+    const visited = new Map<number, number>(); // definitionId -> depth
+    const queue: Array<{ id: number; depth: number }> = [{ id: entryId, depth: 0 }];
+
+    while (queue.length > 0) {
+      const { id, depth } = queue.shift()!;
+
+      if (visited.has(id)) continue;
+      if (depth > maxDepth) continue;
+
+      visited.set(id, depth);
+
+      const neighbors = adjacency.get(id) ?? [];
+      for (const neighbor of neighbors) {
+        if (!visited.has(neighbor)) {
+          queue.push({ id: neighbor, depth: depth + 1 });
+        }
+      }
+    }
+
+    // Get module and layer info for each visited definition
+    const result: Array<{
+      definitionId: number;
+      depth: number;
+      moduleId: number | null;
+      layer: string | null;
+    }> = [];
+
+    for (const [definitionId, depth] of visited) {
+      // Get module membership
+      const moduleInfo = this.getDefinitionModule(definitionId);
+      result.push({
+        definitionId,
+        depth,
+        moduleId: moduleInfo?.module.id ?? null,
+        layer: moduleInfo?.module.layer ?? null,
+      });
+    }
+
+    // Sort by depth
+    result.sort((a, b) => a.depth - b.depth);
+
+    return result;
+  }
+
+  /**
+   * Insert a new flow.
+   */
+  insertFlow(
+    name: string,
+    entryPointId: number,
+    description?: string,
+    domain?: string
+  ): number {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      INSERT INTO flows (name, entry_point_id, description, domain)
+      VALUES (?, ?, ?, ?)
+    `);
+    const result = stmt.run(name, entryPointId, description ?? null, domain ?? null);
+    return result.lastInsertRowid as number;
+  }
+
+  /**
+   * Add a step to a flow.
+   */
+  addFlowStep(
+    flowId: number,
+    stepOrder: number,
+    definitionId: number,
+    moduleId?: number,
+    layer?: string
+  ): void {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO flow_steps (flow_id, step_order, definition_id, module_id, layer)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    stmt.run(flowId, stepOrder, definitionId, moduleId ?? null, layer ?? null);
+  }
+
+  /**
+   * Get all flows.
+   */
+  getFlows(): Flow[] {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        name,
+        description,
+        entry_point_id as entryPointId,
+        domain,
+        created_at as createdAt
+      FROM flows
+      ORDER BY name
+    `);
+    return stmt.all() as Flow[];
+  }
+
+  /**
+   * Get a flow with all its steps.
+   */
+  getFlowWithSteps(flowId: number): FlowWithSteps | null {
+    this.ensureFlowsTables();
+
+    // Get flow
+    const flowStmt = this.db.prepare(`
+      SELECT
+        f.id,
+        f.name,
+        f.description,
+        f.entry_point_id as entryPointId,
+        f.domain,
+        f.created_at as createdAt,
+        d.name as entryPointName,
+        d.kind as entryPointKind,
+        files.path as entryPointFilePath
+      FROM flows f
+      JOIN definitions d ON f.entry_point_id = d.id
+      JOIN files ON d.file_id = files.id
+      WHERE f.id = ?
+    `);
+    const flow = flowStmt.get(flowId) as (Flow & {
+      entryPointName: string;
+      entryPointKind: string;
+      entryPointFilePath: string;
+    }) | undefined;
+
+    if (!flow) return null;
+
+    // Get steps
+    const stepsStmt = this.db.prepare(`
+      SELECT
+        fs.step_order as stepOrder,
+        fs.definition_id as definitionId,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        fs.module_id as moduleId,
+        m.name as moduleName,
+        fs.layer
+      FROM flow_steps fs
+      JOIN definitions d ON fs.definition_id = d.id
+      JOIN files f ON d.file_id = f.id
+      LEFT JOIN modules m ON fs.module_id = m.id
+      WHERE fs.flow_id = ?
+      ORDER BY fs.step_order
+    `);
+    const steps = stepsStmt.all(flowId) as Array<{
+      stepOrder: number;
+      definitionId: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      moduleId: number | null;
+      moduleName: string | null;
+      layer: string | null;
+    }>;
+
+    return { ...flow, steps };
+  }
+
+  /**
+   * Get all flows with their steps.
+   */
+  getAllFlowsWithSteps(): FlowWithSteps[] {
+    this.ensureFlowsTables();
+    const flows = this.getFlows();
+    return flows.map(f => this.getFlowWithSteps(f.id)!).filter(f => f !== null);
+  }
+
+  /**
+   * Get count of flows.
+   */
+  getFlowCount(): number {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM flows');
+    const row = stmt.get() as { count: number };
+    return row.count;
+  }
+
+  /**
+   * Delete all flows.
+   */
+  clearFlows(): number {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare('DELETE FROM flows');
+    const result = stmt.run();
+    return result.changes;
+  }
+
+  /**
+   * Get flow statistics.
+   */
+  getFlowStats(): {
+    flowCount: number;
+    totalSteps: number;
+    avgStepsPerFlow: number;
+    modulesCovered: number;
+  } {
+    this.ensureFlowsTables();
+
+    const flowCount = this.getFlowCount();
+    const stepsStmt = this.db.prepare('SELECT COUNT(*) as count FROM flow_steps');
+    const totalSteps = (stepsStmt.get() as { count: number }).count;
+
+    const modulesStmt = this.db.prepare(`
+      SELECT COUNT(DISTINCT module_id) as count
+      FROM flow_steps
+      WHERE module_id IS NOT NULL
+    `);
+    const modulesCovered = (modulesStmt.get() as { count: number }).count;
+
+    return {
+      flowCount,
+      totalSteps,
+      avgStepsPerFlow: flowCount > 0 ? totalSteps / flowCount : 0,
+      modulesCovered,
+    };
+  }
+
+  /**
+   * Update a flow's metadata.
+   */
+  updateFlow(
+    flowId: number,
+    updates: {
+      name?: string;
+      description?: string;
+      domain?: string;
+    }
+  ): boolean {
+    this.ensureFlowsTables();
+
+    const sets: string[] = [];
+    const params: (string | null)[] = [];
+
+    if (updates.name !== undefined) {
+      sets.push('name = ?');
+      params.push(updates.name);
+    }
+    if (updates.description !== undefined) {
+      sets.push('description = ?');
+      params.push(updates.description);
+    }
+    if (updates.domain !== undefined) {
+      sets.push('domain = ?');
+      params.push(updates.domain);
+    }
+
+    if (sets.length === 0) return false;
+
+    params.push(String(flowId));
+    const stmt = this.db.prepare(`UPDATE flows SET ${sets.join(', ')} WHERE id = ?`);
+    const result = stmt.run(...params);
+    return result.changes > 0;
   }
 
   close(): void {

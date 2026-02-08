@@ -367,6 +367,109 @@ ats relationships unset --from <source> --to <target>
 
 ---
 
+### `ats llm modules` - Detect Architectural Modules
+
+Uses graph clustering (Louvain algorithm) on the call graph to automatically detect groups of tightly-coupled symbols. Optionally uses LLM to name and describe the detected modules.
+
+```bash
+ats llm modules [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d, --database` | Path to database (default: `index.db`) |
+| `--min-size` | Minimum members for a valid module (default: 3) |
+| `--resolution` | Louvain resolution (higher = more modules, default: 1.0) |
+| `--dry-run` | Show detected modules without persisting |
+| `--force` | Re-detect even if modules exist |
+| `--skip-llm` | Skip LLM naming (use auto-generated names) |
+| `-m, --model` | LLM model for naming (default: sonnet) |
+| `--json` | Output as JSON |
+
+**Examples:**
+```bash
+# Detect modules with default settings
+ats llm modules
+
+# Dry run to preview detection
+ats llm modules --dry-run --skip-llm
+
+# Higher resolution for more granular modules
+ats llm modules --resolution 1.5 --min-size 2
+
+# Re-detect and overwrite existing modules
+ats llm modules --force
+```
+
+**Output:**
+Modules are persisted to the database with:
+- Name and description (auto-generated or LLM-provided)
+- Layer classification (controller, service, repository, util, etc.)
+- Subsystem grouping
+- Member definitions with confidence scores
+
+---
+
+### `ats llm flows` - Detect Execution Flows
+
+Traces execution paths from entry points (controllers, routes, handlers) through the call graph to detect end-to-end flows. Optionally uses LLM to name and describe the flows.
+
+```bash
+ats llm flows [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d, --database` | Path to database (default: `index.db`) |
+| `--min-steps` | Minimum steps for a valid flow (default: 2) |
+| `--max-depth` | Maximum traversal depth (default: 15) |
+| `--domain` | Only detect flows in a specific domain |
+| `--from` | Start from a specific entry point (name pattern) |
+| `--dry-run` | Show detected flows without persisting |
+| `--force` | Re-detect even if flows exist |
+| `--skip-llm` | Skip LLM naming (use auto-generated names) |
+| `-m, --model` | LLM model for naming (default: sonnet) |
+| `--json` | Output as JSON |
+
+**Examples:**
+```bash
+# Detect all flows
+ats llm flows
+
+# Preview flows without persisting
+ats llm flows --dry-run --skip-llm
+
+# Only detect flows starting from sales controllers
+ats llm flows --from sales --domain sales-management
+
+# Limit traversal depth for simpler flows
+ats llm flows --max-depth 5 --min-steps 3
+```
+
+**Entry Points:**
+The command identifies entry points by:
+- Symbols with `role=controller` metadata
+- Names containing "Controller" or "Handler"
+- Exported functions in `/routes/`, `/controllers/`, or `/handlers/` directories
+
+**Output Example:**
+```
+Flow: CreateSale
+  Domain: sales-management
+  Entry: SalesController.create (controller)
+
+  Steps:
+    1. SalesController.create [controller]
+    2. salesService.createSale [service]
+    3. vehicleService.updateStatus [service]
+    4. saleModel.insert [repository]
+    5. vehicleModel.update [repository]
+
+  Modules crossed: SalesAPI → SalesService → VehicleService → DataLayer
+```
+
+---
+
 ### `ats files` - Explore File Structure
 
 #### List Files
@@ -380,6 +483,239 @@ ats files --stats        # Include import statistics
 ats files imports <path>      # What does this file import?
 ats files imported-by <path>  # What files import this file?
 ats files orphans             # Find files with no incoming imports
+```
+
+---
+
+### `ats modules` - View Detected Modules
+
+Lists modules detected by `ats llm modules`. Modules are groups of tightly-coupled symbols representing architectural boundaries.
+
+```bash
+ats modules [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d, --database` | Path to database (default: `index.db`) |
+| `--layer` | Filter by layer: `controller`, `service`, `repository`, `adapter`, `utility` |
+| `--json` | Output as JSON |
+
+**Examples:**
+```bash
+ats modules                    # List all modules with member counts
+ats modules --layer service    # Only service-layer modules
+ats modules --json             # JSON output for automation
+```
+
+**Output:**
+```
+Modules (3 total, 45 members)
+
+Name              Layer        Members  Description
+─────────────────────────────────────────────────────
+auth              service      12       Authentication logic
+user-api          controller   8        User endpoints
+database          repository   15       Data access
+
+10 definitions not assigned to any module
+```
+
+#### `ats modules show` - View Module Details
+
+Shows detailed information about a specific module including all its members.
+
+```bash
+ats modules show <name> [flags]
+```
+
+**Examples:**
+```bash
+ats modules show auth              # Show auth module details
+ats modules show user-api --json   # JSON output
+```
+
+**Output:**
+```
+Module: auth
+Layer: service
+Description: Authentication logic
+
+Members (12):
+  Name                  Kind          Location
+  ───────────────────────────────────────────────────────
+  validateToken         function      src/auth/validate.ts
+  hashPassword          function      src/auth/hash.ts
+  AuthService           class         src/auth/service.ts
+  ...
+```
+
+---
+
+### `ats flows` - View Detected Flows
+
+Lists execution flows detected by `ats llm flows`. Flows trace request paths from entry points through the call graph.
+
+```bash
+ats flows [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d, --database` | Path to database (default: `index.db`) |
+| `--domain` | Filter by domain |
+| `--json` | Output as JSON |
+
+**Examples:**
+```bash
+ats flows                    # List all flows with step counts
+ats flows --domain user      # Only user-domain flows
+ats flows --json             # JSON output for automation
+```
+
+**Output:**
+```
+Flows (5 total, 47 steps)
+
+Name                Entry Point          Steps  Modules Crossed
+────────────────────────────────────────────────────────────────
+user-registration   handleRegister       8      auth, user, db
+login               handleLogin          6      auth, session
+checkout            processCheckout      12     cart, payment, inventory
+```
+
+#### `ats flows show` - View Flow Details
+
+Shows detailed information about a specific flow including all its steps.
+
+```bash
+ats flows show <name> [flags]
+```
+
+**Examples:**
+```bash
+ats flows show user-registration        # Show flow details
+ats flows show login --json             # JSON output
+```
+
+**Output:**
+```
+Flow: user-registration
+Entry: handleRegister (function) - src/api/user.ts:45
+Domain: user
+
+Steps (8):
+  #   Name                  Kind          Module          Layer
+  ────────────────────────────────────────────────────────────────
+  1   validateInput         function      user-api        controller
+  2   hashPassword          function      auth            service
+  3   createUser            function      user            service
+  4   insertUser            function      database        repository
+  ...
+```
+
+#### `ats flows trace` - Trace Execution Path
+
+Traces the call graph from a specific entry point, showing reachable symbols as a tree. This is useful for ad-hoc exploration before flows are formally detected.
+
+```bash
+ats flows trace [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d, --database` | Path to database (default: `index.db`) |
+| `-n, --name` | Symbol name to trace from |
+| `--id` | Definition ID to trace from |
+| `--depth` | Max traversal depth (default: 10) |
+| `-f, --file` | Disambiguate by file path |
+| `--json` | Output as JSON |
+
+**Examples:**
+```bash
+ats flows trace --name handleRegister              # Trace from handleRegister
+ats flows trace --id 42 --depth 5                  # Trace by ID, limit depth
+ats flows trace --name processPayment --json       # JSON output
+```
+
+**Output:**
+```
+Trace from: handleRegister (src/api/user.ts:45)
+
+handleRegister
+    └── [1] validateInput (user-api) [controller]
+    └── [1] hashPassword (auth) [service]
+        └── [2] bcryptHash
+    └── [1] createUser (user) [service]
+        └── [2] insertUser (database) [repository]
+        └── [2] sendWelcomeEmail (notifications)
+
+12 nodes traced (max depth: 10)
+```
+
+---
+
+### `ats hierarchy` - View Inheritance and Call Hierarchies
+
+Shows class/interface inheritance trees or call hierarchies between symbols.
+
+```bash
+ats hierarchy [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d, --database` | Path to database (default: `index.db`) |
+| `--type` | Relationship type: `extends`, `implements`, `calls`, `imports`, `uses` (default: `extends`) |
+| `--root` | Start from specific symbol (required for `calls` type) |
+| `-f, --file` | Disambiguate root symbol by file path |
+| `--depth` | Max depth for call/import hierarchies (default: 10) |
+| `--json` | Output as JSON |
+
+**Examples:**
+```bash
+# Class inheritance hierarchy
+ats hierarchy                              # Show all extends relationships
+ats hierarchy --type extends               # Same as above
+ats hierarchy --type implements            # Show interface implementations
+
+# Call hierarchy from a specific function
+ats hierarchy --type calls --root main     # Show what main() calls
+ats hierarchy --type calls --root IndexDatabase --depth 3
+
+# Annotated relationships
+ats hierarchy --type uses                  # Show uses relationships from annotations
+```
+
+**Output (extends):**
+```
+Class Hierarchy (extends)
+
+BaseController (class)
+├── UserController (class)
+│   └── AdminController (class)
+└── AuthController (class)
+
+BaseService (class)
+├── UserService (class)
+└── AuthService (class)
+
+(3 roots, 7 total nodes)
+```
+
+**Output (calls):**
+```
+Call Hierarchy from: main
+
+main (function)
+├── parseArgs (function)
+├── loadConfig (function)
+│   └── readFile (function)
+└── startServer (function)
+    ├── createRoutes (function)
+    └── listen (function)
+
+(6 nodes, max depth: 10)
 ```
 
 ---
@@ -474,7 +810,25 @@ ats relationships set "validates credentials before creating session" \
 ats relationships --count
 ```
 
-### Phase 5: Ongoing Maintenance
+### Phase 5: Detect Architecture (Modules & Flows)
+
+Once symbols and relationships are annotated, detect higher-level structures:
+
+```bash
+# Detect architectural modules (tightly-coupled symbol groups)
+ats llm modules --dry-run --skip-llm   # Preview
+ats llm modules                         # Detect and persist
+
+# Detect execution flows (request paths through the system)
+ats llm flows --dry-run --skip-llm      # Preview
+ats llm flows                           # Detect and persist
+
+# View detected modules and flows via the web UI
+ats browse
+# API endpoints: /api/modules, /api/flows
+```
+
+### Phase 6: Ongoing Maintenance
 
 As the codebase evolves, keep annotations current:
 
@@ -526,6 +880,10 @@ The SQLite database contains:
 | `definition_metadata` | Key-value annotations on symbols |
 | `relationship_annotations` | Semantic descriptions of symbol relationships |
 | `domains` | Registered domain tags with descriptions |
+| `modules` | Detected architectural modules with layer and subsystem |
+| `module_members` | Mapping of definitions to modules with confidence scores |
+| `flows` | Detected execution flows with entry points and domains |
+| `flow_steps` | Ordered steps in each flow with module and layer info |
 
 ---
 

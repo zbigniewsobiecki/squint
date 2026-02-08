@@ -61,6 +61,30 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
         jsonResponse(res, db.getClassHierarchy());
       } else if (path === '/api/graph/symbols') {
         jsonResponse(res, getSymbolGraph(db));
+      } else if (path === '/api/modules') {
+        jsonResponse(res, getModulesData(db));
+      } else if (path === '/api/modules/stats') {
+        jsonResponse(res, db.getModuleStats());
+      } else if (path.match(/^\/api\/modules\/(\d+)$/)) {
+        const id = parseInt(path.split('/')[3]);
+        const module = db.getModuleWithMembers(id);
+        if (module) {
+          jsonResponse(res, module);
+        } else {
+          notFound(res, 'Module not found');
+        }
+      } else if (path === '/api/flows') {
+        jsonResponse(res, getFlowsData(db));
+      } else if (path === '/api/flows/stats') {
+        jsonResponse(res, db.getFlowStats());
+      } else if (path.match(/^\/api\/flows\/(\d+)$/)) {
+        const id = parseInt(path.split('/')[3]);
+        const flow = db.getFlowWithSteps(id);
+        if (flow) {
+          jsonResponse(res, flow);
+        } else {
+          notFound(res, 'Flow not found');
+        }
       } else {
         notFound(res, 'Not found');
       }
@@ -115,6 +139,8 @@ function getSymbolGraph(db: IndexDatabase): {
     domain?: string[];
     pure?: boolean;
     lines: number;
+    moduleId?: number;
+    moduleName?: string;
   }>;
   edges: Array<{
     source: number;
@@ -125,6 +151,7 @@ function getSymbolGraph(db: IndexDatabase): {
     totalSymbols: number;
     annotatedSymbols: number;
     totalRelationships: number;
+    moduleCount: number;
   };
 } {
   // Get all definitions as nodes
@@ -162,6 +189,21 @@ function getSymbolGraph(db: IndexDatabase): {
     }
   }
 
+  // Get module membership for all definitions
+  const moduleMap = new Map<number, { moduleId: number; moduleName: string }>();
+  let moduleCount = 0;
+  try {
+    const modules = db.getAllModulesWithMembers();
+    moduleCount = modules.length;
+    for (const module of modules) {
+      for (const member of module.members) {
+        moduleMap.set(member.definitionId, { moduleId: module.id, moduleName: module.name });
+      }
+    }
+  } catch {
+    // Module tables don't exist - continue without module info
+  }
+
   // Build nodes array with metadata
   const nodes = allDefs.map(def => {
     const metadata = metadataMap.get(def.id) || {};
@@ -173,6 +215,7 @@ function getSymbolGraph(db: IndexDatabase): {
         domain = [metadata.domain];
       }
     }
+    const moduleInfo = moduleMap.get(def.id);
     return {
       id: def.id,
       name: def.name,
@@ -183,6 +226,8 @@ function getSymbolGraph(db: IndexDatabase): {
       domain,
       pure: metadata.pure ? metadata.pure === 'true' : undefined,
       lines: def.endLine - def.line + 1,
+      moduleId: moduleInfo?.moduleId,
+      moduleName: moduleInfo?.moduleName,
     };
   });
 
@@ -200,8 +245,151 @@ function getSymbolGraph(db: IndexDatabase): {
       totalSymbols: nodes.length,
       annotatedSymbols: annotatedIds.size,
       totalRelationships: relationships.length,
+      moduleCount,
     },
   };
+}
+
+/**
+ * Build the modules data for visualization
+ */
+function getModulesData(database: IndexDatabase): {
+  modules: Array<{
+    id: number;
+    name: string;
+    description: string | null;
+    layer: string | null;
+    subsystem: string | null;
+    memberCount: number;
+    members: Array<{
+      definitionId: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      confidence: number | null;
+    }>;
+  }>;
+  stats: {
+    moduleCount: number;
+    memberCount: number;
+    avgMembersPerModule: number;
+    unassignedDefinitions: number;
+  };
+} {
+  try {
+    const modulesWithMembers = database.getAllModulesWithMembers();
+    const stats = database.getModuleStats();
+
+    return {
+      modules: modulesWithMembers.map(module => ({
+        id: module.id,
+        name: module.name,
+        description: module.description,
+        layer: module.layer,
+        subsystem: module.subsystem,
+        memberCount: module.members.length,
+        members: module.members,
+      })),
+      stats,
+    };
+  } catch {
+    // Tables don't exist - return empty
+    return {
+      modules: [],
+      stats: {
+        moduleCount: 0,
+        memberCount: 0,
+        avgMembersPerModule: 0,
+        unassignedDefinitions: 0,
+      },
+    };
+  }
+}
+
+/**
+ * Build the flows data for API response
+ */
+function getFlowsData(database: IndexDatabase): {
+  flows: Array<{
+    id: number;
+    name: string;
+    description: string | null;
+    domain: string | null;
+    entryPoint: {
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+    };
+    stepCount: number;
+    modulesCrossed: string[];
+    steps: Array<{
+      stepOrder: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      moduleName: string | null;
+      layer: string | null;
+    }>;
+  }>;
+  stats: {
+    flowCount: number;
+    totalSteps: number;
+    avgStepsPerFlow: number;
+    modulesCovered: number;
+  };
+} {
+  try {
+    const flowsWithSteps = database.getAllFlowsWithSteps();
+    const stats = database.getFlowStats();
+
+    return {
+      flows: flowsWithSteps.map(flow => {
+        // Collect unique module names
+        const moduleNames = new Set<string>();
+        for (const step of flow.steps) {
+          if (step.moduleName) {
+            moduleNames.add(step.moduleName);
+          }
+        }
+
+        return {
+          id: flow.id,
+          name: flow.name,
+          description: flow.description,
+          domain: flow.domain,
+          entryPoint: {
+            id: flow.entryPointId,
+            name: flow.entryPointName,
+            kind: flow.entryPointKind,
+            filePath: flow.entryPointFilePath,
+          },
+          stepCount: flow.steps.length,
+          modulesCrossed: Array.from(moduleNames),
+          steps: flow.steps.map(step => ({
+            stepOrder: step.stepOrder,
+            name: step.name,
+            kind: step.kind,
+            filePath: step.filePath,
+            moduleName: step.moduleName,
+            layer: step.layer,
+          })),
+        };
+      }),
+      stats,
+    };
+  } catch {
+    // Tables don't exist - return empty
+    return {
+      flows: [],
+      stats: {
+        flowCount: 0,
+        totalSteps: 0,
+        avgStepsPerFlow: 0,
+        modulesCovered: 0,
+      },
+    };
+  }
 }
 
 function getEmbeddedHTML(): string {
@@ -459,6 +647,289 @@ function getEmbeddedHTML(): string {
       opacity: 0.3;
     }
 
+    /* View Toggle */
+    .view-toggle {
+      display: flex;
+      gap: 4px;
+      background: #1e1e1e;
+      border-radius: 4px;
+      padding: 2px;
+    }
+
+    .view-btn {
+      background: transparent;
+      border: none;
+      color: #858585;
+      padding: 6px 12px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .view-btn:hover {
+      color: #d4d4d4;
+    }
+
+    .view-btn.active {
+      background: #3c3c3c;
+      color: #d4d4d4;
+    }
+
+    /* Tree Styles */
+    .tree-link {
+      fill: none;
+      stroke: #4a4a4a;
+      stroke-width: 1.5;
+    }
+
+    .tree-node {
+      cursor: pointer;
+    }
+
+    .tree-node circle {
+      transition: stroke-width 0.2s;
+    }
+
+    .tree-node:hover circle {
+      stroke-width: 3px;
+    }
+
+    .tree-node text {
+      font-size: 10px;
+      fill: #d4d4d4;
+      pointer-events: none;
+    }
+
+    .tree-node.collapsed circle {
+      stroke-dasharray: 3,2;
+    }
+
+    /* Relationship Filters */
+    .relationship-filters {
+      display: none;  /* Hidden by default, shown in hierarchy view */
+      gap: 6px;
+      align-items: center;
+    }
+
+    .relationship-filters.visible {
+      display: flex;
+    }
+
+    .filter-chip {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      cursor: pointer;
+      border: 1px solid;
+      transition: opacity 0.2s;
+    }
+
+    .filter-chip.active {
+      opacity: 1;
+    }
+
+    .filter-chip.inactive {
+      opacity: 0.4;
+    }
+
+    .filter-chip .chip-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    /* Modules & Flows List Views */
+    .list-view {
+      padding: 20px;
+      overflow-y: auto;
+      height: 100%;
+    }
+
+    .list-view h2 {
+      color: #e0e0e0;
+      font-size: 16px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .list-view .view-stats {
+      font-size: 12px;
+      color: #858585;
+      font-weight: normal;
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: #252526;
+      border: 1px solid #3c3c3c;
+      border-radius: 6px;
+      padding: 16px;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .card:hover {
+      border-color: #4fc1ff;
+      background: #2d2d2d;
+    }
+
+    .card.expanded {
+      grid-column: 1 / -1;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e0e0e0;
+    }
+
+    .card-badge {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 500;
+    }
+
+    .card-badge.layer-controller { background: #3d5a80; color: #a8d0e6; }
+    .card-badge.layer-service { background: #5a3d80; color: #d0a8e6; }
+    .card-badge.layer-repository { background: #3d8050; color: #a8e6b4; }
+    .card-badge.layer-adapter { background: #806a3d; color: #e6d4a8; }
+    .card-badge.layer-utility { background: #4a6670; color: #b8d4dc; }
+
+    .card-description {
+      font-size: 12px;
+      color: #858585;
+      margin-bottom: 10px;
+      line-height: 1.4;
+    }
+
+    .card-meta {
+      display: flex;
+      gap: 16px;
+      font-size: 11px;
+      color: #666;
+    }
+
+    .card-meta-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .card-meta-value {
+      color: #4fc1ff;
+    }
+
+    /* Members/Steps list inside expanded card */
+    .card-members {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #3c3c3c;
+      display: none;
+    }
+
+    .card.expanded .card-members {
+      display: block;
+    }
+
+    .card-members h4 {
+      font-size: 11px;
+      color: #858585;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .member-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .member-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      background: #1e1e1e;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .member-kind {
+      font-size: 9px;
+      padding: 2px 5px;
+      border-radius: 3px;
+      font-weight: 500;
+      min-width: 50px;
+      text-align: center;
+    }
+
+    .member-name {
+      color: #d4d4d4;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+    }
+
+    .member-file {
+      color: #666;
+      margin-left: auto;
+      font-size: 10px;
+    }
+
+    /* Flow step indicators */
+    .step-number {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #3c3c3c;
+      color: #858585;
+      font-size: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .step-arrow {
+      color: #4a4a4a;
+      margin: 0 4px;
+    }
+
+    /* Modules crossed badges */
+    .modules-crossed {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 8px;
+    }
+
+    .module-tag {
+      font-size: 10px;
+      padding: 2px 6px;
+      background: #2d4a5a;
+      color: #8cc4d4;
+      border-radius: 3px;
+    }
+
     /* Loading */
     .loading {
       position: absolute;
@@ -489,6 +960,39 @@ function getEmbeddedHTML(): string {
   <div class="container">
     <header>
       <h1>ATS Symbol Graph</h1>
+      <div class="view-toggle">
+        <button class="view-btn active" data-view="force">Force</button>
+        <button class="view-btn" data-view="sunburst">Hierarchy</button>
+        <button class="view-btn" data-view="modules">Modules</button>
+        <button class="view-btn" data-view="flows">Flows</button>
+      </div>
+      <div class="relationship-filters" id="relationship-filters">
+        <span style="color: #858585; font-size: 11px;">Group by:</span>
+        <div class="filter-chip active" data-type="structure">
+          <span class="chip-dot" style="background: #6a9955;"></span>
+          <span>files</span>
+        </div>
+        <div class="filter-chip" data-type="extends">
+          <span class="chip-dot" style="background: #4a9eff;"></span>
+          <span>extends</span>
+        </div>
+        <div class="filter-chip" data-type="implements">
+          <span class="chip-dot" style="background: #4ad4d4;"></span>
+          <span>implements</span>
+        </div>
+        <div class="filter-chip" data-type="calls">
+          <span class="chip-dot" style="background: #ce9178;"></span>
+          <span>calls</span>
+        </div>
+        <div class="filter-chip" data-type="imports">
+          <span class="chip-dot" style="background: #9178ce;"></span>
+          <span>imports</span>
+        </div>
+        <div class="filter-chip" data-type="uses">
+          <span class="chip-dot" style="background: #858585;"></span>
+          <span>uses</span>
+        </div>
+      </div>
       <div class="stats" id="stats">
         <span class="stat">Symbols: <span class="stat-value" id="stat-symbols">-</span></span>
         <span class="stat">Annotated: <span class="stat-value annotated" id="stat-annotated">-</span></span>
@@ -501,7 +1005,7 @@ function getEmbeddedHTML(): string {
       <div class="loading" id="loading">Loading symbol graph...</div>
     </div>
 
-    <div class="legend">
+    <div class="legend" id="legend">
       <div class="legend-title">Symbol Types</div>
       <div class="legend-item">
         <div class="legend-circle" style="background: #3d5a80;"></div>
@@ -530,6 +1034,48 @@ function getEmbeddedHTML(): string {
 
   <script>
     let simulation = null;
+    let currentView = 'force';
+    let graphData = null;
+    let modulesData = null;
+    let flowsData = null;
+
+    // Selected hierarchy grouping type ('structure' for file-based, or a relationship type)
+    let selectedGrouping = 'structure';
+
+    // Classify relationship by semantic text
+    function classifyRelationship(semantic) {
+      const s = (semantic || '').toLowerCase();
+      if (s.includes('extend')) return 'extends';
+      if (s.includes('implement')) return 'implements';
+      if (s.includes('call')) return 'calls';
+      if (s.includes('import')) return 'imports';
+      if (s.includes('use')) return 'uses';
+      return 'uses'; // default category
+    }
+
+    // Setup filter chip click handlers (single-select / radio style)
+    function setupRelationshipFilters() {
+      document.querySelectorAll('.filter-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          const type = chip.dataset.type;
+          if (selectedGrouping === type) return; // Already selected
+
+          // Update selection
+          selectedGrouping = type;
+
+          // Update chip styles
+          document.querySelectorAll('.filter-chip').forEach(c => {
+            c.classList.remove('active');
+            c.classList.add('inactive');
+          });
+          chip.classList.remove('inactive');
+          chip.classList.add('active');
+
+          // Re-render hierarchy with new grouping
+          renderCurrentView();
+        });
+      });
+    }
 
     // Color scheme for different kinds
     const kindColors = {
@@ -543,16 +1089,267 @@ function getEmbeddedHTML(): string {
       'method': '#4a6670'
     };
 
+    // Hierarchy level colors (for directories/files)
+    const hierarchyColors = {
+      'directory': '#2d4a5a',
+      'file': '#3d4a5a'
+    };
+
+    // Build hierarchy from flat node list
+    // Build hierarchy from file structure
+    function buildFileHierarchy(nodes) {
+      const root = { name: 'root', children: [], isRoot: true };
+
+      for (const node of nodes) {
+        const parts = node.filePath.split('/').filter(p => p);
+        let current = root;
+
+        // Navigate/create directory structure
+        for (let i = 0; i < parts.length - 1; i++) {
+          let child = current.children.find(c => c.name === parts[i] && !c.data);
+          if (!child) {
+            child = { name: parts[i], children: [], isDirectory: true, depth: i + 1 };
+            current.children.push(child);
+          }
+          current = child;
+        }
+
+        // Add file level
+        const fileName = parts[parts.length - 1];
+        let fileNode = current.children.find(c => c.name === fileName && !c.data);
+        if (!fileNode) {
+          fileNode = { name: fileName, children: [], isFile: true, depth: parts.length };
+          current.children.push(fileNode);
+        }
+
+        // Add symbol as leaf
+        fileNode.children.push({
+          name: node.name,
+          value: Math.max(node.lines, 1),
+          data: node
+        });
+      }
+
+      return root;
+    }
+
+    // Build hierarchy from relationship type (e.g., extends, calls)
+    // If A extends B, then A is shown as a child of B
+    function buildRelationshipHierarchy(nodes, edges, relationshipType) {
+      const nodeById = new Map(nodes.map(n => [n.id, n]));
+
+      // Filter edges to only include the selected relationship type
+      const relevantEdges = edges.filter(e => {
+        const type = classifyRelationship(e.semantic);
+        return type === relationshipType;
+      });
+
+      // Build parent-child map: source -> targets (source depends on/relates to targets)
+      // In "A extends B", source=A, target=B, so A is child of B
+      const childrenOf = new Map(); // target -> [sources]
+      const hasParent = new Set();
+
+      for (const edge of relevantEdges) {
+        if (!nodeById.has(edge.source) || !nodeById.has(edge.target)) continue;
+
+        if (!childrenOf.has(edge.target)) {
+          childrenOf.set(edge.target, []);
+        }
+        childrenOf.get(edge.target).push(edge.source);
+        hasParent.add(edge.source);
+      }
+
+      // Find root nodes (nodes that have children but no parent in this relationship)
+      const involvedNodes = new Set();
+      for (const edge of relevantEdges) {
+        if (nodeById.has(edge.source)) involvedNodes.add(edge.source);
+        if (nodeById.has(edge.target)) involvedNodes.add(edge.target);
+      }
+
+      const rootIds = [...involvedNodes].filter(id => !hasParent.has(id));
+
+      // Build tree recursively
+      const visited = new Set();
+
+      function buildNode(nodeId, depth = 0) {
+        if (visited.has(nodeId)) return null; // Prevent cycles
+        visited.add(nodeId);
+
+        const node = nodeById.get(nodeId);
+        if (!node) return null;
+
+        const children = (childrenOf.get(nodeId) || [])
+          .map(childId => buildNode(childId, depth + 1))
+          .filter(c => c !== null);
+
+        return {
+          name: node.name,
+          value: Math.max(node.lines, 1),
+          data: node,
+          children: children.length > 0 ? children : undefined
+        };
+      }
+
+      const rootChildren = rootIds
+        .map(id => buildNode(id))
+        .filter(c => c !== null);
+
+      // If no relationships of this type, show message
+      if (rootChildren.length === 0) {
+        return {
+          name: 'root',
+          children: [{
+            name: \`No "\${relationshipType}" relationships found\`,
+            isMessage: true,
+            children: []
+          }],
+          isRoot: true
+        };
+      }
+
+      return {
+        name: 'root',
+        children: rootChildren,
+        isRoot: true
+      };
+    }
+
+    // Get color for hierarchy node
+    function getHierarchyColor(d) {
+      if (d.data.data) {
+        // Symbol node - use kind color
+        return kindColors[d.data.data.kind] || '#666';
+      } else if (d.data.isFile) {
+        return hierarchyColors.file;
+      } else if (d.data.isDirectory) {
+        return hierarchyColors.directory;
+      }
+      return '#2d2d2d';
+    }
+
+    // Get stroke color based on annotation status
+    function getStrokeColor(d) {
+      if (d.data.data && d.data.data.hasAnnotations) {
+        return '#6a9955';
+      }
+      return '#3c3c3c';
+    }
+
     // API helper
     async function fetchJSON(url) {
       const res = await fetch(url);
       return res.json();
     }
 
+    // Ensure SVG exists in graph container
+    function ensureGraphSVG() {
+      const container = document.getElementById('graph-container');
+      let svg = document.getElementById('graph-svg');
+      if (!svg) {
+        container.innerHTML = '<svg id="graph-svg"></svg>';
+      }
+    }
+
+    // Update stats header with graph data
+    function updateGraphStats() {
+      if (!graphData) return;
+      document.getElementById('stat-symbols').textContent = graphData.stats.totalSymbols;
+      document.getElementById('stat-annotated').textContent = graphData.stats.annotatedSymbols;
+      document.getElementById('stat-relationships').textContent = graphData.stats.totalRelationships;
+    }
+
+    // Render current view
+    function renderCurrentView() {
+      const filters = document.getElementById('relationship-filters');
+      const legend = document.getElementById('legend');
+
+      if (currentView === 'force') {
+        if (!graphData || graphData.nodes.length === 0) return;
+        ensureGraphSVG();
+        renderSymbolGraph(graphData);
+        updateLegend('force');
+        updateGraphStats();
+        filters.classList.remove('visible');
+        legend.style.display = 'block';
+      } else if (currentView === 'sunburst') {
+        if (!graphData || graphData.nodes.length === 0) return;
+        ensureGraphSVG();
+        renderSunburstGraph(graphData);
+        updateLegend('sunburst');
+        updateGraphStats();
+        filters.classList.add('visible');
+        legend.style.display = 'block';
+      } else if (currentView === 'modules') {
+        renderModulesView();
+        filters.classList.remove('visible');
+        legend.style.display = 'none';
+      } else if (currentView === 'flows') {
+        renderFlowsView();
+        filters.classList.remove('visible');
+        legend.style.display = 'none';
+      }
+    }
+
+    // Update legend based on view
+    function updateLegend(view) {
+      const legend = document.getElementById('legend');
+      if (view === 'force') {
+        legend.innerHTML = \`
+          <div class="legend-title">Symbol Types</div>
+          <div class="legend-item">
+            <div class="legend-circle" style="background: #3d5a80;"></div>
+            <span>function</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-circle" style="background: #5a3d80;"></div>
+            <span>class</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-circle" style="background: #3d8050;"></div>
+            <span>interface</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-circle" style="background: #806a3d;"></div>
+            <span>type</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-circle greyed" style="background: #666;"></div>
+            <span>no annotations</span>
+          </div>
+        \`;
+      } else {
+        legend.innerHTML = \`
+          <div class="legend-title">Structure</div>
+          <div class="legend-item">
+            <div class="legend-circle" style="background: #2d4a5a;"></div>
+            <span>directory</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-circle" style="background: #3d4a5a;"></div>
+            <span>file</span>
+          </div>
+          <div class="legend-title" style="margin-top: 12px;">Symbols</div>
+          <div class="legend-item">
+            <div class="legend-circle" style="background: #3d5a80;"></div>
+            <span>function</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-circle" style="background: #5a3d80;"></div>
+            <span>class</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-circle" style="background: #3d8050; border: 2px solid #6a9955;"></div>
+            <span>annotated</span>
+          </div>
+        \`;
+      }
+    }
+
     // Initialize
     async function init() {
       try {
         const data = await fetchJSON('/api/graph/symbols');
+        graphData = data;
 
         // Update stats
         document.getElementById('stat-symbols').textContent = data.stats.totalSymbols;
@@ -567,7 +1364,20 @@ function getEmbeddedHTML(): string {
           return;
         }
 
-        renderSymbolGraph(data);
+        // Setup view toggle buttons
+        document.querySelectorAll('.view-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentView = btn.dataset.view;
+            renderCurrentView();
+          });
+        });
+
+        // Setup relationship filter chips
+        setupRelationshipFilters();
+
+        renderCurrentView();
       } catch (error) {
         console.error('Failed to load graph:', error);
         document.getElementById('loading').textContent = 'Failed to load graph';
@@ -776,6 +1586,400 @@ function getEmbeddedHTML(): string {
         if (!event.active) simulation.alphaTarget(0);
         d.fx = null;
         d.fy = null;
+      }
+    }
+
+    // Tidy Tree visualization
+    function renderSunburstGraph(data) {
+      const container = document.getElementById('graph-container');
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+
+      // Stop any running force simulation
+      if (simulation) {
+        simulation.stop();
+        simulation = null;
+      }
+
+      const svg = d3.select('#graph-svg');
+      svg.selectAll('*').remove();
+
+      // Build hierarchy based on selected grouping
+      const hierarchyData = selectedGrouping === 'structure'
+        ? buildFileHierarchy(data.nodes)
+        : buildRelationshipHierarchy(data.nodes, data.edges, selectedGrouping);
+      const root = d3.hierarchy(hierarchyData);
+
+      // Count descendants for sizing
+      root.count();
+
+      // Sort children by size for better layout
+      root.sort((a, b) => b.value - a.value);
+
+      // Calculate tree dimensions based on node count
+      const nodeCount = root.descendants().length;
+      const dx = 20; // Vertical spacing between nodes
+      const dy = Math.max(120, width / (root.height + 1)); // Horizontal spacing
+
+      // Create tree layout
+      const treeLayout = d3.tree()
+        .nodeSize([dx, dy])
+        .separation((a, b) => a.parent === b.parent ? 1 : 1.5);
+
+      treeLayout(root);
+
+      // Calculate bounds
+      let x0 = Infinity;
+      let x1 = -Infinity;
+      let y0 = Infinity;
+      let y1 = -Infinity;
+      root.each(d => {
+        if (d.x < x0) x0 = d.x;
+        if (d.x > x1) x1 = d.x;
+        if (d.y < y0) y0 = d.y;
+        if (d.y > y1) y1 = d.y;
+      });
+
+      const treeHeight = x1 - x0 + dx * 2;
+      const treeWidth = y1 - y0 + dy;
+
+      // Create main group with zoom
+      const g = svg.append('g');
+
+      // Set up zoom behavior
+      const zoom = d3.zoom()
+        .scaleExtent([0.1, 4])
+        .on('zoom', (event) => {
+          g.attr('transform', event.transform);
+        });
+
+      svg.call(zoom);
+
+      // Initial transform to center and fit
+      const scale = Math.min(
+        (width - 100) / treeWidth,
+        (height - 100) / treeHeight,
+        1
+      );
+      const initialX = 50 - y0 * scale;
+      const initialY = (height / 2) - ((x0 + x1) / 2) * scale;
+
+      svg.call(zoom.transform, d3.zoomIdentity
+        .translate(initialX, initialY)
+        .scale(scale));
+
+      // Create node ID lookup for relationships
+      const nodeById = new Map(data.nodes.map(n => [n.id, n]));
+
+      // Draw links
+      const linkGenerator = d3.linkHorizontal()
+        .x(d => d.y)
+        .y(d => d.x);
+
+      g.selectAll('.tree-link')
+        .data(root.links())
+        .enter()
+        .append('path')
+        .attr('class', 'tree-link')
+        .attr('d', linkGenerator);
+
+      // Draw nodes
+      const node = g.selectAll('.tree-node')
+        .data(root.descendants())
+        .enter()
+        .append('g')
+        .attr('class', d => {
+          let cls = 'tree-node';
+          if (d.children && d.data.isDirectory) cls += ' has-children';
+          return cls;
+        })
+        .attr('transform', d => \`translate(\${d.y},\${d.x})\`);
+
+      // Node circles - size based on type
+      node.append('circle')
+        .attr('r', d => {
+          if (d.data.data) {
+            // Symbol node - size by lines of code
+            const lines = d.data.data.lines || 1;
+            const minR = 4, maxR = 12;
+            const normalized = Math.sqrt(Math.min(lines, 300)) / Math.sqrt(300);
+            return minR + normalized * (maxR - minR);
+          } else if (d.data.isFile) {
+            return 5;
+          } else if (d.data.isRoot) {
+            return 8;
+          }
+          return 6; // Directory
+        })
+        .attr('fill', d => getHierarchyColor(d))
+        .attr('stroke', d => getStrokeColor(d))
+        .attr('stroke-width', d => d.data.data?.hasAnnotations ? 2 : 1);
+
+      // Node labels
+      node.append('text')
+        .attr('dy', '0.31em')
+        .attr('x', d => d.children ? -10 : 10)
+        .attr('text-anchor', d => d.children ? 'end' : 'start')
+        .text(d => {
+          const name = d.data.name;
+          // Truncate long names
+          return name.length > 25 ? name.substring(0, 22) + '...' : name;
+        })
+        .clone(true).lower()
+        .attr('stroke', '#1e1e1e')
+        .attr('stroke-width', 3);
+
+      // Tooltip
+      const tooltip = d3.select('#tooltip');
+
+      node.on('mouseover', (event, d) => {
+        if (d.data.data) {
+          // Symbol node
+          const sym = d.data.data;
+          const domainHtml = sym.domain ? \`<div class="domains">\${sym.domain.map(dom => '<span class="domain-tag">' + dom + '</span>').join('')}</div>\` : '';
+          const pureHtml = sym.pure !== undefined ? \`<div class="pure \${sym.pure ? 'is-pure' : 'has-side-effects'}">\${sym.pure ? 'Pure function' : 'Has side effects'}</div>\` : '';
+          const purposeHtml = sym.purpose ? \`<div class="purpose">\${sym.purpose}</div>\` : '';
+
+          tooltip.style('display', 'block')
+            .html(\`
+              <div class="name">\${sym.name}</div>
+              <span class="kind kind-\${sym.kind}">\${sym.kind}</span>
+              <span class="lines">\${sym.lines} lines</span>
+              \${domainHtml}
+              \${pureHtml}
+              \${purposeHtml}
+              <div class="location">\${sym.filePath.split('/').slice(-2).join('/')}</div>
+            \`);
+        } else if (!d.data.isRoot) {
+          // Directory or file node
+          const childCount = d.descendants().filter(c => c.data.data).length;
+          const totalLines = d.descendants()
+            .filter(c => c.data.data)
+            .reduce((sum, c) => sum + (c.data.data.lines || 0), 0);
+          const type = d.data.isFile ? 'file' : 'directory';
+
+          tooltip.style('display', 'block')
+            .html(\`
+              <div class="name">\${d.data.name}</div>
+              <span class="kind kind-type">\${type}</span>
+              <span class="lines">\${totalLines} lines</span>
+              <div class="location">\${childCount} symbols</div>
+            \`);
+        }
+      })
+      .on('mousemove', (event) => {
+        tooltip.style('left', (event.pageX + 10) + 'px')
+          .style('top', (event.pageY - 10) + 'px');
+      })
+      .on('mouseout', () => {
+        tooltip.style('display', 'none');
+      });
+    }
+
+    // Render Modules View
+    async function renderModulesView() {
+      const container = document.getElementById('graph-container');
+
+      // Stop any running simulation
+      if (simulation) {
+        simulation.stop();
+        simulation = null;
+      }
+
+      // Fetch modules data if not cached
+      if (!modulesData) {
+        try {
+          modulesData = await fetchJSON('/api/modules');
+        } catch (error) {
+          console.error('Failed to load modules:', error);
+          container.innerHTML = '<div class="empty-state"><h2>Failed to load modules</h2></div>';
+          return;
+        }
+      }
+
+      // Update stats header
+      document.getElementById('stat-symbols').textContent = modulesData.stats.memberCount;
+      document.getElementById('stat-annotated').textContent = modulesData.stats.moduleCount + ' modules';
+      document.getElementById('stat-relationships').textContent = modulesData.stats.unassignedDefinitions + ' unassigned';
+
+      if (modulesData.modules.length === 0) {
+        container.innerHTML = \`
+          <div class="empty-state">
+            <h2>No modules found</h2>
+            <p>Run 'ats llm modules' to detect modules</p>
+          </div>
+        \`;
+        return;
+      }
+
+      // Sort modules by member count
+      const sortedModules = [...modulesData.modules].sort((a, b) => b.memberCount - a.memberCount);
+
+      container.innerHTML = \`
+        <div class="list-view">
+          <h2>
+            Modules
+            <span class="view-stats">\${modulesData.stats.moduleCount} modules, \${modulesData.stats.memberCount} members</span>
+          </h2>
+          <div class="card-grid" id="modules-grid"></div>
+        </div>
+      \`;
+
+      const grid = document.getElementById('modules-grid');
+
+      for (const module of sortedModules) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.dataset.moduleId = module.id;
+
+        const layerClass = module.layer ? 'layer-' + module.layer : '';
+        const membersHtml = module.members.map(m => \`
+          <div class="member-item">
+            <span class="member-kind kind-\${m.kind}">\${m.kind}</span>
+            <span class="member-name">\${m.name}</span>
+            <span class="member-file">\${m.filePath.split('/').slice(-1)[0]}</span>
+          </div>
+        \`).join('');
+
+        card.innerHTML = \`
+          <div class="card-header">
+            <span class="card-title">\${module.name}</span>
+            \${module.layer ? \`<span class="card-badge \${layerClass}">\${module.layer}</span>\` : ''}
+          </div>
+          \${module.description ? \`<div class="card-description">\${module.description}</div>\` : ''}
+          <div class="card-meta">
+            <div class="card-meta-item">
+              Members: <span class="card-meta-value">\${module.memberCount}</span>
+            </div>
+            \${module.subsystem ? \`
+              <div class="card-meta-item">
+                Subsystem: <span class="card-meta-value">\${module.subsystem}</span>
+              </div>
+            \` : ''}
+          </div>
+          <div class="card-members">
+            <h4>Members (\${module.memberCount})</h4>
+            <div class="member-list">\${membersHtml}</div>
+          </div>
+        \`;
+
+        card.addEventListener('click', () => {
+          // Toggle expanded state
+          const wasExpanded = card.classList.contains('expanded');
+          // Collapse all others
+          document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
+          if (!wasExpanded) {
+            card.classList.add('expanded');
+          }
+        });
+
+        grid.appendChild(card);
+      }
+    }
+
+    // Render Flows View
+    async function renderFlowsView() {
+      const container = document.getElementById('graph-container');
+
+      // Stop any running simulation
+      if (simulation) {
+        simulation.stop();
+        simulation = null;
+      }
+
+      // Fetch flows data if not cached
+      if (!flowsData) {
+        try {
+          flowsData = await fetchJSON('/api/flows');
+        } catch (error) {
+          console.error('Failed to load flows:', error);
+          container.innerHTML = '<div class="empty-state"><h2>Failed to load flows</h2></div>';
+          return;
+        }
+      }
+
+      // Update stats header
+      document.getElementById('stat-symbols').textContent = flowsData.stats.totalSteps + ' steps';
+      document.getElementById('stat-annotated').textContent = flowsData.stats.flowCount + ' flows';
+      document.getElementById('stat-relationships').textContent = flowsData.stats.modulesCovered + ' modules';
+
+      if (flowsData.flows.length === 0) {
+        container.innerHTML = \`
+          <div class="empty-state">
+            <h2>No flows found</h2>
+            <p>Run 'ats llm flows' to detect execution flows</p>
+          </div>
+        \`;
+        return;
+      }
+
+      // Sort flows by step count
+      const sortedFlows = [...flowsData.flows].sort((a, b) => b.stepCount - a.stepCount);
+
+      container.innerHTML = \`
+        <div class="list-view">
+          <h2>
+            Execution Flows
+            <span class="view-stats">\${flowsData.stats.flowCount} flows, \${flowsData.stats.totalSteps} total steps</span>
+          </h2>
+          <div class="card-grid" id="flows-grid"></div>
+        </div>
+      \`;
+
+      const grid = document.getElementById('flows-grid');
+
+      for (const flow of sortedFlows) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.dataset.flowId = flow.id;
+
+        // Build steps HTML
+        const stepsHtml = flow.steps.map((step, idx) => \`
+          <div class="member-item">
+            <span class="step-number">\${idx + 1}</span>
+            <span class="member-kind kind-\${step.kind}">\${step.kind}</span>
+            <span class="member-name">\${step.name}</span>
+            \${step.layer ? \`<span class="card-badge layer-\${step.layer}" style="margin-left: auto; font-size: 9px;">\${step.layer}</span>\` : ''}
+          </div>
+        \`).join('');
+
+        // Modules crossed tags
+        const modulesHtml = flow.modulesCrossed.length > 0
+          ? \`<div class="modules-crossed">\${flow.modulesCrossed.map(m => \`<span class="module-tag">\${m}</span>\`).join('')}</div>\`
+          : '';
+
+        card.innerHTML = \`
+          <div class="card-header">
+            <span class="card-title">\${flow.name}</span>
+            \${flow.domain ? \`<span class="card-badge layer-service">\${flow.domain}</span>\` : ''}
+          </div>
+          \${flow.description ? \`<div class="card-description">\${flow.description}</div>\` : ''}
+          <div class="card-meta">
+            <div class="card-meta-item">
+              Entry: <span class="card-meta-value">\${flow.entryPoint.name}</span>
+            </div>
+            <div class="card-meta-item">
+              Steps: <span class="card-meta-value">\${flow.stepCount}</span>
+            </div>
+          </div>
+          \${modulesHtml}
+          <div class="card-members">
+            <h4>Steps (\${flow.stepCount})</h4>
+            <div class="member-list">\${stepsHtml}</div>
+          </div>
+        \`;
+
+        card.addEventListener('click', () => {
+          // Toggle expanded state
+          const wasExpanded = card.classList.contains('expanded');
+          // Collapse all others
+          document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
+          if (!wasExpanded) {
+            card.classList.add('expanded');
+          }
+        });
+
+        grid.appendChild(card);
       }
     }
 

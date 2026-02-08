@@ -11,6 +11,7 @@ import {
   DependencyContextEnhanced,
   RelationshipToAnnotate,
   CoverageInfo,
+  IncomingDependencyContext,
 } from './_shared/prompts.js';
 import {
   formatIterationResults,
@@ -24,8 +25,51 @@ import {
 
 interface EnhancedSymbol extends ReadySymbolInfo {
   sourceCode: string;
+  isExported: boolean;
   dependencies: DependencyContextEnhanced[];
   relationshipsToAnnotate: RelationshipToAnnotate[];
+  incomingDependencies: IncomingDependencyContext[];
+  incomingDependencyCount: number;
+}
+
+/**
+ * Tracks failed relationship annotations for retry.
+ */
+class RelationshipRetryQueue {
+  private failures = new Map<string, { fromId: number; toId: number; attempts: number; error: string }>();
+
+  private key(fromId: number, toId: number): string {
+    return `${fromId}:${toId}`;
+  }
+
+  add(fromId: number, toId: number, error: string): void {
+    const k = this.key(fromId, toId);
+    const existing = this.failures.get(k);
+    this.failures.set(k, {
+      fromId,
+      toId,
+      attempts: (existing?.attempts ?? 0) + 1,
+      error,
+    });
+  }
+
+  getRetryable(maxAttempts = 3): Array<{ fromId: number; toId: number }> {
+    const result: Array<{ fromId: number; toId: number }> = [];
+    for (const entry of this.failures.values()) {
+      if (entry.attempts < maxAttempts) {
+        result.push({ fromId: entry.fromId, toId: entry.toId });
+      }
+    }
+    return result;
+  }
+
+  clear(): void {
+    this.failures.clear();
+  }
+
+  get size(): number {
+    return this.failures.size;
+  }
 }
 
 interface JsonOutput {
@@ -111,6 +155,10 @@ export default class Annotate extends Command {
       char: 'x',
       description: 'Glob pattern for files to exclude (e.g., **/*.test.ts)',
     }),
+    'relationship-limit': Flags.integer({
+      description: 'Max relationships per symbol (0 = no limit)',
+      default: 50,
+    }),
   };
 
   public async run(): Promise<void> {
@@ -129,9 +177,13 @@ export default class Annotate extends Command {
     const showLlmResponses = flags['show-llm-responses'];
     const forceMode = flags.force;
     const excludePattern = flags.exclude;
+    const relationshipLimit = flags['relationship-limit'];
 
     // Build system prompt once
     const systemPrompt = buildSystemPrompt(aspects);
+
+    // Track failed relationship annotations for retry
+    const retryQueue = new RelationshipRetryQueue();
 
     // Tracking
     let iteration = 0;
@@ -221,7 +273,7 @@ export default class Annotate extends Command {
         }
 
         // Enhance symbols with source code and dependency context
-        const enhancedSymbols = await this.enhanceSymbols(db, symbols, aspects);
+        const enhancedSymbols = await this.enhanceSymbols(db, symbols, aspects, relationshipLimit);
 
         // Get current coverage for the prompt
         const allCoverage = db.getAspectCoverage({
@@ -243,8 +295,11 @@ export default class Annotate extends Command {
           line: s.line,
           endLine: s.endLine,
           sourceCode: s.sourceCode,
+          isExported: s.isExported,
           dependencies: s.dependencies,
           relationshipsToAnnotate: s.relationshipsToAnnotate,
+          incomingDependencies: s.incomingDependencies,
+          incomingDependencyCount: s.incomingDependencyCount,
         }));
         const userPrompt = buildUserPromptEnhanced(symbolContexts, aspects, coverage);
 
@@ -419,6 +474,7 @@ export default class Annotate extends Command {
 
           // Validate value is not empty
           if (!row.value || row.value.length < 5) {
+            const errorMsg = 'Relationship description must be at least 5 characters';
             iterationRelResults.push({
               fromId,
               fromName: symbolNameById.get(fromId) || String(fromId),
@@ -426,8 +482,9 @@ export default class Annotate extends Command {
               toName: toMap.get(toId) || String(toId),
               value: row.value,
               success: false,
-              error: 'Relationship description must be at least 5 characters',
+              error: errorMsg,
             });
+            retryQueue.add(fromId, toId, errorMsg);
             totalErrors++;
             continue;
           }
@@ -505,6 +562,84 @@ export default class Annotate extends Command {
         }
       }
 
+      // Retry failed relationship annotations (single pass)
+      const retryable = retryQueue.getRetryable(3);
+      if (retryable.length > 0 && !dryRun) {
+        if (!isJson) {
+          this.log('');
+          this.log(chalk.bold(`Retrying ${retryable.length} failed relationship annotations...`));
+        }
+
+        // Build focused prompt for failed relationships only
+        // Group by fromId for context
+        const byFromId = new Map<number, number[]>();
+        for (const { fromId, toId } of retryable) {
+          if (!byFromId.has(fromId)) byFromId.set(fromId, []);
+          byFromId.get(fromId)!.push(toId);
+        }
+
+        let retrySuccessCount = 0;
+        for (const [fromId, toIds] of byFromId) {
+          const def = db.getDefinitionById(fromId);
+          if (!def) continue;
+
+          const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
+
+          // Build minimal retry prompt
+          const retryPrompt = `Please provide relationship annotations for these specific relationships. Be thorough and descriptive (minimum 5 characters).
+
+Symbol: ${def.name} (${def.kind})
+File: ${def.filePath}:${def.line}
+
+\`\`\`
+${sourceCode}
+\`\`\`
+
+Relationships to annotate:
+${toIds.map(toId => {
+  const toDef = db.getDefinitionById(toId);
+  return toDef ? `- ${def.name} → ${toDef.name} (${toDef.kind} in ${toDef.filePath})` : null;
+}).filter(Boolean).join('\n')}
+
+Format: CSV with columns: from_id,to_id,relationship_annotation
+\`\`\`csv
+from_id,to_id,relationship_annotation
+${toIds.map(toId => `${fromId},${toId},"<describe how ${def.name} uses this dependency>"`).join('\n')}
+\`\`\``;
+
+          try {
+            const response = await LLMist.complete(retryPrompt, {
+              model: flags.model,
+              systemPrompt: 'You are annotating code relationships. Provide clear, concise descriptions of how symbols are related.',
+              temperature: 0,
+            });
+
+            // Parse response for relationship annotations
+            const lines = response.split('\n');
+            for (const line of lines) {
+              const match = line.match(/^(\d+),(\d+),["']?(.+?)["']?$/);
+              if (match) {
+                const retryFromId = parseInt(match[1], 10);
+                const retryToId = parseInt(match[2], 10);
+                const value = match[3].trim();
+
+                if (retryFromId === fromId && toIds.includes(retryToId) && value.length >= 5) {
+                  db.setRelationshipAnnotation(retryFromId, retryToId, value);
+                  retrySuccessCount++;
+                  totalRelationshipAnnotations++;
+                }
+              }
+            }
+          } catch {
+            // Retry failed, continue
+          }
+        }
+
+        if (!isJson && retrySuccessCount > 0) {
+          this.log(chalk.green(`  Successfully retried ${retrySuccessCount} relationships`));
+        }
+      }
+
       // Final summary
       const finalCoverageData = db.getAspectCoverage({
         kind: flags.kind,
@@ -559,6 +694,7 @@ export default class Annotate extends Command {
     db: IndexDatabase,
     symbols: ReadySymbolInfo[],
     aspects: string[],
+    relationshipLimit: number,
   ): Promise<EnhancedSymbol[]> {
     const enhanced: EnhancedSymbol[] = [];
 
@@ -594,22 +730,42 @@ export default class Annotate extends Command {
       // Get unannotated relationships from this symbol (handle missing table)
       let unannotatedRels: ReturnType<typeof db.getUnannotatedRelationships> = [];
       try {
-        unannotatedRels = db.getUnannotatedRelationships({ fromDefinitionId: symbol.id, limit: 50 });
+        const limit = relationshipLimit > 0 ? relationshipLimit : undefined;
+        unannotatedRels = db.getUnannotatedRelationships({ fromDefinitionId: symbol.id, limit });
       } catch {
         // Table doesn't exist - continue with empty relationships
       }
+      // These are usage-based relationships (calls), so they're all 'uses' type
       const relationshipsToAnnotate: RelationshipToAnnotate[] = unannotatedRels.map(rel => ({
         toId: rel.toDefinitionId,
         toName: rel.toName,
         toKind: rel.toKind,
         usageLine: rel.fromLine, // Use fromLine as approximate usage location
+        relationshipType: 'uses' as const,
       }));
+
+      // Get incoming dependencies (who uses this symbol)
+      const incomingDeps = db.getIncomingDependencies(symbol.id, 5);
+      const incomingDependencyCount = db.getIncomingDependencyCount(symbol.id);
+      const incomingDependencies: IncomingDependencyContext[] = incomingDeps.map(inc => ({
+        id: inc.id,
+        name: inc.name,
+        kind: inc.kind,
+        filePath: inc.filePath,
+      }));
+
+      // Get the definition to check if it's exported
+      const defInfo = db.getDefinitionById(symbol.id);
+      const isExported = defInfo?.isExported ?? false;
 
       enhanced.push({
         ...symbol,
         sourceCode,
+        isExported,
         dependencies,
         relationshipsToAnnotate,
+        incomingDependencies,
+        incomingDependencyCount,
       });
     }
 

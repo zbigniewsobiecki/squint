@@ -80,9 +80,22 @@ relationship,43,8,"queries user data from database model"
 - pure values must be exactly "true" or "false"
 
 ## Relationship Descriptions
+
+The description depends on the relationship type:
+
+**For 'uses' relationships (most common):**
 - Explain WHY the source symbol uses the target (1-2 sentences)
 - Focus on the semantic purpose, not just "calls" or "uses"
 - Example: "validates user credentials before generating session token"
+
+**For 'extends' relationships (class/interface inheritance):**
+- Explain WHY this class inherits from the parent
+- What behavior is extended or specialized?
+- Example: "specializes base logger with JSON formatting for production monitoring"
+
+**For 'implements' relationships (interface implementation):**
+- Explain WHAT contract this class fulfills by implementing the interface
+- Example: "provides database-backed storage conforming to the Repository pattern"
 
 ## Guidelines
 - Use dependency annotations to understand what a symbol builds upon
@@ -224,7 +237,7 @@ export function buildUserPromptEnhanced(
     if (symbol.relationshipsToAnnotate.length > 0) {
       parts.push('Relationships to annotate:');
       for (const rel of symbol.relationshipsToAnnotate) {
-        parts.push(`- → ${rel.toName} (#${rel.toId}) at line ${rel.usageLine}`);
+        parts.push(`- [${rel.relationshipType}] → ${rel.toName} (#${rel.toId}) at line ${rel.usageLine}`);
       }
       parts.push('');
     }
@@ -234,6 +247,25 @@ export function buildUserPromptEnhanced(
     parts.push('```typescript');
     parts.push(symbol.sourceCode);
     parts.push('```');
+    parts.push('');
+
+    // Incoming dependencies (who uses this symbol)
+    if (symbol.incomingDependencyCount > 0) {
+      const shownCount = symbol.incomingDependencies.length;
+      const totalCount = symbol.incomingDependencyCount;
+      if (shownCount < totalCount) {
+        parts.push(`Incoming dependencies (${shownCount} of ${totalCount} total):`);
+      } else {
+        parts.push(`Incoming dependencies (${totalCount}):`);
+      }
+      for (const inc of symbol.incomingDependencies) {
+        parts.push(`- ${inc.name} (${inc.kind}) from ${inc.filePath}`);
+      }
+      parts.push('');
+    }
+
+    // Export status
+    parts.push(`Symbol is exported: ${symbol.isExported ? 'yes' : 'no'}`);
     parts.push('');
   }
 
@@ -256,6 +288,15 @@ export interface DependencyContextEnhanced {
   pure: boolean | null;
 }
 
+export interface IncomingDependencyContext {
+  id: number;
+  name: string;
+  kind: string;
+  filePath: string;
+}
+
+export type RelationshipType = 'uses' | 'extends' | 'implements';
+
 /**
  * Relationship to annotate (outgoing edge from symbol to dependency).
  */
@@ -264,6 +305,7 @@ export interface RelationshipToAnnotate {
   toName: string;
   toKind: string;
   usageLine: number;
+  relationshipType: RelationshipType;
 }
 
 export interface SymbolContextEnhanced {
@@ -274,6 +316,220 @@ export interface SymbolContextEnhanced {
   line: number;
   endLine: number;
   sourceCode: string;
+  isExported: boolean;
   dependencies: DependencyContextEnhanced[];
   relationshipsToAnnotate: RelationshipToAnnotate[];
+  incomingDependencies: IncomingDependencyContext[];
+  incomingDependencyCount: number;
+}
+
+// ============================================================
+// Module Detection Prompts
+// ============================================================
+
+export interface ModuleMemberInfo {
+  id: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  domains: string[];
+  role: string | null;
+}
+
+export interface ModuleCandidate {
+  id: number;
+  members: ModuleMemberInfo[];
+  internalEdges: number;
+  externalEdges: number;
+  dominantDomains: string[];
+  dominantRoles: string[];
+}
+
+/**
+ * Build the system prompt for module naming.
+ */
+export function buildModuleSystemPrompt(): string {
+  return `You are a software architect analyzing module boundaries detected by community detection on a call graph.
+
+## Your Task
+For each module candidate, analyze its members and provide:
+1. A concise, descriptive module name
+2. The architectural layer (controller/service/repository/adapter/utility)
+3. The primary business subsystem/domain
+4. A one-sentence description
+
+## Layers
+- **controller**: Entry points, HTTP handlers, CLI commands, event handlers
+- **service**: Business logic, orchestration, domain rules
+- **repository**: Data access, persistence, external data sources
+- **adapter**: Integration with external systems, APIs, third-party services
+- **utility**: Shared utilities, helpers, pure functions
+
+## Output Format
+Respond with **only** a CSV table:
+
+\`\`\`csv
+module_id,name,layer,subsystem,description
+1,PaymentProcessing,service,payments,"Handles payment request validation and processing"
+2,AccountManagement,service,accounts,"Manages account lifecycle and state transitions"
+3,DatabaseAccess,repository,persistence,"Provides data access layer for all entities"
+\`\`\`
+
+## Guidelines
+- Module names should be PascalCase
+- Prefer names that describe the cohesive purpose (e.g., "PaymentValidation" not "Validators")
+- Layer should match the dominant role of members
+- Subsystem should reflect the business domain
+- Description should explain WHY these symbols are grouped together`;
+}
+
+/**
+ * Build the user prompt for module naming.
+ */
+export function buildModuleUserPrompt(candidates: ModuleCandidate[]): string {
+  const parts: string[] = [];
+
+  parts.push(`## Module Candidates (${candidates.length})`);
+  parts.push('');
+
+  for (const candidate of candidates) {
+    parts.push(`### Module Candidate #${candidate.id} (${candidate.members.length} members)`);
+
+    // Show metrics
+    parts.push(`Internal edges: ${candidate.internalEdges}, External edges: ${candidate.externalEdges}`);
+
+    // Show dominant domains and roles
+    if (candidate.dominantDomains.length > 0) {
+      parts.push(`Dominant domains: ${candidate.dominantDomains.join(', ')}`);
+    }
+    if (candidate.dominantRoles.length > 0) {
+      parts.push(`Dominant roles: ${candidate.dominantRoles.join(', ')}`);
+    }
+    parts.push('');
+
+    // List all members
+    parts.push('Members:');
+    for (const member of candidate.members) {
+      const domainsStr = member.domains.length > 0 ? ` [${member.domains.join(', ')}]` : '';
+      const roleStr = member.role ? ` (${member.role})` : '';
+      parts.push(`- ${member.name} (${member.kind})${roleStr}${domainsStr}`);
+    }
+    parts.push('');
+  }
+
+  parts.push('Provide module annotations in CSV format.');
+
+  return parts.join('\n');
+}
+
+// ============================================================
+// Flow Detection Prompts
+// ============================================================
+
+export interface FlowStepInfo {
+  definitionId: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  depth: number;
+  moduleId: number | null;
+  moduleName: string | null;
+  layer: string | null;
+}
+
+export interface FlowCandidate {
+  id: number;
+  entryPointId: number;
+  entryPointName: string;
+  entryPointKind: string;
+  entryPointFilePath: string;
+  steps: FlowStepInfo[];
+  modulesCrossed: string[];
+  dominantDomains: string[];
+}
+
+/**
+ * Build the system prompt for flow naming.
+ */
+export function buildFlowSystemPrompt(): string {
+  return `You are a software architect analyzing execution flows detected in a codebase.
+
+## Your Task
+For each execution flow (a path from an entry point through the call graph), provide:
+1. A descriptive name for the flow (e.g., "CreateSale", "UserAuthentication", "ListVehicles")
+2. A one-sentence description of what the flow accomplishes
+
+## What is an Execution Flow?
+An execution flow traces the path of a request from an entry point (like a controller or route handler) through the various layers of the system (services, repositories, utilities).
+
+## Output Format
+Respond with **only** a CSV table:
+
+\`\`\`csv
+flow_id,name,description
+1,CreateSale,"Processes a new vehicle sale from customer request to database persistence"
+2,UserLogin,"Authenticates user credentials and establishes a session"
+3,ListVehicles,"Retrieves and filters vehicle inventory for display"
+\`\`\`
+
+## Naming Guidelines
+- Use PascalCase for names (e.g., CreateSale, not create_sale)
+- Names should be action-oriented verbs or verb phrases
+- Names should reflect the business operation, not the technical implementation
+- Keep names concise but descriptive (1-3 words typically)
+- Common patterns: Create*, Update*, Delete*, Get*, List*, Find*, Process*, Handle*
+
+## Description Guidelines
+- One sentence explaining the business purpose
+- Focus on WHAT the flow accomplishes, not HOW
+- Mention the main entities involved (e.g., "vehicle", "sale", "customer")`;
+}
+
+/**
+ * Build the user prompt for flow naming.
+ */
+export function buildFlowUserPrompt(candidates: FlowCandidate[]): string {
+  const parts: string[] = [];
+
+  parts.push(`## Execution Flows to Name (${candidates.length})`);
+  parts.push('');
+
+  for (const candidate of candidates) {
+    parts.push(`### Flow #${candidate.id}`);
+    parts.push(`Entry point: ${candidate.entryPointName} (${candidate.entryPointKind})`);
+    parts.push(`File: ${candidate.entryPointFilePath}`);
+
+    if (candidate.dominantDomains.length > 0) {
+      parts.push(`Domains: ${candidate.dominantDomains.join(', ')}`);
+    }
+
+    parts.push('');
+    parts.push(`Steps (${candidate.steps.length} total):`);
+
+    // Show up to 10 steps, truncate if more
+    const maxSteps = 10;
+    const stepsToShow = Math.min(candidate.steps.length, maxSteps);
+
+    for (let i = 0; i < stepsToShow; i++) {
+      const step = candidate.steps[i];
+      const layerStr = step.layer ? ` [${step.layer}]` : '';
+      const moduleStr = step.moduleName ? ` (${step.moduleName})` : '';
+      parts.push(`  ${i + 1}. ${step.name}${layerStr}${moduleStr}`);
+    }
+
+    if (candidate.steps.length > maxSteps) {
+      parts.push(`  ... and ${candidate.steps.length - maxSteps} more steps`);
+    }
+
+    if (candidate.modulesCrossed.length > 0) {
+      parts.push('');
+      parts.push(`Modules crossed: ${candidate.modulesCrossed.join(' → ')}`);
+    }
+
+    parts.push('');
+  }
+
+  parts.push('Provide flow names and descriptions in CSV format.');
+
+  return parts.join('\n');
 }

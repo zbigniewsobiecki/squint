@@ -57,10 +57,21 @@ export interface DependencyWithMetadata {
   aspectValue: string | null;
 }
 
+export interface IncomingDependency {
+  id: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  line: number;
+}
+
+export type RelationshipType = 'uses' | 'extends' | 'implements';
+
 export interface RelationshipAnnotation {
   id: number;
   fromDefinitionId: number;
   toDefinitionId: number;
+  relationshipType: RelationshipType;
   semantic: string;
   createdAt: string;
 }
@@ -77,6 +88,7 @@ export interface RelationshipWithDetails {
   toKind: string;
   toFilePath: string;
   toLine: number;
+  relationshipType: RelationshipType;
   semantic: string;
 }
 
@@ -89,6 +101,76 @@ export interface Domain {
 
 export interface DomainWithCount extends Domain {
   symbolCount: number;
+}
+
+export type ModuleLayer = 'controller' | 'service' | 'repository' | 'adapter' | 'utility';
+
+export interface Module {
+  id: number;
+  name: string;
+  description: string | null;
+  layer: ModuleLayer | null;
+  subsystem: string | null;
+  createdAt: string;
+}
+
+export interface ModuleMember {
+  moduleId: number;
+  definitionId: number;
+  cohesion: number | null;
+}
+
+export interface ModuleWithMembers extends Module {
+  members: Array<{
+    definitionId: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    cohesion: number | null;
+  }>;
+}
+
+export interface CallGraphEdge {
+  fromId: number;
+  toId: number;
+  weight: number;
+}
+
+// ============================================================
+// Flow Types
+// ============================================================
+
+export interface Flow {
+  id: number;
+  name: string;
+  description: string | null;
+  entryPointId: number;
+  domain: string | null;
+  createdAt: string;
+}
+
+export interface FlowStep {
+  flowId: number;
+  stepOrder: number;
+  definitionId: number;
+  moduleId: number | null;
+  layer: string | null;
+}
+
+export interface FlowWithSteps extends Flow {
+  entryPointName: string;
+  entryPointKind: string;
+  entryPointFilePath: string;
+  steps: Array<{
+    stepOrder: number;
+    definitionId: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    moduleId: number | null;
+    moduleName: string | null;
+    layer: string | null;
+  }>;
 }
 
 export interface EnhancedRelationshipContext {
@@ -259,6 +341,7 @@ CREATE TABLE relationship_annotations (
   id INTEGER PRIMARY KEY,
   from_definition_id INTEGER NOT NULL,
   to_definition_id INTEGER NOT NULL,
+  relationship_type TEXT NOT NULL DEFAULT 'uses',  -- 'uses' | 'extends' | 'implements'
   semantic TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (from_definition_id) REFERENCES definitions(id) ON DELETE CASCADE,
@@ -268,6 +351,7 @@ CREATE TABLE relationship_annotations (
 
 CREATE INDEX idx_relationship_annotations_from ON relationship_annotations(from_definition_id);
 CREATE INDEX idx_relationship_annotations_to ON relationship_annotations(to_definition_id);
+CREATE INDEX idx_relationship_annotations_type ON relationship_annotations(relationship_type);
 
 -- Domain registry for managing business domains
 CREATE TABLE domains (
@@ -278,6 +362,50 @@ CREATE TABLE domains (
 );
 
 CREATE INDEX idx_domains_name ON domains(name);
+
+-- Module boundaries detected via community detection on the call graph
+CREATE TABLE modules (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  layer TEXT,           -- 'controller' | 'service' | 'repository' | 'adapter' | 'utility'
+  subsystem TEXT,       -- e.g., 'payments', 'accounts', 'compliance'
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Mapping of definitions to modules
+CREATE TABLE module_members (
+  module_id INTEGER NOT NULL,
+  definition_id INTEGER NOT NULL,
+  cohesion REAL,        -- 0.0-1.0 how cohesive this member is with the module
+  PRIMARY KEY (module_id, definition_id),
+  FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE,
+  FOREIGN KEY (definition_id) REFERENCES definitions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_module_members_def ON module_members(definition_id);
+
+-- End-to-end execution flows
+CREATE TABLE flows (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  entry_point_id INTEGER NOT NULL REFERENCES definitions(id),
+  domain TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE flow_steps (
+  flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+  step_order INTEGER NOT NULL,
+  definition_id INTEGER NOT NULL REFERENCES definitions(id),
+  module_id INTEGER REFERENCES modules(id),
+  layer TEXT,
+  PRIMARY KEY (flow_id, step_order)
+);
+
+CREATE INDEX idx_flow_steps_def ON flow_steps(definition_id);
+CREATE INDEX idx_flows_entry ON flows(entry_point_id);
 `;
 
 // ============================================================

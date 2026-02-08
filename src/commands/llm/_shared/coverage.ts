@@ -120,7 +120,7 @@ export function formatIterationResults(summary: IterationSummary): string[] {
     // Show first successful value (usually purpose)
     const purposeResult = results.find(r => r.aspect === 'purpose' && r.success);
     const displayValue = purposeResult
-      ? `: "${truncate(purposeResult.value, 60)}"`
+      ? `: "${purposeResult.value}"`
       : '';
 
     lines.push(`  ${icon} ${firstResult.symbolName}${displayValue}`);
@@ -128,10 +128,7 @@ export function formatIterationResults(summary: IterationSummary): string[] {
     // Show aspect annotations (not purpose since it's already shown)
     for (const result of results) {
       if (result.success && result.aspect !== 'purpose') {
-        const shortValue = result.aspect === 'domain'
-          ? result.value
-          : truncate(result.value, 40);
-        lines.push(`    ${result.aspect}: ${shortValue}`);
+        lines.push(`    ${result.aspect}: ${result.value}`);
       }
     }
 
@@ -139,7 +136,7 @@ export function formatIterationResults(summary: IterationSummary): string[] {
     const symbolRels = relsBySymbol.get(symbolId) || [];
     for (const rel of symbolRels) {
       if (rel.success) {
-        lines.push(`    ${chalk.cyan('→')} ${rel.toName}: "${truncate(rel.value, 50)}"`);
+        lines.push(`    ${chalk.cyan('→')} ${rel.toName}: "${rel.value}"`);
       }
     }
 
@@ -223,16 +220,6 @@ export function formatFinalSummary(
   lines.push(`  relationships: ${relationshipCoverage.annotated}/${relationshipCoverage.total} (${relPercentColor(relationshipCoverage.percentage.toFixed(1) + '%')})`);
 
   return lines;
-}
-
-/**
- * Truncate a string to a maximum length.
- */
-function truncate(str: string, maxLength: number): string {
-  if (str.length <= maxLength) {
-    return str;
-  }
-  return str.substring(0, maxLength - 3) + '...';
 }
 
 /**
