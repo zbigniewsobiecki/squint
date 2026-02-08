@@ -64,7 +64,7 @@ export default class ModulesShow extends Command {
       name: string;
       kind: string;
       filePath: string;
-      confidence: number | null;
+      cohesion: number | null;
     }>;
   }, json: boolean): void {
     const jsonData = {
@@ -79,7 +79,7 @@ export default class ModulesShow extends Command {
         name: m.name,
         kind: m.kind,
         filePath: m.filePath,
-        confidence: m.confidence,
+        cohesion: m.cohesion,
       })),
     };
 

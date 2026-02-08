@@ -103,7 +103,7 @@ export default class FlowsTrace extends Command {
   }
 
   private buildTree(
-    db: ReturnType<typeof import('../../db/database.js').IndexDatabase.prototype.getDefinitionById> extends infer T ? { getDefinitionById: (id: number) => T; getDefinitionModule: (id: number) => { module: { id: number; name: string; layer: string | null }; confidence: number | null } | null; getCallGraph: () => Array<{ fromId: number; toId: number; weight: number }> } : never,
+    db: ReturnType<typeof import('../../db/database.js').IndexDatabase.prototype.getDefinitionById> extends infer T ? { getDefinitionById: (id: number) => T; getDefinitionModule: (id: number) => { module: { id: number; name: string; layer: string | null }; cohesion: number | null } | null; getCallGraph: () => Array<{ fromId: number; toId: number; weight: number }> } : never,
     rootId: number,
     trace: Array<{ definitionId: number; depth: number; moduleId: number | null; layer: string | null }>
   ): TraceNode {

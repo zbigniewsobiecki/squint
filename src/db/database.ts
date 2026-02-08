@@ -2792,13 +2792,13 @@ export class IndexDatabase implements IIndexWriter {
   /**
    * Add a member to a module.
    */
-  addModuleMember(moduleId: number, definitionId: number, confidence?: number): void {
+  addModuleMember(moduleId: number, definitionId: number, cohesion?: number): void {
     this.ensureModulesTables();
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO module_members (module_id, definition_id, confidence)
+      INSERT OR REPLACE INTO module_members (module_id, definition_id, cohesion)
       VALUES (?, ?, ?)
     `);
-    stmt.run(moduleId, definitionId, confidence ?? null);
+    stmt.run(moduleId, definitionId, cohesion ?? null);
   }
 
   /**
@@ -2846,7 +2846,7 @@ export class IndexDatabase implements IIndexWriter {
         d.name,
         d.kind,
         f.path as filePath,
-        mm.confidence
+        mm.cohesion
       FROM module_members mm
       JOIN definitions d ON mm.definition_id = d.id
       JOIN files f ON d.file_id = f.id
@@ -2858,7 +2858,7 @@ export class IndexDatabase implements IIndexWriter {
       name: string;
       kind: string;
       filePath: string;
-      confidence: number | null;
+      cohesion: number | null;
     }>;
 
     return { ...module, members };
@@ -2880,7 +2880,7 @@ export class IndexDatabase implements IIndexWriter {
   /**
    * Get module membership for a definition.
    */
-  getDefinitionModule(definitionId: number): { module: Module; confidence: number | null } | null {
+  getDefinitionModule(definitionId: number): { module: Module; cohesion: number | null } | null {
     this.ensureModulesTables();
     const stmt = this.db.prepare(`
       SELECT
@@ -2890,12 +2890,12 @@ export class IndexDatabase implements IIndexWriter {
         m.layer,
         m.subsystem,
         m.created_at as createdAt,
-        mm.confidence
+        mm.cohesion
       FROM module_members mm
       JOIN modules m ON mm.module_id = m.id
       WHERE mm.definition_id = ?
     `);
-    const row = stmt.get(definitionId) as (Module & { confidence: number | null }) | undefined;
+    const row = stmt.get(definitionId) as (Module & { cohesion: number | null }) | undefined;
     if (!row) return null;
 
     return {
@@ -2907,7 +2907,7 @@ export class IndexDatabase implements IIndexWriter {
         subsystem: row.subsystem,
         createdAt: row.createdAt,
       },
-      confidence: row.confidence,
+      cohesion: row.cohesion,
     };
   }
 

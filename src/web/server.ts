@@ -266,7 +266,7 @@ function getModulesData(database: IndexDatabase): {
       name: string;
       kind: string;
       filePath: string;
-      confidence: number | null;
+      cohesion: number | null;
     }>;
   }>;
   stats: {

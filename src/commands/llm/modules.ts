@@ -667,29 +667,41 @@ export default class Modules extends Command {
             subsystem: annotation?.subsystem ?? undefined,
           });
 
-          // Add members with confidence based on internal connectivity
+          // Add members with cohesion based on internal connectivity
           const avgInternalDegree = c.members.length > 1
             ? (c.internalEdges * 2) / c.members.length
             : 0;
 
+          const memberIds = new Set(c.members.map(m => m.id));
+
           for (const member of c.members) {
-            // Calculate member's internal degree
+            // Calculate member's internal and external degree
             let memberInternalDegree = 0;
+            let memberExternalEdges = 0;
             const neighbors = graph.edges.get(member.id);
             if (neighbors) {
-              for (const neighborId of c.members.map(m => m.id)) {
-                if (neighbors.has(neighborId)) {
-                  memberInternalDegree += neighbors.get(neighborId)!;
+              for (const [neighborId, weight] of neighbors) {
+                if (memberIds.has(neighborId)) {
+                  memberInternalDegree += weight;
+                } else {
+                  memberExternalEdges += weight;
                 }
               }
             }
 
-            // Confidence based on how connected this member is to the module
-            const confidence = avgInternalDegree > 0
-              ? Math.min(1.0, memberInternalDegree / avgInternalDegree)
-              : 0.5;
+            // Cohesion calculation
+            let cohesion: number;
+            if (c.members.length === 1) {
+              // For single-node modules: isolated = high cohesion, connected externally = low
+              cohesion = memberExternalEdges > 0 ? 0.0 : 1.0;
+            } else {
+              // For multi-node modules: based on internal connectivity ratio
+              cohesion = avgInternalDegree > 0
+                ? Math.min(1.0, memberInternalDegree / avgInternalDegree)
+                : 0.0;
+            }
 
-            db.addModuleMember(moduleId, member.id, confidence);
+            db.addModuleMember(moduleId, member.id, cohesion);
           }
         }
 
