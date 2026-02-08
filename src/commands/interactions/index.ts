@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { openDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, openDatabase } from '../_shared/index.js';
 
 export default class Interactions extends Command {
   static override description = 'List all detected module interactions';
@@ -35,14 +35,14 @@ export default class Interactions extends Command {
 
       // Apply filters
       if (flags.pattern) {
-        interactions = interactions.filter(i => i.pattern === flags.pattern);
+        interactions = interactions.filter((i) => i.pattern === flags.pattern);
       }
 
       if (flags.module) {
         const moduleFilter = flags.module.toLowerCase();
-        interactions = interactions.filter(i =>
-          i.fromModulePath.toLowerCase().includes(moduleFilter) ||
-          i.toModulePath.toLowerCase().includes(moduleFilter)
+        interactions = interactions.filter(
+          (i) =>
+            i.fromModulePath.toLowerCase().includes(moduleFilter) || i.toModulePath.toLowerCase().includes(moduleFilter)
         );
       }
 
@@ -63,9 +63,9 @@ export default class Interactions extends Command {
       }
 
       // Group by pattern
-      const businessInteractions = interactions.filter(i => i.pattern === 'business');
-      const utilityInteractions = interactions.filter(i => i.pattern === 'utility');
-      const otherInteractions = interactions.filter(i => !i.pattern);
+      const businessInteractions = interactions.filter((i) => i.pattern === 'business');
+      const utilityInteractions = interactions.filter((i) => i.pattern === 'utility');
+      const otherInteractions = interactions.filter((i) => !i.pattern);
 
       this.log(chalk.bold(`Interactions (${interactions.length})`));
       this.log('');
@@ -116,11 +116,12 @@ export default class Interactions extends Command {
     direction: string;
   }): void {
     const arrow = interaction.direction === 'bi' ? '↔' : '→';
-    const patternLabel = interaction.pattern === 'business'
-      ? chalk.cyan('[business]')
-      : interaction.pattern === 'utility'
-        ? chalk.yellow('[utility]')
-        : '';
+    const patternLabel =
+      interaction.pattern === 'business'
+        ? chalk.cyan('[business]')
+        : interaction.pattern === 'utility'
+          ? chalk.yellow('[utility]')
+          : '';
 
     const fromShort = interaction.fromModulePath.split('.').slice(-2).join('.');
     const toShort = interaction.toModulePath.split('.').slice(-2).join('.');

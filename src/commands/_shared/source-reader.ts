@@ -7,11 +7,7 @@ import fs from 'node:fs/promises';
  * @param end End line (1-based, inclusive)
  * @returns Array of source lines, or ['<source code not available>'] on error
  */
-export async function readSourceLines(
-  filePath: string,
-  start: number,
-  end: number
-): Promise<string[]> {
+export async function readSourceLines(filePath: string, start: number, end: number): Promise<string[]> {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
     const lines = content.split('\n');
@@ -29,11 +25,7 @@ export async function readSourceLines(
  * @param end End line (1-based, inclusive)
  * @returns Source code string, or '<source code not available>' on error
  */
-export async function readSourceAsString(
-  filePath: string,
-  start: number,
-  end: number
-): Promise<string> {
+export async function readSourceAsString(filePath: string, start: number, end: number): Promise<string> {
   const lines = await readSourceLines(filePath, start, end);
   return lines.join('\n');
 }

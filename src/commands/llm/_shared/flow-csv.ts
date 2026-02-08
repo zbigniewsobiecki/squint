@@ -69,8 +69,8 @@ export function parseEntryPointClassification(content: string): EntryPointParseR
       continue; // Skip non-entry rows
     }
 
-    const id = parseInt(idStr, 10);
-    if (isNaN(id)) {
+    const id = Number.parseInt(idStr, 10);
+    if (Number.isNaN(id)) {
       errors.push(`Line ${i + 1}: Invalid ID "${idStr}"`);
       continue;
     }
@@ -111,8 +111,8 @@ function isValidConfidence(s: string): s is 'high' | 'medium' | 'low' {
 export interface ParsedFlowStep {
   type: 'definition' | 'subflow';
   order: number;
-  id?: number;         // Definition ID for 'definition' type
-  flowName?: string;   // Flow name for 'subflow' type
+  id?: number; // Definition ID for 'definition' type
+  flowName?: string; // Flow name for 'subflow' type
 }
 
 export interface ParsedFlow {
@@ -176,9 +176,9 @@ export function parseFlowConstruction(content: string): FlowParseResult {
     }
 
     const [type, flowIdStr, field, value] = parsed;
-    const flowId = parseInt(flowIdStr, 10);
+    const flowId = Number.parseInt(flowIdStr, 10);
 
-    if (isNaN(flowId)) {
+    if (Number.isNaN(flowId)) {
       errors.push(`Line ${i + 1}: Invalid flow_id "${flowIdStr}"`);
       continue;
     }
@@ -218,8 +218,8 @@ export function parseFlowConstruction(content: string): FlowParseResult {
         break;
 
       case 'step': {
-        const stepOrder = parseInt(field, 10);
-        if (isNaN(stepOrder)) {
+        const stepOrder = Number.parseInt(field, 10);
+        if (Number.isNaN(stepOrder)) {
           errors.push(`Line ${i + 1}: Invalid step order "${field}"`);
           continue;
         }
@@ -234,8 +234,8 @@ export function parseFlowConstruction(content: string): FlowParseResult {
           });
           flow.isComposite = true;
         } else {
-          const defId = parseInt(stepValue, 10);
-          if (isNaN(defId)) {
+          const defId = Number.parseInt(stepValue, 10);
+          if (Number.isNaN(defId)) {
             errors.push(`Line ${i + 1}: Invalid step definition ID "${stepValue}"`);
             continue;
           }
@@ -249,8 +249,8 @@ export function parseFlowConstruction(content: string): FlowParseResult {
       }
 
       case 'subflow_reason': {
-        const stepOrder = parseInt(field, 10);
-        if (isNaN(stepOrder)) {
+        const stepOrder = Number.parseInt(field, 10);
+        if (Number.isNaN(stepOrder)) {
           errors.push(`Line ${i + 1}: Invalid step order for subflow_reason "${field}"`);
           continue;
         }
@@ -269,7 +269,7 @@ export function parseFlowConstruction(content: string): FlowParseResult {
   }
 
   return {
-    flows: Array.from(flowsMap.values()).filter(f => f.name !== ''),
+    flows: Array.from(flowsMap.values()).filter((f) => f.name !== ''),
     errors,
   };
 }
@@ -281,7 +281,7 @@ export function parseFlowConstruction(content: string): FlowParseResult {
 export interface GapFillSuggestion {
   type: 'new_flow' | 'add_to_existing' | 'new_subflow';
   symbolId: number;
-  targetFlowId?: number;  // For 'add_to_existing'
+  targetFlowId?: number; // For 'add_to_existing'
   reason: string;
 }
 
@@ -329,14 +329,14 @@ export function parseGapFillSuggestions(content: string): GapFillParseResult {
       continue;
     }
 
-    const symbolId = parseInt(symbolIdStr, 10);
-    if (isNaN(symbolId)) {
+    const symbolId = Number.parseInt(symbolIdStr, 10);
+    if (Number.isNaN(symbolId)) {
       errors.push(`Line ${i + 1}: Invalid symbol_id "${symbolIdStr}"`);
       continue;
     }
 
-    const targetFlowId = targetFlowIdStr ? parseInt(targetFlowIdStr, 10) : undefined;
-    if (type === 'add_to_existing' && (targetFlowId === undefined || isNaN(targetFlowId))) {
+    const targetFlowId = targetFlowIdStr ? Number.parseInt(targetFlowIdStr, 10) : undefined;
+    if (type === 'add_to_existing' && (targetFlowId === undefined || Number.isNaN(targetFlowId))) {
       errors.push(`Line ${i + 1}: add_to_existing requires valid target_flow_id`);
       continue;
     }
@@ -344,7 +344,7 @@ export function parseGapFillSuggestions(content: string): GapFillParseResult {
     suggestions.push({
       type,
       symbolId,
-      targetFlowId: targetFlowId && !isNaN(targetFlowId) ? targetFlowId : undefined,
+      targetFlowId: targetFlowId && !Number.isNaN(targetFlowId) ? targetFlowId : undefined,
       reason: reason.trim(),
     });
   }
@@ -395,7 +395,6 @@ function splitCsvLines(csv: string): string[] {
       lines.push(current);
       current = '';
     } else if (char === '\r' && !inQuotes) {
-      continue;
     } else {
       current += char;
     }

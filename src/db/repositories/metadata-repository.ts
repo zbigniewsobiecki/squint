@@ -93,7 +93,7 @@ export class MetadataRepository {
       WHERE key = ?
     `);
     const rows = stmt.all(key) as Array<{ definition_id: number }>;
-    return rows.map(row => row.definition_id);
+    return rows.map((row) => row.definition_id);
   }
 
   /**
@@ -108,7 +108,7 @@ export class MetadataRepository {
       )
     `);
     const rows = stmt.all(key) as Array<{ id: number }>;
-    return rows.map(row => row.id);
+    return rows.map((row) => row.id);
   }
 
   /**
@@ -120,7 +120,7 @@ export class MetadataRepository {
       ORDER BY key
     `);
     const rows = stmt.all() as Array<{ key: string }>;
-    return rows.map(row => row.key);
+    return rows.map((row) => row.key);
   }
 
   /**
@@ -275,7 +275,7 @@ export class MetadataRepository {
       purpose: string | null;
     }>;
 
-    return rows.map(row => ({
+    return rows.map((row) => ({
       id: row.id,
       name: row.name,
       kind: row.kind,

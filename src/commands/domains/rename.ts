@@ -1,13 +1,11 @@
 import { Args, Command } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 export default class Rename extends Command {
   static override description = 'Rename a domain (updates registry and all symbol metadata)';
 
-  static override examples = [
-    '<%= config.bin %> domains rename auth authentication',
-  ];
+  static override examples = ['<%= config.bin %> domains rename auth authentication'];
 
   static override args = {
     oldName: Args.string({ description: 'Current domain name', required: true }),

@@ -1,7 +1,7 @@
+import path from 'node:path';
 import { Args, Command } from '@oclif/core';
 import chalk from 'chalk';
-import path from 'node:path';
-import { withDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 export default class ImportedBy extends Command {
   static override description = 'List files that import a specific file';

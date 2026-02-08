@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { IndexDatabase, computeHash } from '../../src/db/database.js';
 
 describe('Domain Registry', () => {
@@ -54,7 +54,7 @@ describe('Domain Registry', () => {
 
       const domains = db.getDomainsFromRegistry();
       expect(domains).toHaveLength(3);
-      expect(domains.map(d => d.name)).toEqual(['auth', 'customer', 'payment']);
+      expect(domains.map((d) => d.name)).toEqual(['auth', 'customer', 'payment']);
     });
 
     it('returns empty array when no domains registered', () => {
@@ -102,10 +102,10 @@ describe('Domain Registry', () => {
       const domainsWithCounts = db.getDomainsWithCounts();
       expect(domainsWithCounts).toHaveLength(2);
 
-      const authDomain = domainsWithCounts.find(d => d.name === 'auth');
+      const authDomain = domainsWithCounts.find((d) => d.name === 'auth');
       expect(authDomain?.symbolCount).toBe(2);
 
-      const paymentDomain = domainsWithCounts.find(d => d.name === 'payment');
+      const paymentDomain = domainsWithCounts.find((d) => d.name === 'payment');
       expect(paymentDomain?.symbolCount).toBe(1);
     });
 

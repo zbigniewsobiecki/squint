@@ -68,7 +68,7 @@ export function parseCsv(content: string): ParseResult {
     return { rows, errors };
   }
 
-  const [idCol, aspectCol, valueCol] = header.map(h => h.toLowerCase().trim());
+  const [idCol, aspectCol, valueCol] = header.map((h) => h.toLowerCase().trim());
   if (idCol !== 'id' || aspectCol !== 'aspect' || valueCol !== 'value') {
     errors.push(`Invalid header columns: expected "id,aspect,value", got "${header.join(',')}"`);
     return { rows, errors };
@@ -130,8 +130,6 @@ function splitCsvLines(csv: string): string[] {
       lines.push(current);
       current = '';
     } else if (char === '\r' && !inQuotes) {
-      // Skip carriage returns
-      continue;
     } else {
       current += char;
     }
@@ -244,7 +242,7 @@ export function parseCombinedCsv(content: string): CombinedParseResult {
     return { symbols, relationships, errors };
   }
 
-  const [typeCol, idCol, fieldCol, valueCol] = header.map(h => h.toLowerCase().trim());
+  const [typeCol, idCol, fieldCol, valueCol] = header.map((h) => h.toLowerCase().trim());
   if (typeCol !== 'type' || idCol !== 'id' || fieldCol !== 'field' || valueCol !== 'value') {
     errors.push(`Invalid header columns: expected "type,id,field,value", got "${header.join(',')}"`);
     return { symbols, relationships, errors };
@@ -266,11 +264,11 @@ export function parseCombinedCsv(content: string): CombinedParseResult {
       continue;
     }
 
-    const [rowType, id, field, value] = parsed.map(v => v.trim());
+    const [rowType, id, field, value] = parsed.map((v) => v.trim());
 
     if (rowType === 'symbol') {
-      const symbolId = parseInt(id, 10);
-      if (isNaN(symbolId)) {
+      const symbolId = Number.parseInt(id, 10);
+      if (Number.isNaN(symbolId)) {
         errors.push(`Line ${i + 1}: Invalid symbol ID: ${id}`);
         continue;
       }
@@ -280,13 +278,13 @@ export function parseCombinedCsv(content: string): CombinedParseResult {
       }
       symbols.push({ symbolId, aspect: field, value });
     } else if (rowType === 'relationship') {
-      const fromId = parseInt(id, 10);
-      const toId = parseInt(field, 10);
-      if (isNaN(fromId)) {
+      const fromId = Number.parseInt(id, 10);
+      const toId = Number.parseInt(field, 10);
+      if (Number.isNaN(fromId)) {
         errors.push(`Line ${i + 1}: Invalid from_id: ${id}`);
         continue;
       }
-      if (isNaN(toId)) {
+      if (Number.isNaN(toId)) {
         errors.push(`Line ${i + 1}: Invalid to_id: ${field}`);
         continue;
       }

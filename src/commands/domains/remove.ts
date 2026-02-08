@@ -1,6 +1,6 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 export default class Remove extends Command {
   static override description = 'Remove a domain from the registry';
@@ -31,8 +31,10 @@ export default class Remove extends Command {
       const result = db.removeDomain(args.name, flags.force);
 
       if (!result.removed && result.symbolsUsingDomain > 0) {
-        this.log(chalk.yellow(`Cannot remove domain "${args.name}" - ${result.symbolsUsingDomain} symbol(s) still use it.`));
-        this.log(chalk.gray(`Use --force to remove anyway, or merge into another domain first.`));
+        this.log(
+          chalk.yellow(`Cannot remove domain "${args.name}" - ${result.symbolsUsingDomain} symbol(s) still use it.`)
+        );
+        this.log(chalk.gray('Use --force to remove anyway, or merge into another domain first.'));
         return;
       }
 

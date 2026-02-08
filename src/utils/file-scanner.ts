@@ -1,5 +1,5 @@
-import { glob } from 'glob';
 import path from 'node:path';
+import { glob } from 'glob';
 
 const DEFAULT_IGNORE_PATTERNS = [
   '**/node_modules/**',
@@ -18,10 +18,7 @@ export interface ScanOptions {
   ignorePatterns?: string[];
 }
 
-export async function scanDirectory(
-  directory: string,
-  options: ScanOptions = {}
-): Promise<string[]> {
+export async function scanDirectory(directory: string, options: ScanOptions = {}): Promise<string[]> {
   const absoluteDir = path.resolve(directory);
   const ignorePatterns = options.ignorePatterns ?? DEFAULT_IGNORE_PATTERNS;
 

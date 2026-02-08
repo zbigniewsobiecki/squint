@@ -1,6 +1,6 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 export default class Add extends Command {
   static override description = 'Register a new domain';

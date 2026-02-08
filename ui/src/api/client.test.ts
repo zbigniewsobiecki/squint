@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from './client';
 import type { ApiClient } from './client';
 
@@ -97,7 +97,17 @@ describe('client', () => {
     it('fetches modules from /api/modules', async () => {
       const mockData = {
         modules: [
-          { id: 1, parentId: null, slug: 'core', name: 'core', fullPath: 'core', description: null, depth: 0, memberCount: 5, members: [] },
+          {
+            id: 1,
+            parentId: null,
+            slug: 'core',
+            name: 'core',
+            fullPath: 'core',
+            description: null,
+            depth: 0,
+            memberCount: 5,
+            members: [],
+          },
         ],
         stats: { moduleCount: 1, assigned: 5, unassigned: 3 },
       };
@@ -114,7 +124,16 @@ describe('client', () => {
     it('fetches flows from /api/flows', async () => {
       const mockData = {
         flows: [
-          { id: 1, name: 'User Login', slug: 'user-login', entryPath: '/login', stakeholder: 'User', description: null, stepCount: 3, steps: [] },
+          {
+            id: 1,
+            name: 'User Login',
+            slug: 'user-login',
+            entryPath: '/login',
+            stakeholder: 'User',
+            description: null,
+            stepCount: 3,
+            steps: [],
+          },
         ],
         stats: { flowCount: 1, withEntryPointCount: 1, avgStepsPerFlow: 3 },
         coverage: { totalInteractions: 10, coveredByFlows: 5, percentage: 50 },
@@ -148,7 +167,18 @@ describe('client', () => {
     it('fetches interactions from /api/interactions', async () => {
       const mockData = {
         interactions: [
-          { id: 1, fromModuleId: 1, toModuleId: 2, fromModulePath: 'a', toModulePath: 'b', direction: 'forward', weight: 1, pattern: null, symbols: null, semantic: null },
+          {
+            id: 1,
+            fromModuleId: 1,
+            toModuleId: 2,
+            fromModulePath: 'a',
+            toModulePath: 'b',
+            direction: 'forward',
+            weight: 1,
+            pattern: null,
+            symbols: null,
+            semantic: null,
+          },
         ],
         stats: { totalCount: 1, businessCount: 0, utilityCount: 1, biDirectionalCount: 0 },
         relationshipCoverage: {

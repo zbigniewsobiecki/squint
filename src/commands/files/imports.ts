@@ -1,7 +1,7 @@
+import path from 'node:path';
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import path from 'node:path';
-import { withDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 export default class Imports extends Command {
   static override description = 'List files imported by a specific file';
@@ -39,7 +39,7 @@ export default class Imports extends Command {
 
       const imports = db.getFileImports(fileId);
       const filteredImports = flags['exclude-external']
-        ? imports.filter(imp => !imp.isExternal && imp.toFilePath)
+        ? imports.filter((imp) => !imp.isExternal && imp.toFilePath)
         : imports;
 
       if (filteredImports.length === 0) {

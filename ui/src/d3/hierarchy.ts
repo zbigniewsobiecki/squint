@@ -1,4 +1,4 @@
-import type { SymbolNode, SymbolEdge, HierarchyNode, RelationshipType } from '../types/api';
+import type { HierarchyNode, RelationshipType, SymbolEdge, SymbolNode } from '../types/api';
 
 /**
  * Classify relationship by semantic text
@@ -118,9 +118,7 @@ export function buildRelationshipHierarchy(
     };
   }
 
-  const rootChildren = rootIds
-    .map((id) => buildNode(id))
-    .filter((c): c is HierarchyNode => c !== null);
+  const rootChildren = rootIds.map((id) => buildNode(id)).filter((c): c is HierarchyNode => c !== null);
 
   // If no relationships of this type, show message
   if (rootChildren.length === 0) {

@@ -1,15 +1,12 @@
 import { Args, Command } from '@oclif/core';
 import chalk from 'chalk';
-import { openDatabase, SharedFlags } from '../_shared/index.js';
 import type { InteractionWithPaths } from '../../db/schema.js';
+import { SharedFlags, openDatabase } from '../_shared/index.js';
 
 export default class InteractionsShow extends Command {
   static override description = 'Show details for a specific interaction';
 
-  static override examples = [
-    '<%= config.bin %> interactions show 5',
-    '<%= config.bin %> interactions show 5 --json',
-  ];
+  static override examples = ['<%= config.bin %> interactions show 5', '<%= config.bin %> interactions show 5 --json'];
 
   static override args = {
     id: Args.integer({ description: 'Interaction ID', required: true }),
@@ -40,7 +37,7 @@ export default class InteractionsShow extends Command {
 
       // Get module paths
       const modules = db.getAllModules();
-      const moduleMap = new Map(modules.map(m => [m.id, m.fullPath]));
+      const moduleMap = new Map(modules.map((m) => [m.id, m.fullPath]));
 
       const interactionWithPaths: InteractionWithPaths = {
         ...interaction,
@@ -52,10 +49,16 @@ export default class InteractionsShow extends Command {
       const flows = db.getFlowsWithInteraction(args.id);
 
       if (isJson) {
-        this.log(JSON.stringify({
-          interaction: interactionWithPaths,
-          flows: flows.map(f => ({ id: f.id, name: f.name, slug: f.slug })),
-        }, null, 2));
+        this.log(
+          JSON.stringify(
+            {
+              interaction: interactionWithPaths,
+              flows: flows.map((f) => ({ id: f.id, name: f.name, slug: f.slug })),
+            },
+            null,
+            2
+          )
+        );
         return;
       }
 

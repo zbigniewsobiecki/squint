@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { classifyRelationship, buildFileHierarchy, buildRelationshipHierarchy } from './hierarchy';
-import type { SymbolNode, SymbolEdge } from '../types/api';
+import { describe, expect, it } from 'vitest';
+import type { SymbolEdge, SymbolNode } from '../types/api';
+import { buildFileHierarchy, buildRelationshipHierarchy, classifyRelationship } from './hierarchy';
 
 describe('hierarchy', () => {
   describe('classifyRelationship', () => {
@@ -106,7 +106,7 @@ describe('hierarchy', () => {
       const result = buildFileHierarchy(nodes);
 
       expect(result.children).toHaveLength(2);
-      expect(result.children!.map(c => c.name).sort()).toEqual(['lib', 'src']);
+      expect(result.children!.map((c) => c.name).sort()).toEqual(['lib', 'src']);
     });
 
     it('sets value to lines (minimum 1)', () => {
@@ -257,7 +257,7 @@ describe('hierarchy', () => {
       const result = buildRelationshipHierarchy(nodes, edges, 'extends');
 
       expect(result.children).toHaveLength(2);
-      const names = result.children!.map(c => c.name).sort();
+      const names = result.children!.map((c) => c.name).sort();
       expect(names).toEqual(['Base1', 'Base2']);
     });
 
@@ -301,9 +301,7 @@ describe('hierarchy', () => {
     });
 
     it('sets value based on lines of code', () => {
-      const edges: SymbolEdge[] = [
-        { source: 2, target: 1, semantic: 'extends' },
-      ];
+      const edges: SymbolEdge[] = [{ source: 2, target: 1, semantic: 'extends' }];
 
       const result = buildRelationshipHierarchy(baseNodes, edges, 'extends');
 

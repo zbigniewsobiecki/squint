@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
+  type EntryPointCandidate,
+  type FlowConstructionContext,
+  type GapFillingContext,
   buildEntryPointSystemPrompt,
   buildEntryPointUserPrompt,
   buildFlowConstructionSystemPrompt,
@@ -7,9 +10,6 @@ import {
   buildGapFillingSystemPrompt,
   buildGapFillingUserPrompt,
   formatCoverageStats,
-  type EntryPointCandidate,
-  type FlowConstructionContext,
-  type GapFillingContext,
 } from '../../../src/commands/llm/_shared/flow-prompts.js';
 import type { FlowCoverageStats } from '../../../src/db/schema.js';
 

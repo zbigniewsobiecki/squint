@@ -1,9 +1,9 @@
 import type {
-  SymbolGraphResponse,
-  ModulesResponse,
-  FlowsResponse,
   FlowsDagResponse,
+  FlowsResponse,
+  ModulesResponse,
   RelationshipType,
+  SymbolGraphResponse,
 } from '../types/api';
 
 // Application state interface
@@ -17,7 +17,7 @@ export interface AppState {
   // UI state
   currentView: 'force' | 'sunburst' | 'modules' | 'flows';
   selectedGrouping: RelationshipType;
-  selectedFlowId: number | null;  // Currently viewed flow (for detail view)
+  selectedFlowId: number | null; // Currently viewed flow (for detail view)
   selectedFlows: Set<number>;
   expandedModules: Set<number>;
   sidebarCollapsed: boolean;

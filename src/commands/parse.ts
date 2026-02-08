@@ -1,10 +1,10 @@
-import { Command, Args, Flags } from '@oclif/core';
-import chalk from 'chalk';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { Args, Command, Flags } from '@oclif/core';
+import chalk from 'chalk';
+import { type IIndexWriter, IndexDatabase, computeHash } from '../db/database.js';
+import { type ParsedFile, parseFile } from '../parser/ast-parser.js';
 import { scanDirectory } from '../utils/file-scanner.js';
-import { parseFile, type ParsedFile } from '../parser/ast-parser.js';
-import { IndexDatabase, computeHash, type IIndexWriter } from '../db/database.js';
 
 export interface IndexingResult {
   definitionCount: number;
@@ -66,9 +66,7 @@ export function indexParsedFiles(
 
     for (const ref of parsed.references) {
       // Resolve the target file
-      const toFileId = ref.resolvedPath
-        ? fileIdMap.get(ref.resolvedPath) ?? null
-        : null;
+      const toFileId = ref.resolvedPath ? (fileIdMap.get(ref.resolvedPath) ?? null) : null;
 
       const refId = db.insertReference(fromFileId, toFileId, ref);
 
@@ -148,8 +146,7 @@ export function indexParsedFiles(
 }
 
 export default class Parse extends Command {
-  static override description =
-    'Index TypeScript/JavaScript files into an SQLite database';
+  static override description = 'Index TypeScript/JavaScript files into an SQLite database';
 
   static override examples = [
     '<%= config.bin %> ./src',
@@ -193,9 +190,7 @@ export default class Parse extends Command {
     const files = await scanDirectory(directory);
 
     if (files.length === 0) {
-      this.warn(
-        chalk.yellow('No TypeScript or JavaScript files found in the directory')
-      );
+      this.warn(chalk.yellow('No TypeScript or JavaScript files found in the directory'));
       return;
     }
 
@@ -241,11 +236,7 @@ export default class Parse extends Command {
     db.initialize();
 
     // Index parsed files
-    const { definitionCount, referenceCount, usageCount } = indexParsedFiles(
-      parsedFiles,
-      db,
-      directory
-    );
+    const { definitionCount, referenceCount, usageCount } = indexParsedFiles(parsedFiles, db, directory);
 
     // Create inheritance relationships (extends/implements)
     const inheritanceResult = db.createInheritanceRelationships();
@@ -261,7 +252,11 @@ export default class Parse extends Command {
     this.log(chalk.white(`  Symbol usages: ${usageCount}`));
     const totalInheritance = inheritanceResult.extendsCreated + inheritanceResult.implementsCreated;
     if (totalInheritance > 0) {
-      this.log(chalk.white(`  Inheritance relationships: ${totalInheritance} (${inheritanceResult.extendsCreated} extends, ${inheritanceResult.implementsCreated} implements)`));
+      this.log(
+        chalk.white(
+          `  Inheritance relationships: ${totalInheritance} (${inheritanceResult.extendsCreated} extends, ${inheritanceResult.implementsCreated} implements)`
+        )
+      );
     }
     if (errorCount > 0) {
       this.log(chalk.yellow(`  Files with errors: ${errorCount}`));

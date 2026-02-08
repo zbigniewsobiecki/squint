@@ -1,7 +1,7 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { DependencyWithMetadata } from '../../db/database.js';
-import { withDatabase, SymbolResolver, SharedFlags, truncate } from '../_shared/index.js';
+import type { DependencyWithMetadata } from '../../db/database.js';
+import { SharedFlags, SymbolResolver, truncate, withDatabase } from '../_shared/index.js';
 
 interface DepsOutput {
   symbol: {
@@ -61,10 +61,10 @@ export default class Deps extends Command {
       const defDetails = db.getDefinitionById(definition.id);
 
       if (!defDetails) {
-        this.error(chalk.red(`Definition not found`));
+        this.error(chalk.red('Definition not found'));
       }
 
-      const unmetCount = dependencies.filter(d => !d.hasAspect).length;
+      const unmetCount = dependencies.filter((d) => !d.hasAspect).length;
 
       const output: DepsOutput = {
         symbol: {
@@ -102,8 +102,8 @@ export default class Deps extends Command {
     this.log(chalk.gray('─'.repeat(70)));
 
     // Calculate column widths
-    const nameWidth = Math.max(20, ...output.dependencies.map(d => d.name.length));
-    const kindWidth = Math.max(10, ...output.dependencies.map(d => d.kind.length));
+    const nameWidth = Math.max(20, ...output.dependencies.map((d) => d.name.length));
+    const kindWidth = Math.max(10, ...output.dependencies.map((d) => d.kind.length));
 
     // Header row
     if (output.aspect) {
@@ -121,9 +121,7 @@ export default class Deps extends Command {
 
       if (output.aspect) {
         const status = dep.hasAspect ? chalk.green('✓') : chalk.red('✗');
-        const value = dep.aspectValue
-          ? truncate(dep.aspectValue, 40)
-          : chalk.gray('-');
+        const value = dep.aspectValue ? truncate(dep.aspectValue, 40) : chalk.gray('-');
         this.log(`  ${name}  ${chalk.gray(kind)}  ${status}       ${value}`);
       } else {
         const location = `${dep.filePath}:${dep.line}`;

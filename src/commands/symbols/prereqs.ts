@@ -1,7 +1,7 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { DependencyInfo } from '../../db/database.js';
-import { withDatabase, SymbolResolver, SharedFlags } from '../_shared/index.js';
+import type { DependencyInfo } from '../../db/database.js';
+import { SharedFlags, SymbolResolver, withDatabase } from '../_shared/index.js';
 
 interface PrereqInfo extends DependencyInfo {
   unmetDepCount: number;
@@ -68,10 +68,10 @@ export default class Prereqs extends Command {
       const defDetails = db.getDefinitionById(definition.id);
 
       if (!defDetails) {
-        this.error(chalk.red(`Definition not found`));
+        this.error(chalk.red('Definition not found'));
       }
 
-      const readyCount = prerequisites.filter(p => p.unmetDepCount === 0).length;
+      const readyCount = prerequisites.filter((p) => p.unmetDepCount === 0).length;
 
       const output: PrereqsOutput = {
         symbol: {
@@ -97,18 +97,22 @@ export default class Prereqs extends Command {
 
   private outputPlainText(output: PrereqsOutput): void {
     if (output.prerequisites.length === 0) {
-      this.log(chalk.green(`No prerequisites needed for ${chalk.yellow(output.symbol.name)} for aspect '${output.aspect}'.`));
+      this.log(
+        chalk.green(`No prerequisites needed for ${chalk.yellow(output.symbol.name)} for aspect '${output.aspect}'.`)
+      );
       this.log(chalk.gray('The symbol is ready to understand!'));
       return;
     }
 
     // Print header
-    this.log(`Prerequisites to understand ${chalk.yellow(output.symbol.name)} for aspect '${chalk.cyan(output.aspect)}':`);
+    this.log(
+      `Prerequisites to understand ${chalk.yellow(output.symbol.name)} for aspect '${chalk.cyan(output.aspect)}':`
+    );
     this.log(chalk.gray('─'.repeat(70)));
 
     // Calculate column widths
-    const nameWidth = Math.max(20, ...output.prerequisites.map(p => p.name.length));
-    const kindWidth = Math.max(10, ...output.prerequisites.map(p => p.kind.length));
+    const nameWidth = Math.max(20, ...output.prerequisites.map((p) => p.name.length));
+    const kindWidth = Math.max(10, ...output.prerequisites.map((p) => p.kind.length));
 
     // Header row
     const header = `${'#'.padStart(3)}  ${'Name'.padEnd(nameWidth)}  ${'Kind'.padEnd(kindWidth)}  ${'Deps'.padStart(4)}  Location`;

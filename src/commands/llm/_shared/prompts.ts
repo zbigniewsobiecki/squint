@@ -37,7 +37,7 @@ const ASPECT_DESCRIPTIONS: Record<string, string> = {
  */
 export function buildSystemPrompt(aspects: string[]): string {
   const aspectDescs = aspects
-    .map(a => `- **${a}**: ${ASPECT_DESCRIPTIONS[a] || 'A descriptive value for this aspect.'}`)
+    .map((a) => `- **${a}**: ${ASPECT_DESCRIPTIONS[a] || 'A descriptive value for this aspect.'}`)
     .join('\n');
 
   return `You are a code analyst annotating TypeScript/JavaScript code.
@@ -114,11 +114,7 @@ The description depends on the relationship type:
 /**
  * Build the user prompt for a batch of symbols.
  */
-export function buildUserPrompt(
-  symbols: SymbolContext[],
-  aspects: string[],
-  coverage: CoverageInfo[],
-): string {
+export function buildUserPrompt(symbols: SymbolContext[], aspects: string[], coverage: CoverageInfo[]): string {
   const parts: string[] = [];
 
   // Coverage section
@@ -138,9 +134,7 @@ export function buildUserPrompt(
     parts.push(`### #${symbol.id}: ${symbol.name} (${symbol.kind})`);
 
     // File location
-    const lineRange = symbol.line === symbol.endLine
-      ? `${symbol.line}`
-      : `${symbol.line}-${symbol.endLine}`;
+    const lineRange = symbol.line === symbol.endLine ? `${symbol.line}` : `${symbol.line}-${symbol.endLine}`;
     parts.push(`File: ${symbol.filePath}:${lineRange}`);
     parts.push('');
 
@@ -150,9 +144,7 @@ export function buildUserPrompt(
     } else {
       parts.push('Dependencies (with their annotations):');
       for (const dep of symbol.dependencies) {
-        const annotation = dep.aspectValue
-          ? `"${dep.aspectValue}"`
-          : '(not yet annotated)';
+        const annotation = dep.aspectValue ? `"${dep.aspectValue}"` : '(not yet annotated)';
         parts.push(`- ${dep.name} (${dep.kind}): ${annotation}`);
       }
     }
@@ -178,7 +170,7 @@ export function buildUserPrompt(
 export function buildUserPromptEnhanced(
   symbols: SymbolContextEnhanced[],
   aspects: string[],
-  coverage: CoverageInfo[],
+  coverage: CoverageInfo[]
 ): string {
   const parts: string[] = [];
 
@@ -199,9 +191,7 @@ export function buildUserPromptEnhanced(
     parts.push(`### #${symbol.id}: ${symbol.name} (${symbol.kind})`);
 
     // File location
-    const lineRange = symbol.line === symbol.endLine
-      ? `${symbol.line}`
-      : `${symbol.line}-${symbol.endLine}`;
+    const lineRange = symbol.line === symbol.endLine ? `${symbol.line}` : `${symbol.line}-${symbol.endLine}`;
     parts.push(`File: ${symbol.filePath}:${lineRange}`);
     parts.push('');
 
@@ -225,9 +215,7 @@ export function buildUserPromptEnhanced(
           annotations.push(`pure: ${dep.pure}`);
         }
 
-        const annotationStr = annotations.length > 0
-          ? annotations.join(' ')
-          : '(not yet annotated)';
+        const annotationStr = annotations.length > 0 ? annotations.join(' ') : '(not yet annotated)';
         parts.push(`- ${dep.name} (#${dep.id}): ${annotationStr}`);
       }
     }
@@ -421,4 +409,3 @@ export function buildModuleUserPrompt(candidates: ModuleCandidate[]): string {
 
   return parts.join('\n');
 }
-

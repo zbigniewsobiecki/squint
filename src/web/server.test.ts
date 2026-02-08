@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as http from 'node:http';
-import { createServer, startServer, getMimeType, MIME_TYPES } from './server.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IndexDatabase } from '../db/database.js';
+import { MIME_TYPES, createServer, getMimeType, startServer } from './server.js';
 
 // Create a mock database with all required methods
 function createMockDb(): IndexDatabase {
@@ -23,7 +23,9 @@ function createMockDb(): IndexDatabase {
     getModuleStats: vi.fn().mockReturnValue({ moduleCount: 0, assigned: 0, unassigned: 0 }),
     getModuleWithMembers: vi.fn().mockReturnValue(null),
     getAllInteractions: vi.fn().mockReturnValue([]),
-    getInteractionStats: vi.fn().mockReturnValue({ totalCount: 0, businessCount: 0, utilityCount: 0, biDirectionalCount: 0 }),
+    getInteractionStats: vi
+      .fn()
+      .mockReturnValue({ totalCount: 0, businessCount: 0, utilityCount: 0, biDirectionalCount: 0 }),
     getInteractionById: vi.fn().mockReturnValue(null),
     getRelationshipCoverage: vi.fn().mockReturnValue({
       totalRelationships: 0,
@@ -43,7 +45,11 @@ function createMockDb(): IndexDatabase {
 }
 
 // Helper to make HTTP request to server
-function makeRequest(server: http.Server, path: string, method = 'GET'): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> {
+function makeRequest(
+  server: http.Server,
+  path: string,
+  method = 'GET'
+): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> {
   return new Promise((resolve, reject) => {
     const address = server.address();
     if (!address || typeof address === 'string') {
@@ -60,7 +66,9 @@ function makeRequest(server: http.Server, path: string, method = 'GET'): Promise
       },
       (res) => {
         let body = '';
-        res.on('data', (chunk) => { body += chunk; });
+        res.on('data', (chunk) => {
+          body += chunk;
+        });
         res.on('end', () => {
           resolve({ statusCode: res.statusCode!, headers: res.headers, body });
         });
@@ -354,7 +362,12 @@ describe('server', () => {
 
       it('GET /api/interactions returns interactions data', async () => {
         (mockDb.getAllInteractions as any).mockReturnValue([]);
-        (mockDb.getInteractionStats as any).mockReturnValue({ totalCount: 0, businessCount: 0, utilityCount: 0, biDirectionalCount: 0 });
+        (mockDb.getInteractionStats as any).mockReturnValue({
+          totalCount: 0,
+          businessCount: 0,
+          utilityCount: 0,
+          biDirectionalCount: 0,
+        });
         (mockDb.getRelationshipCoverage as any).mockReturnValue({
           totalRelationships: 0,
           crossModuleRelationships: 0,

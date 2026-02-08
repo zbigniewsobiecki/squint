@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { parseContent } from '../../src/parser/ast-parser.js';
 import path from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { parseContent } from '../../src/parser/ast-parser.js';
 
 describe('parseContent', () => {
   it('parses TypeScript content and extracts definitions', () => {
@@ -23,12 +23,12 @@ export const PI = 3.14159;
     expect(result.modifiedAt).toBe('2024-01-01T00:00:00.000Z');
     expect(result.definitions).toHaveLength(2);
 
-    const funcDef = result.definitions.find(d => d.name === 'add');
+    const funcDef = result.definitions.find((d) => d.name === 'add');
     expect(funcDef).toBeDefined();
     expect(funcDef?.kind).toBe('function');
     expect(funcDef?.isExported).toBe(true);
 
-    const constDef = result.definitions.find(d => d.name === 'PI');
+    const constDef = result.definitions.find((d) => d.name === 'PI');
     expect(constDef).toBeDefined();
     expect(constDef?.kind).toBe('const');
     expect(constDef?.isExported).toBe(true);
@@ -72,7 +72,7 @@ const result = add(1, 2);
     expect(result.references[0].isExternal).toBe(false);
     expect(result.references[0].imports).toHaveLength(2);
 
-    const addImport = result.references[0].imports.find(i => i.name === 'add');
+    const addImport = result.references[0].imports.find((i) => i.name === 'add');
     expect(addImport).toBeDefined();
     expect(addImport?.kind).toBe('named');
     expect(addImport?.usages).toHaveLength(1);
@@ -151,10 +151,10 @@ export type UserId = string;
 
     expect(result.definitions).toHaveLength(2);
 
-    const userDef = result.definitions.find(d => d.name === 'User');
+    const userDef = result.definitions.find((d) => d.name === 'User');
     expect(userDef?.kind).toBe('interface');
 
-    const userIdDef = result.definitions.find(d => d.name === 'UserId');
+    const userIdDef = result.definitions.find((d) => d.name === 'UserId');
     expect(userIdDef?.kind).toBe('type');
   });
 });

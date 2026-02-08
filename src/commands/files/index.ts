@@ -1,5 +1,5 @@
 import { Command, Flags } from '@oclif/core';
-import { withDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 export default class Files extends Command {
   static override description = 'List all indexed files';

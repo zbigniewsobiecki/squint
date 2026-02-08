@@ -1,19 +1,16 @@
-import Parser from 'tree-sitter';
-import TypeScript from 'tree-sitter-typescript';
-import JavaScript from 'tree-sitter-javascript';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import Parser from 'tree-sitter';
+import JavaScript from 'tree-sitter-javascript';
+import TypeScript from 'tree-sitter-typescript';
 import { getLanguageFromExtension } from '../utils/file-scanner.js';
+import { type Definition, extractDefinitions } from './definition-extractor.js';
 import {
-  extractReferences,
-  extractInternalUsages,
   type FileReference,
   type InternalSymbolUsage,
+  extractInternalUsages,
+  extractReferences,
 } from './reference-extractor.js';
-import {
-  extractDefinitions,
-  type Definition,
-} from './definition-extractor.js';
 
 export interface ParsedFile {
   language: 'typescript' | 'javascript';
@@ -43,8 +40,6 @@ function getParser(filePath: string): Parser {
       return tsxParser;
     case '.ts':
       return typescriptParser;
-    case '.jsx':
-    case '.js':
     default:
       return javascriptParser;
   }
@@ -80,23 +75,15 @@ export function parseContent(
   };
 }
 
-export async function parseFile(
-  filePath: string,
-  knownFiles: Set<string> = new Set()
-): Promise<ParsedFile> {
-  const [content, stat] = await Promise.all([
-    fs.readFile(filePath, 'utf-8'),
-    fs.stat(filePath),
-  ]);
+export async function parseFile(filePath: string, knownFiles: Set<string> = new Set()): Promise<ParsedFile> {
+  const [content, stat] = await Promise.all([fs.readFile(filePath, 'utf-8'), fs.stat(filePath)]);
   return parseContent(content, filePath, knownFiles, {
     sizeBytes: stat.size,
     modifiedAt: stat.mtime.toISOString(),
   });
 }
 
-export async function parseFiles(
-  filePaths: string[]
-): Promise<Map<string, ParsedFile>> {
+export async function parseFiles(filePaths: string[]): Promise<Map<string, ParsedFile>> {
   const results = new Map<string, ParsedFile>();
   const knownFiles = new Set(filePaths);
 

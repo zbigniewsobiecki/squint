@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { parseContent } from '../../src/parser/ast-parser.js';
 
 describe('definition-extractor inheritance', () => {
@@ -247,7 +247,7 @@ export class ExportedChild extends Parent implements Interface {
 
   describe('regression: exported class extending built-in types', () => {
     it('extracts extends from export class AppError extends Error', () => {
-      const content = `export class AppError extends Error { }`;
+      const content = 'export class AppError extends Error { }';
       const filePath = '/project/error.ts';
       const knownFiles = new Set<string>();
       const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
@@ -297,7 +297,7 @@ app.listen(3000);
 
     const result = parseContent(content, filePath, knownFiles, metadata);
 
-    const appDef = result.definitions.find(d => d.name === 'app');
+    const appDef = result.definitions.find((d) => d.name === 'app');
     expect(appDef).toBeDefined();
     expect(appDef?.kind).toBe('const');
     // Definition starts at line 2 (0-indexed)
@@ -318,7 +318,7 @@ counter++;
 
     const result = parseContent(content, filePath, knownFiles, metadata);
 
-    const counterDef = result.definitions.find(d => d.name === 'counter');
+    const counterDef = result.definitions.find((d) => d.name === 'counter');
     expect(counterDef).toBeDefined();
     expect(counterDef?.kind).toBe('variable');
     expect(counterDef?.position.row).toBe(0);
@@ -339,7 +339,7 @@ console.log(config.port);
 
     const result = parseContent(content, filePath, knownFiles, metadata);
 
-    const configDef = result.definitions.find(d => d.name === 'config');
+    const configDef = result.definitions.find((d) => d.name === 'config');
     expect(configDef).toBeDefined();
     expect(configDef?.isExported).toBe(true);
     // Should extend to end of file (includes trailing newline)
@@ -360,8 +360,8 @@ console.log(a + b);
 
     expect(result.definitions).toHaveLength(2);
 
-    const aDef = result.definitions.find(d => d.name === 'a');
-    const bDef = result.definitions.find(d => d.name === 'b');
+    const aDef = result.definitions.find((d) => d.name === 'a');
+    const bDef = result.definitions.find((d) => d.name === 'b');
 
     // Both should extend to end of file (includes trailing newline)
     expect(aDef?.endPosition.row).toBe(4);
@@ -381,7 +381,7 @@ hello();
 
     const result = parseContent(content, filePath, knownFiles, metadata);
 
-    const helloDef = result.definitions.find(d => d.name === 'hello');
+    const helloDef = result.definitions.find((d) => d.name === 'hello');
     expect(helloDef).toBeDefined();
     expect(helloDef?.kind).toBe('function');
     // Function should end at its closing brace (line 2)
@@ -401,7 +401,7 @@ new MyClass();
 
     const result = parseContent(content, filePath, knownFiles, metadata);
 
-    const classDef = result.definitions.find(d => d.name === 'MyClass');
+    const classDef = result.definitions.find((d) => d.name === 'MyClass');
     expect(classDef).toBeDefined();
     expect(classDef?.kind).toBe('class');
     // Class should end at its closing brace (line 2)

@@ -1,14 +1,10 @@
 import type Database from 'better-sqlite3';
-import type {
-  AnnotatedSymbolInfo,
-  AnnotatedEdgeInfo,
-  CallGraphEdge,
-} from '../schema.js';
 import { ensureRelationshipTypeColumn } from '../schema-manager.js';
+import type { AnnotatedEdgeInfo, AnnotatedSymbolInfo, CallGraphEdge } from '../schema.js';
+import { DefinitionRepository } from './definition-repository.js';
 import { DependencyRepository } from './dependency-repository.js';
 import { MetadataRepository } from './metadata-repository.js';
 import { RelationshipRepository } from './relationship-repository.js';
-import { DefinitionRepository } from './definition-repository.js';
 
 export interface HighConnectivitySymbol {
   id: number;
@@ -61,7 +57,7 @@ export class GraphRepository {
    */
   findCycles(aspect: string): number[][] {
     const { symbols: unannotated } = this.getAllUnannotated(aspect, { limit: 100000 });
-    const ids = new Set(unannotated.map(s => s.id));
+    const ids = new Set(unannotated.map((s) => s.id));
 
     if (ids.size === 0) return [];
 
@@ -69,7 +65,10 @@ export class GraphRepository {
     const adj = new Map<number, number[]>();
     for (const sym of unannotated) {
       const deps = this.deps.getUnmet(sym.id, aspect);
-      adj.set(sym.id, deps.map(d => d.dependencyId).filter(id => ids.has(id)));
+      adj.set(
+        sym.id,
+        deps.map((d) => d.dependencyId).filter((id) => ids.has(id))
+      );
     }
 
     // Tarjan's algorithm state
@@ -119,11 +118,7 @@ export class GraphRepository {
   /**
    * Get call graph neighborhood for a starting definition.
    */
-  getNeighborhood(
-    startId: number,
-    maxDepth: number,
-    maxNodes: number
-  ): NeighborhoodResult {
+  getNeighborhood(startId: number, maxDepth: number, maxNodes: number): NeighborhoodResult {
     // BFS to collect nodes
     const visited = new Set<number>();
     const queue: Array<{ id: number; depth: number }> = [{ id: startId, depth: 0 }];
@@ -175,10 +170,12 @@ export class GraphRepository {
 
       const meta = this.metadata.get(id);
       let domains: string[] | null = null;
-      if (meta['domain']) {
+      if (meta.domain) {
         try {
-          domains = JSON.parse(meta['domain']);
-        } catch { /* ignore */ }
+          domains = JSON.parse(meta.domain);
+        } catch {
+          /* ignore */
+        }
       }
 
       nodes.push({
@@ -189,9 +186,9 @@ export class GraphRepository {
         line: def.line,
         endLine: def.endLine,
         isExported: def.isExported,
-        purpose: meta['purpose'] ?? null,
+        purpose: meta.purpose ?? null,
         domain: domains,
-        role: meta['role'] ?? null,
+        role: meta.role ?? null,
       });
     }
 
@@ -217,12 +214,14 @@ export class GraphRepository {
   /**
    * Get high-connectivity symbols (many incoming/outgoing deps).
    */
-  getHighConnectivitySymbols(options: {
-    minIncoming?: number;
-    minOutgoing?: number;
-    exported?: boolean;
-    limit?: number;
-  } = {}): HighConnectivitySymbol[] {
+  getHighConnectivitySymbols(
+    options: {
+      minIncoming?: number;
+      minOutgoing?: number;
+      exported?: boolean;
+      limit?: number;
+    } = {}
+  ): HighConnectivitySymbol[] {
     const minIncoming = options.minIncoming ?? 0;
     const minOutgoing = options.minOutgoing ?? 0;
     const limit = options.limit ?? 100;
@@ -268,7 +267,7 @@ export class GraphRepository {
       }
     }
 
-    results.sort((a, b) => (b.incomingDeps + b.outgoingDeps) - (a.incomingDeps + a.outgoingDeps));
+    results.sort((a, b) => b.incomingDeps + b.outgoingDeps - (a.incomingDeps + a.outgoingDeps));
     return results.slice(0, limit);
   }
 
@@ -277,7 +276,7 @@ export class GraphRepository {
    */
   edgeExists(fromId: number, toId: number): boolean {
     const edges = this.getCallGraph();
-    return edges.some(e => e.fromId === fromId && e.toId === toId);
+    return edges.some((e) => e.fromId === fromId && e.toId === toId);
   }
 
   /**
@@ -305,7 +304,7 @@ export class GraphRepository {
 
     // Build a map of name -> definition ids
     const nameToIds = new Map<string, number[]>();
-    const allDefs = this.db.prepare(`SELECT id, name FROM definitions`).all() as Array<{
+    const allDefs = this.db.prepare('SELECT id, name FROM definitions').all() as Array<{
       id: number;
       name: string;
     }>;
@@ -350,7 +349,9 @@ export class GraphRepository {
               }
             }
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
     }
 

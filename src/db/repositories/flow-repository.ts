@@ -1,14 +1,14 @@
 import type Database from 'better-sqlite3';
+import { ensureFlowsTables, ensureInteractionsTables, ensureModulesTables } from '../schema-manager.js';
 import type {
+  ExpandedFlow,
   Flow,
+  FlowCoverageStats,
+  FlowStakeholder,
   FlowStep,
   FlowWithSteps,
-  FlowStakeholder,
   InteractionWithPaths,
-  ExpandedFlow,
-  FlowCoverageStats,
 } from '../schema.js';
-import { ensureFlowsTables, ensureInteractionsTables, ensureModulesTables } from '../schema-manager.js';
 
 export interface FlowInsertOptions {
   entryPointId?: number;
@@ -207,7 +207,7 @@ export class FlowRepository {
 
     const stepsRaw = stepsStmt.all(flowId) as Array<FlowStep & InteractionWithPaths>;
 
-    const steps = stepsRaw.map(row => ({
+    const steps = stepsRaw.map((row) => ({
       flowId: row.flowId,
       stepOrder: row.stepOrder,
       interactionId: row.interactionId,
@@ -311,18 +311,21 @@ export class FlowRepository {
     ensureFlowsTables(this.db);
 
     // Auto-calculate step_order if not provided
-    if (stepOrder === undefined) {
-      const maxOrder = this.db.prepare(`
+    let order = stepOrder;
+    if (order === undefined) {
+      const maxOrder = this.db
+        .prepare(`
         SELECT COALESCE(MAX(step_order), 0) as max FROM flow_steps WHERE flow_id = ?
-      `).get(flowId) as { max: number };
-      stepOrder = maxOrder.max + 1;
+      `)
+        .get(flowId) as { max: number };
+      order = maxOrder.max + 1;
     }
 
     const stmt = this.db.prepare(`
       INSERT INTO flow_steps (flow_id, step_order, interaction_id)
       VALUES (?, ?, ?)
     `);
-    stmt.run(flowId, stepOrder, interactionId);
+    stmt.run(flowId, order, interactionId);
   }
 
   /**
@@ -413,7 +416,7 @@ export class FlowRepository {
         description: flowWithSteps.description,
         createdAt: flowWithSteps.createdAt,
       },
-      interactions: flowWithSteps.steps.map(s => s.interaction),
+      interactions: flowWithSteps.steps.map((s) => s.interaction),
     };
   }
 

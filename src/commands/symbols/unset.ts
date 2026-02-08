@@ -1,6 +1,6 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SymbolResolver, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, SymbolResolver, withDatabase } from '../_shared/index.js';
 
 export default class Unset extends Command {
   static override description = 'Remove metadata from a symbol';

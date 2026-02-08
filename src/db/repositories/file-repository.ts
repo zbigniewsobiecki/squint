@@ -53,13 +53,7 @@ export class FileRepository {
       INSERT INTO files (path, language, content_hash, size_bytes, modified_at)
       VALUES (?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(
-      file.path,
-      file.language,
-      file.contentHash,
-      file.sizeBytes,
-      file.modifiedAt
-    );
+    const result = stmt.run(file.path, file.language, file.contentHash, file.sizeBytes, file.modifiedAt);
     return result.lastInsertRowid as number;
   }
 
@@ -246,7 +240,7 @@ export class FileRepository {
       toFilePath: string | null;
     }>;
 
-    return rows.map(row => ({
+    return rows.map((row) => ({
       ...row,
       isExternal: row.isExternal === 1,
       isTypeOnly: row.isTypeOnly === 1,

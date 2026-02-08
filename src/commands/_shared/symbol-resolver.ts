@@ -1,7 +1,7 @@
-import { Command } from '@oclif/core';
-import chalk from 'chalk';
 import path from 'node:path';
-import { IndexDatabase } from '../../db/database.js';
+import type { Command } from '@oclif/core';
+import chalk from 'chalk';
+import type { IndexDatabase } from '../../db/database.js';
 
 export interface ResolvedSymbol {
   id: number;
@@ -32,18 +32,11 @@ export class SymbolResolver {
    * Shows disambiguation options and returns null if user needs to specify more.
    * Throws Command.error() if symbol is not found.
    */
-  resolve(
-    name?: string,
-    id?: number,
-    filePath?: string,
-    flagPrefix?: string
-  ): ResolvedSymbol | null {
+  resolve(name?: string, id?: number, filePath?: string, flagPrefix?: string): ResolvedSymbol | null {
     const prefix = flagPrefix ?? '';
     const idFlag = prefix ? `--${prefix}-id` : '--id';
     const fileFlag = prefix ? `--${prefix}-file` : '--file';
-    const nameRequiredMsg = prefix
-      ? `--${prefix} or ${idFlag} is required`
-      : 'Symbol name is required';
+    const nameRequiredMsg = prefix ? `--${prefix} or ${idFlag} is required` : 'Symbol name is required';
 
     // Direct ID lookup
     if (id !== undefined) {
@@ -68,7 +61,7 @@ export class SymbolResolver {
     // Filter by file if specified
     if (filePath) {
       const resolvedPath = path.resolve(filePath);
-      matches = matches.filter(m => m.filePath === resolvedPath || m.filePath.endsWith(filePath));
+      matches = matches.filter((m) => m.filePath === resolvedPath || m.filePath.endsWith(filePath));
 
       if (matches.length === 0) {
         this.command.error(chalk.red(`No symbol "${name}" found in file "${filePath}"`));
@@ -94,11 +87,7 @@ export class SymbolResolver {
    * Resolve a symbol silently (for batch operations).
    * Returns null if not found or ambiguous, without printing errors.
    */
-  resolveSilent(
-    name?: string,
-    id?: number,
-    filePath?: string
-  ): ResolvedSymbolWithDetails | null {
+  resolveSilent(name?: string, id?: number, filePath?: string): ResolvedSymbolWithDetails | null {
     // Direct ID lookup
     if (id !== undefined) {
       const def = this.db.getDefinitionById(id);
@@ -123,7 +112,7 @@ export class SymbolResolver {
     // Filter by file if specified
     if (filePath) {
       const resolvedPath = path.resolve(filePath);
-      matches = matches.filter(m => m.filePath === resolvedPath || m.filePath.endsWith(filePath));
+      matches = matches.filter((m) => m.filePath === resolvedPath || m.filePath.endsWith(filePath));
       if (matches.length === 0) return null;
     }
 

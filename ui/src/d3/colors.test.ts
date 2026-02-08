@@ -1,17 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import type { HierarchyNode } from '../types/api';
 import {
-  KIND_COLORS,
-  HIERARCHY_COLORS,
-  LAYER_COLORS,
   FLOW_COLORS,
+  HIERARCHY_COLORS,
+  KIND_COLORS,
+  LAYER_COLORS,
   getFlowColor,
-  getKindColor,
   getHierarchyColor,
-  getStrokeColor,
+  getKindColor,
   getLayerFromPath,
   getNodeRadius,
+  getStrokeColor,
 } from './colors';
-import type { HierarchyNode } from '../types/api';
 
 // Helper to create d3-like hierarchy nodes for testing
 function createHierarchyNode(data: HierarchyNode): { data: HierarchyNode } {

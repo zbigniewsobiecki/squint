@@ -4,9 +4,11 @@ import type Database from 'better-sqlite3';
  * Ensure the modules and module_members tables exist with the current schema.
  */
 export function ensureModulesTables(db: Database.Database): void {
-  const tableExists = db.prepare(`
+  const tableExists = db
+    .prepare(`
     SELECT name FROM sqlite_master WHERE type='table' AND name='modules'
-  `).get();
+  `)
+    .get();
 
   if (!tableExists) {
     db.exec(`
@@ -37,9 +39,11 @@ export function ensureModulesTables(db: Database.Database): void {
     `);
   } else {
     // Check if we need to migrate from old schema to new schema
-    const hasSlug = db.prepare(`
+    const hasSlug = db
+      .prepare(`
       SELECT COUNT(*) as count FROM pragma_table_info('modules') WHERE name='slug'
-    `).get() as { count: number };
+    `)
+      .get() as { count: number };
 
     if (hasSlug.count === 0) {
       // Old schema detected - drop and recreate
@@ -80,9 +84,11 @@ export function ensureModulesTables(db: Database.Database): void {
  * Ensure the interactions table exists.
  */
 export function ensureInteractionsTables(db: Database.Database): void {
-  const tableExists = db.prepare(`
+  const tableExists = db
+    .prepare(`
     SELECT name FROM sqlite_master WHERE type='table' AND name='interactions'
-  `).get();
+  `)
+    .get();
 
   if (!tableExists) {
     db.exec(`
@@ -110,9 +116,11 @@ export function ensureInteractionsTables(db: Database.Database): void {
  * Ensure the flows and flow_steps tables exist.
  */
 export function ensureFlowsTables(db: Database.Database): void {
-  const flowsTableExists = db.prepare(`
+  const flowsTableExists = db
+    .prepare(`
     SELECT name FROM sqlite_master WHERE type='table' AND name='flows'
-  `).get();
+  `)
+    .get();
 
   if (!flowsTableExists) {
     db.exec(`
@@ -133,9 +141,11 @@ export function ensureFlowsTables(db: Database.Database): void {
     `);
   } else {
     // Check if we need to migrate from old schema to new schema
-    const hasEntryPointId = db.prepare(`
+    const hasEntryPointId = db
+      .prepare(`
       SELECT COUNT(*) as count FROM pragma_table_info('flows') WHERE name='entry_point_id'
-    `).get() as { count: number };
+    `)
+      .get() as { count: number };
 
     if (hasEntryPointId.count === 0) {
       // Old schema detected - drop and recreate
@@ -162,9 +172,11 @@ export function ensureFlowsTables(db: Database.Database): void {
   }
 
   // Ensure flow_steps table exists
-  const flowStepsTableExists = db.prepare(`
+  const flowStepsTableExists = db
+    .prepare(`
     SELECT name FROM sqlite_master WHERE type='table' AND name='flow_steps'
-  `).get();
+  `)
+    .get();
 
   if (!flowStepsTableExists) {
     db.exec(`
@@ -184,9 +196,11 @@ export function ensureFlowsTables(db: Database.Database): void {
  * Ensure the domains table exists.
  */
 export function ensureDomainsTable(db: Database.Database): void {
-  const tableExists = db.prepare(`
+  const tableExists = db
+    .prepare(`
     SELECT name FROM sqlite_master WHERE type='table' AND name='domains'
-  `).get();
+  `)
+    .get();
 
   if (!tableExists) {
     db.exec(`
@@ -211,6 +225,8 @@ export function ensureRelationshipTypeColumn(db: Database.Database): void {
   } catch {
     // Column doesn't exist, add it
     db.exec(`ALTER TABLE relationship_annotations ADD COLUMN relationship_type TEXT NOT NULL DEFAULT 'uses'`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_relationship_annotations_type ON relationship_annotations(relationship_type)`);
+    db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_relationship_annotations_type ON relationship_annotations(relationship_type)'
+    );
   }
 }

@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { ModuleRepository } from '../../../src/db/repositories/module-repository.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileRepository } from '../../../src/db/repositories/file-repository.js';
 import { MetadataRepository } from '../../../src/db/repositories/metadata-repository.js';
+import { ModuleRepository } from '../../../src/db/repositories/module-repository.js';
 import { SCHEMA } from '../../../src/db/schema.js';
 
 describe('ModuleRepository', () => {
@@ -143,7 +143,7 @@ describe('ModuleRepository', () => {
 
       const children = repo.getChildren(rootId);
       expect(children).toHaveLength(3);
-      expect(children.map(c => c.slug).sort()).toEqual(['api', 'auth', 'core']);
+      expect(children.map((c) => c.slug).sort()).toEqual(['api', 'auth', 'core']);
     });
 
     it('returns empty array for leaf module', () => {
@@ -250,7 +250,7 @@ describe('ModuleRepository', () => {
       metadataRepo.set(defId1, 'domain', '["auth"]');
 
       const unassigned = repo.getUnassigned();
-      const service = unassigned.find(u => u.name === 'ServiceA');
+      const service = unassigned.find((u) => u.name === 'ServiceA');
 
       expect(service!.purpose).toBe('Test purpose');
       expect(service!.domain).toEqual(['auth']);
@@ -309,7 +309,7 @@ describe('ModuleRepository', () => {
       const modulesWithMembers = repo.getAllWithMembers();
 
       expect(modulesWithMembers).toHaveLength(2);
-      const authModule = modulesWithMembers.find(m => m.slug === 'auth');
+      const authModule = modulesWithMembers.find((m) => m.slug === 'auth');
       expect(authModule!.members).toHaveLength(1);
     });
   });
@@ -362,12 +362,17 @@ describe('ModuleRepository', () => {
   describe('getCallGraph', () => {
     it('returns symbol-level call graph', () => {
       // Create a call from defId1 to defId2
-      const symId = fileRepo.insertSymbol(null, defId2, {
-        name: 'ServiceB',
-        localName: 'ServiceB',
-        kind: 'class',
-        usages: [],
-      }, fileId);
+      const symId = fileRepo.insertSymbol(
+        null,
+        defId2,
+        {
+          name: 'ServiceB',
+          localName: 'ServiceB',
+          kind: 'class',
+          usages: [],
+        },
+        fileId
+      );
 
       fileRepo.insertUsage(symId, {
         position: { row: 10, column: 5 },
@@ -378,7 +383,7 @@ describe('ModuleRepository', () => {
       const edges = repo.getCallGraph();
       expect(edges.length).toBeGreaterThan(0);
 
-      const edge = edges.find(e => e.fromId === defId1 && e.toId === defId2);
+      const edge = edges.find((e) => e.fromId === defId1 && e.toId === defId2);
       expect(edge).toBeDefined();
     });
   });
@@ -390,12 +395,17 @@ describe('ModuleRepository', () => {
       repo.assignSymbol(defId1, authId);
 
       // Create a call from defId1 to defId2
-      const symId = fileRepo.insertSymbol(null, defId2, {
-        name: 'ServiceB',
-        localName: 'ServiceB',
-        kind: 'class',
-        usages: [],
-      }, fileId);
+      const symId = fileRepo.insertSymbol(
+        null,
+        defId2,
+        {
+          name: 'ServiceB',
+          localName: 'ServiceB',
+          kind: 'class',
+          usages: [],
+        },
+        fileId
+      );
 
       fileRepo.insertUsage(symId, {
         position: { row: 10, column: 5 },
@@ -406,7 +416,7 @@ describe('ModuleRepository', () => {
       const edges = repo.getIncomingEdgesFor(defId2);
       expect(edges.length).toBeGreaterThan(0);
 
-      const edge = edges.find(e => e.callerId === defId1);
+      const edge = edges.find((e) => e.callerId === defId1);
       expect(edge).toBeDefined();
       expect(edge!.callerModuleId).toBe(authId);
     });

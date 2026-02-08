@@ -51,13 +51,9 @@ export interface IterationSummary {
  */
 export function formatCoverageLine(coverage: CoverageInfo): string {
   const percentage = coverage.percentage.toFixed(1);
-  const percentColor = coverage.percentage >= 80
-    ? chalk.green
-    : coverage.percentage >= 50
-      ? chalk.yellow
-      : chalk.red;
+  const percentColor = coverage.percentage >= 80 ? chalk.green : coverage.percentage >= 50 ? chalk.yellow : chalk.red;
 
-  return `${coverage.aspect}: ${coverage.covered}/${coverage.total} (${percentColor(percentage + '%')})`;
+  return `${coverage.aspect}: ${coverage.covered}/${coverage.total} (${percentColor(`${percentage}%`)})`;
 }
 
 /**
@@ -71,7 +67,7 @@ export function formatCoverageStats(coverage: CoverageInfo[], previousCoverage?:
 
     // Add delta if we have previous coverage
     if (previousCoverage) {
-      const prev = previousCoverage.find(p => p.aspect === c.aspect);
+      const prev = previousCoverage.find((p) => p.aspect === c.aspect);
       if (prev) {
         const delta = c.covered - prev.covered;
         if (delta > 0) {
@@ -114,14 +110,12 @@ export function formatIterationResults(summary: IterationSummary): string[] {
   // Output results grouped by symbol
   for (const [symbolId, results] of bySymbol) {
     const firstResult = results[0];
-    const allSuccessful = results.every(r => r.success);
+    const allSuccessful = results.every((r) => r.success);
     const icon = allSuccessful ? chalk.green('✓') : chalk.red('✗');
 
     // Show first successful value (usually purpose)
-    const purposeResult = results.find(r => r.aspect === 'purpose' && r.success);
-    const displayValue = purposeResult
-      ? `: "${purposeResult.value}"`
-      : '';
+    const purposeResult = results.find((r) => r.aspect === 'purpose' && r.success);
+    const displayValue = purposeResult ? `: "${purposeResult.value}"` : '';
 
     lines.push(`  ${icon} ${firstResult.symbolName}${displayValue}`);
 
@@ -154,7 +148,7 @@ export function formatIterationResults(summary: IterationSummary): string[] {
   }
 
   // Show errors for missing symbols
-  const symbolIds = new Set(summary.results.map(r => r.symbolId));
+  const symbolIds = new Set(summary.results.map((r) => r.symbolId));
   if (symbolIds.size === 0 && summary.results.length === 0) {
     lines.push(`  ${chalk.yellow('No annotations received from LLM')}`);
   }
@@ -168,16 +162,16 @@ export function formatIterationResults(summary: IterationSummary): string[] {
   }
   // Add relationship coverage
   const relCov = summary.relationshipCoverage;
-  const relPercentColor = relCov.percentage >= 80
-    ? chalk.green
-    : relCov.percentage >= 50
-      ? chalk.yellow
-      : chalk.red;
-  lines.push(`  relationships: ${relCov.annotated}/${relCov.total} (${relPercentColor(relCov.percentage.toFixed(1) + '%')})`);
+  const relPercentColor = relCov.percentage >= 80 ? chalk.green : relCov.percentage >= 50 ? chalk.yellow : chalk.red;
+  lines.push(
+    `  relationships: ${relCov.annotated}/${relCov.total} (${relPercentColor(`${relCov.percentage.toFixed(1)}%`)})`
+  );
 
   // Ready/blocked counts
   lines.push('');
-  lines.push(`Ready: ${chalk.cyan(summary.readyCount)} symbols | Blocked: ${chalk.gray(summary.blockedCount)} (unmet deps)`);
+  lines.push(
+    `Ready: ${chalk.cyan(summary.readyCount)} symbols | Blocked: ${chalk.gray(summary.blockedCount)} (unmet deps)`
+  );
 
   return lines;
 }
@@ -191,7 +185,7 @@ export function formatFinalSummary(
   totalErrors: number,
   iterations: number,
   coverage: CoverageInfo[],
-  relationshipCoverage: RelationshipCoverageInfo,
+  relationshipCoverage: RelationshipCoverageInfo
 ): string[] {
   const lines: string[] = [];
 
@@ -212,12 +206,15 @@ export function formatFinalSummary(
     lines.push(`  ${formatCoverageLine(c)}`);
   }
   // Add relationship coverage
-  const relPercentColor = relationshipCoverage.percentage >= 80
-    ? chalk.green
-    : relationshipCoverage.percentage >= 50
-      ? chalk.yellow
-      : chalk.red;
-  lines.push(`  relationships: ${relationshipCoverage.annotated}/${relationshipCoverage.total} (${relPercentColor(relationshipCoverage.percentage.toFixed(1) + '%')})`);
+  const relPercentColor =
+    relationshipCoverage.percentage >= 80
+      ? chalk.green
+      : relationshipCoverage.percentage >= 50
+        ? chalk.yellow
+        : chalk.red;
+  lines.push(
+    `  relationships: ${relationshipCoverage.annotated}/${relationshipCoverage.total} (${relPercentColor(`${relationshipCoverage.percentage.toFixed(1)}%`)})`
+  );
 
   return lines;
 }
@@ -228,12 +225,12 @@ export function formatFinalSummary(
 export function filterCoverageForAspects(
   allCoverage: CoverageInfo[],
   aspects: string[],
-  totalSymbols: number,
+  totalSymbols: number
 ): CoverageInfo[] {
   const result: CoverageInfo[] = [];
 
   for (const aspect of aspects) {
-    const existing = allCoverage.find(c => c.aspect === aspect);
+    const existing = allCoverage.find((c) => c.aspect === aspect);
     if (existing) {
       result.push(existing);
     } else {

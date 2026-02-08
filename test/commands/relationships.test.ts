@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { IndexDatabase, computeHash } from '../../src/db/database.js';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { IndexDatabase, computeHash } from '../../src/db/database.js';
 
 describe('relationships commands', () => {
   let testDir: string;
@@ -26,7 +26,9 @@ describe('relationships commands', () => {
     const controllerPath = path.join(testDir, 'controller.ts');
     const servicePath = path.join(testDir, 'service.ts');
 
-    fs.writeFileSync(controllerPath, `
+    fs.writeFileSync(
+      controllerPath,
+      `
 import { authService, userService } from './service';
 
 export async function loginController(req: Request) {
@@ -35,9 +37,12 @@ export async function loginController(req: Request) {
   const profile = await userService.getProfile(user.id);
   return { user, profile };
 }
-`.trim());
+`.trim()
+    );
 
-    fs.writeFileSync(servicePath, `
+    fs.writeFileSync(
+      servicePath,
+      `
 export const authService = {
   async authenticate(email: string, password: string) {
     // validate credentials
@@ -51,7 +56,8 @@ export const userService = {
     return { name: 'Test User' };
   }
 };
-`.trim());
+`.trim()
+    );
 
     // Insert test files
     const controllerFileId = db.insertFile({
@@ -301,9 +307,7 @@ export const userService = {
     });
 
     it('removes annotation by symbol names', () => {
-      const output = runCommand(
-        `relationships unset --from loginController --to authService -d ${dbPath}`
-      );
+      const output = runCommand(`relationships unset --from loginController --to authService -d ${dbPath}`);
       expect(output).toContain('Removed');
     });
 

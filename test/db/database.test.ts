@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { IndexDatabase, computeHash } from '../../src/db/database.js';
 import type { Definition } from '../../src/parser/definition-extractor.js';
 import type { FileReference, ImportedSymbol, SymbolUsage } from '../../src/parser/reference-extractor.js';
@@ -928,13 +928,13 @@ describe('IndexDatabase', () => {
       const coverage = db.getAspectCoverage();
       expect(coverage).toHaveLength(2);
 
-      const purposeCoverage = coverage.find(c => c.aspect === 'purpose');
+      const purposeCoverage = coverage.find((c) => c.aspect === 'purpose');
       expect(purposeCoverage).toBeDefined();
       expect(purposeCoverage!.covered).toBe(2);
       expect(purposeCoverage!.total).toBe(3);
       expect(purposeCoverage!.percentage).toBeCloseTo(66.7, 1);
 
-      const ownerCoverage = coverage.find(c => c.aspect === 'owner');
+      const ownerCoverage = coverage.find((c) => c.aspect === 'owner');
       expect(ownerCoverage).toBeDefined();
       expect(ownerCoverage!.covered).toBe(1);
       expect(ownerCoverage!.total).toBe(3);
@@ -1122,12 +1122,12 @@ describe('IndexDatabase', () => {
       const deps = db.getDependenciesWithMetadata(mainDefId, 'purpose');
       expect(deps).toHaveLength(2);
 
-      const helperDep = deps.find(d => d.name === 'helper');
+      const helperDep = deps.find((d) => d.name === 'helper');
       expect(helperDep).toBeDefined();
       expect(helperDep!.hasAspect).toBe(true);
       expect(helperDep!.aspectValue).toBe('A helper function');
 
-      const utilDep = deps.find(d => d.name === 'util');
+      const utilDep = deps.find((d) => d.name === 'util');
       expect(utilDep).toBeDefined();
       expect(utilDep!.hasAspect).toBe(false);
       expect(utilDep!.aspectValue).toBeNull();
@@ -1352,26 +1352,41 @@ describe('IndexDatabase', () => {
       });
 
       // Create internal symbols for same-file references
-      const sym3 = db.insertSymbol(null, func3Id, {
-        name: 'func3',
-        localName: 'func3',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const sym3 = db.insertSymbol(
+        null,
+        func3Id,
+        {
+          name: 'func3',
+          localName: 'func3',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
-      const sym2 = db.insertSymbol(null, func2Id, {
-        name: 'func2',
-        localName: 'func2',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const sym2 = db.insertSymbol(
+        null,
+        func2Id,
+        {
+          name: 'func2',
+          localName: 'func2',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
-      const sym1 = db.insertSymbol(null, func1Id, {
-        name: 'func1',
-        localName: 'func1',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const sym1 = db.insertSymbol(
+        null,
+        func1Id,
+        {
+          name: 'func1',
+          localName: 'func1',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
       // func2 calls func3
       db.insertUsage(sym3, {
@@ -1397,7 +1412,7 @@ describe('IndexDatabase', () => {
       // Should return func3, func2, func1 in order (leaves first)
       expect(prereqs.length).toBeGreaterThanOrEqual(1);
       // Leaves (0 deps) should come first
-      const leafNodes = prereqs.filter(p => p.unmetDepCount === 0);
+      const leafNodes = prereqs.filter((p) => p.unmetDepCount === 0);
       expect(leafNodes.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -1452,19 +1467,29 @@ describe('IndexDatabase', () => {
       });
 
       // Create internal symbols
-      const symA = db.insertSymbol(null, funcAId, {
-        name: 'funcA',
-        localName: 'funcA',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const symA = db.insertSymbol(
+        null,
+        funcAId,
+        {
+          name: 'funcA',
+          localName: 'funcA',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
-      const symB = db.insertSymbol(null, funcBId, {
-        name: 'funcB',
-        localName: 'funcB',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const symB = db.insertSymbol(
+        null,
+        funcBId,
+        {
+          name: 'funcB',
+          localName: 'funcB',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
       // funcA calls funcB
       db.insertUsage(symB, {
@@ -1552,7 +1577,7 @@ describe('IndexDatabase', () => {
 
       const subclasses = db.getSubclasses('Animal');
       expect(subclasses).toHaveLength(3);
-      expect(subclasses.map(s => s.name).sort()).toEqual(['Bird', 'Cat', 'Dog']);
+      expect(subclasses.map((s) => s.name).sort()).toEqual(['Bird', 'Cat', 'Dog']);
     });
 
     it('stores and retrieves implements relationship', () => {
@@ -1716,19 +1741,29 @@ describe('IndexDatabase', () => {
       });
 
       // Create symbols for internal references
-      const symB = db.insertSymbol(null, defB, {
-        name: 'funcB',
-        localName: 'funcB',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const symB = db.insertSymbol(
+        null,
+        defB,
+        {
+          name: 'funcB',
+          localName: 'funcB',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
-      const symC = db.insertSymbol(null, defC, {
-        name: 'funcC',
-        localName: 'funcC',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const symC = db.insertSymbol(
+        null,
+        defC,
+        {
+          name: 'funcC',
+          localName: 'funcC',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
       // A calls B
       db.insertUsage(symB, {
@@ -1774,19 +1809,29 @@ describe('IndexDatabase', () => {
       });
 
       // Create symbols
-      const symA = db.insertSymbol(null, defA, {
-        name: 'funcA',
-        localName: 'funcA',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const symA = db.insertSymbol(
+        null,
+        defA,
+        {
+          name: 'funcA',
+          localName: 'funcA',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
-      const symB = db.insertSymbol(null, defB, {
-        name: 'funcB',
-        localName: 'funcB',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const symB = db.insertSymbol(
+        null,
+        defB,
+        {
+          name: 'funcB',
+          localName: 'funcB',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
       // A calls B
       db.insertUsage(symB, {
@@ -1843,26 +1888,41 @@ describe('IndexDatabase', () => {
       });
 
       // Create symbols
-      const symA = db.insertSymbol(null, defA, {
-        name: 'funcA',
-        localName: 'funcA',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const symA = db.insertSymbol(
+        null,
+        defA,
+        {
+          name: 'funcA',
+          localName: 'funcA',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
-      const symB = db.insertSymbol(null, defB, {
-        name: 'funcB',
-        localName: 'funcB',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const symB = db.insertSymbol(
+        null,
+        defB,
+        {
+          name: 'funcB',
+          localName: 'funcB',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
-      const symC = db.insertSymbol(null, defC, {
-        name: 'funcC',
-        localName: 'funcC',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const symC = db.insertSymbol(
+        null,
+        defC,
+        {
+          name: 'funcC',
+          localName: 'funcC',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
       // A calls B
       db.insertUsage(symB, {
@@ -1916,19 +1976,29 @@ describe('IndexDatabase', () => {
       });
 
       // Create symbols
-      const symA = db.insertSymbol(null, defA, {
-        name: 'funcA',
-        localName: 'funcA',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const symA = db.insertSymbol(
+        null,
+        defA,
+        {
+          name: 'funcA',
+          localName: 'funcA',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
-      const symB = db.insertSymbol(null, defB, {
-        name: 'funcB',
-        localName: 'funcB',
-        kind: 'named',
-        usages: [],
-      }, fileId);
+      const symB = db.insertSymbol(
+        null,
+        defB,
+        {
+          name: 'funcB',
+          localName: 'funcB',
+          kind: 'named',
+          usages: [],
+        },
+        fileId
+      );
 
       // A calls B, B calls A (creating cycle)
       db.insertUsage(symB, { position: { row: 2, column: 10 }, context: 'call_expression' });
@@ -2081,7 +2151,7 @@ describe('IndexDatabase', () => {
 
       const symbols = db.getUnassignedSymbols();
       expect(symbols).toHaveLength(3);
-      expect(symbols.map(s => s.name).sort()).toEqual(['User', 'UserType', 'createUser']);
+      expect(symbols.map((s) => s.name).sort()).toEqual(['User', 'UserType', 'createUser']);
     });
 
     it('excludes assigned definitions', () => {
@@ -2180,7 +2250,7 @@ describe('IndexDatabase', () => {
 
       // Create a call usage inside the caller's span
       db.insertUsage(symbolId, {
-        position: { row: 5, column: 10 },  // Within getUser's span (0-10)
+        position: { row: 5, column: 10 }, // Within getUser's span (0-10)
         context: 'call_expression',
         callsite: {
           argumentCount: 1,
@@ -2241,7 +2311,7 @@ describe('IndexDatabase', () => {
       db.insertDefinition(fileId, {
         name: 'internal',
         kind: 'function',
-        isExported: false,  // Not exported
+        isExported: false, // Not exported
         isDefault: false,
         position: { row: 11, column: 0 },
         endPosition: { row: 15, column: 1 },
@@ -2308,7 +2378,7 @@ describe('IndexDatabase', () => {
       });
 
       db.insertUsage(symbolId, {
-        position: { row: 5, column: 4 },  // Within main's span
+        position: { row: 5, column: 4 }, // Within main's span
         context: 'call_expression',
         callsite: {
           argumentCount: 0,
@@ -2319,8 +2389,8 @@ describe('IndexDatabase', () => {
 
       const roots = db.getRootDefinitions();
       // Only main should be a root; helper is called
-      expect(roots.map(r => r.name)).toContain('main');
-      expect(roots.map(r => r.name)).not.toContain('helper');
+      expect(roots.map((r) => r.name)).toContain('main');
+      expect(roots.map((r) => r.name)).not.toContain('helper');
     });
   });
 });

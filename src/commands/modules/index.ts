@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SharedFlags, outputJsonOrPlain, tableSeparator } from '../_shared/index.js';
+import { SharedFlags, outputJsonOrPlain, tableSeparator, withDatabase } from '../_shared/index.js';
 
 export default class Modules extends Command {
   static override description = 'List all modules with member counts';
@@ -29,7 +29,7 @@ export default class Modules extends Command {
       const stats = db.getModuleStats();
 
       const jsonData = {
-        modules: allModules.map(m => ({
+        modules: allModules.map((m) => ({
           id: m.id,
           parentId: m.parentId,
           slug: m.slug,
@@ -52,7 +52,9 @@ export default class Modules extends Command {
           return;
         }
 
-        this.log(`Modules (${chalk.cyan(String(allModules.length))} total, ${chalk.cyan(String(stats.assigned))} symbols assigned)`);
+        this.log(
+          `Modules (${chalk.cyan(String(allModules.length))} total, ${chalk.cyan(String(stats.assigned))} symbols assigned)`
+        );
         this.log('');
 
         if (flags.tree) {
@@ -63,15 +65,13 @@ export default class Modules extends Command {
           }
         } else {
           // Table display
-          const pathWidth = Math.max(30, ...allModules.map(m => m.fullPath.length));
-          const nameWidth = Math.max(16, ...allModules.map(m => m.name.length));
+          const pathWidth = Math.max(30, ...allModules.map((m) => m.fullPath.length));
+          const nameWidth = Math.max(16, ...allModules.map((m) => m.name.length));
           const membersWidth = 8;
 
           // Header
           this.log(
-            chalk.gray('Path'.padEnd(pathWidth)) + '  ' +
-            chalk.gray('Name'.padEnd(nameWidth)) + '  ' +
-            chalk.gray('Members'.padEnd(membersWidth))
+            `${chalk.gray('Path'.padEnd(pathWidth))}  ${chalk.gray('Name'.padEnd(nameWidth))}  ${chalk.gray('Members'.padEnd(membersWidth))}`
           );
           this.log(tableSeparator(pathWidth + nameWidth + membersWidth + 10));
 
@@ -79,7 +79,9 @@ export default class Modules extends Command {
           for (const m of allModules) {
             const path = m.fullPath.padEnd(pathWidth);
             const name = m.name.padEnd(nameWidth);
-            const members = String(m.members.length).padStart(membersWidth - 1).padEnd(membersWidth);
+            const members = String(m.members.length)
+              .padStart(membersWidth - 1)
+              .padEnd(membersWidth);
 
             this.log(`${chalk.cyan(path)}  ${name}  ${members}`);
           }
@@ -95,14 +97,14 @@ export default class Modules extends Command {
   private printTree(
     node: { fullPath: string; name: string; description: string | null; children: unknown[] },
     prefix: string,
-    isLast: boolean,
+    isLast: boolean
   ): void {
     const connector = isLast ? '└── ' : '├── ';
     const line = prefix + connector + chalk.cyan(node.name);
     const desc = node.description ? chalk.gray(` - ${node.description}`) : '';
     this.log(line + desc);
 
-    const children = node.children as typeof node[];
+    const children = node.children as (typeof node)[];
     const newPrefix = prefix + (isLast ? '    ' : '│   ');
 
     for (let i = 0; i < children.length; i++) {

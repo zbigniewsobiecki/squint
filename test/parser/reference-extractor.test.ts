@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { resolveImportPath } from '../../src/parser/reference-extractor.js';
+import { describe, expect, it } from 'vitest';
 import { parseContent } from '../../src/parser/ast-parser.js';
+import { resolveImportPath } from '../../src/parser/reference-extractor.js';
 import type { FileReference } from '../../src/parser/reference-extractor.js';
 
 describe('resolveImportPath', () => {
@@ -80,7 +80,7 @@ const result = add(1, 2);
     const result = parseContent(content, filePath, knownFiles, metadata);
 
     expect(result.references).toHaveLength(1);
-    const addImport = result.references[0].imports.find(i => i.name === 'add');
+    const addImport = result.references[0].imports.find((i) => i.name === 'add');
     expect(addImport).toBeDefined();
     expect(addImport?.usages).toHaveLength(1);
 
@@ -104,7 +104,7 @@ const instance = new MyClass('arg1', 'arg2', 'arg3');
     const result = parseContent(content, filePath, knownFiles, metadata);
 
     expect(result.references).toHaveLength(1);
-    const classImport = result.references[0].imports.find(i => i.name === 'MyClass');
+    const classImport = result.references[0].imports.find((i) => i.name === 'MyClass');
     expect(classImport).toBeDefined();
     expect(classImport?.usages).toHaveLength(1);
 
@@ -128,7 +128,7 @@ api.fetchData(url, options);
     const result = parseContent(content, filePath, knownFiles, metadata);
 
     expect(result.references).toHaveLength(1);
-    const apiImport = result.references[0].imports.find(i => i.name === 'api');
+    const apiImport = result.references[0].imports.find((i) => i.name === 'api');
     expect(apiImport).toBeDefined();
     expect(apiImport?.usages).toHaveLength(1);
 
@@ -152,7 +152,7 @@ const config = getConfig();
 
     const result = parseContent(content, filePath, knownFiles, metadata);
 
-    const configImport = result.references[0].imports.find(i => i.name === 'getConfig');
+    const configImport = result.references[0].imports.find((i) => i.name === 'getConfig');
     expect(configImport?.usages[0]?.callsite?.argumentCount).toBe(0);
     expect(configImport?.usages[0]?.callsite?.isMethodCall).toBe(false);
   });
@@ -168,7 +168,7 @@ const fn = helper;  // assignment, not a call
 
     const result = parseContent(content, filePath, knownFiles, metadata);
 
-    const helperImport = result.references[0].imports.find(i => i.name === 'helper');
+    const helperImport = result.references[0].imports.find((i) => i.name === 'helper');
     expect(helperImport?.usages).toHaveLength(1);
     expect(helperImport?.usages[0]?.callsite).toBeUndefined();
   });
@@ -185,7 +185,7 @@ const b = format('world', 'extra');
 
     const result = parseContent(content, filePath, knownFiles, metadata);
 
-    const formatImport = result.references[0].imports.find(i => i.name === 'format');
+    const formatImport = result.references[0].imports.find((i) => i.name === 'format');
     expect(formatImport?.usages).toHaveLength(2);
     expect(formatImport?.usages[0]?.callsite?.argumentCount).toBe(1);
     expect(formatImport?.usages[1]?.callsite?.argumentCount).toBe(2);
@@ -207,12 +207,12 @@ describe('re-export tracking', () => {
     expect(ref.type).toBe('re-export');
 
     // Each re-exported symbol should have a synthetic usage
-    const fooImport = ref.imports.find(i => i.name === 'foo');
+    const fooImport = ref.imports.find((i) => i.name === 'foo');
     expect(fooImport).toBeDefined();
     expect(fooImport?.usages).toHaveLength(1);
     expect(fooImport?.usages[0]?.context).toBe('re-export');
 
-    const barImport = ref.imports.find(i => i.name === 'bar');
+    const barImport = ref.imports.find((i) => i.name === 'bar');
     expect(barImport).toBeDefined();
     expect(barImport?.usages).toHaveLength(1);
     expect(barImport?.usages[0]?.context).toBe('re-export');
@@ -228,7 +228,7 @@ describe('re-export tracking', () => {
     expect(result.references).toHaveLength(1);
     const ref = result.references[0];
 
-    const fooImport = ref.imports.find(i => i.name === 'foo');
+    const fooImport = ref.imports.find((i) => i.name === 'foo');
     expect(fooImport).toBeDefined();
     expect(fooImport?.localName).toBe('renamedFoo');
     expect(fooImport?.usages).toHaveLength(1);
@@ -247,7 +247,7 @@ describe('re-export tracking', () => {
     expect(ref.type).toBe('export-all');
 
     // Namespace re-export should have a synthetic usage
-    const namespaceImport = ref.imports.find(i => i.name === '*');
+    const namespaceImport = ref.imports.find((i) => i.name === '*');
     expect(namespaceImport).toBeDefined();
     expect(namespaceImport?.usages).toHaveLength(1);
     expect(namespaceImport?.usages[0]?.context).toBe('re-export');
@@ -262,7 +262,7 @@ export { query } from './database';`;
     const result = parseContent(content, filePath, knownFiles, metadata);
 
     const ref = result.references[0];
-    const queryImport = ref.imports.find(i => i.name === 'query');
+    const queryImport = ref.imports.find((i) => i.name === 'query');
 
     // The synthetic usage should be at the export statement's position (line 1, 0-indexed)
     expect(queryImport?.usages[0]?.position.row).toBe(1);
@@ -276,27 +276,23 @@ export { b, c } from './moduleB';
 export * from './moduleC';
 `;
     const filePath = '/project/index.ts';
-    const knownFiles = new Set([
-      '/project/moduleA.ts',
-      '/project/moduleB.ts',
-      '/project/moduleC.ts',
-    ]);
+    const knownFiles = new Set(['/project/moduleA.ts', '/project/moduleB.ts', '/project/moduleC.ts']);
 
     const result = parseContent(content, filePath, knownFiles, metadata);
 
     expect(result.references).toHaveLength(3);
 
     // First re-export: { a }
-    const refA = result.references.find(r => r.source === './moduleA') as FileReference;
-    expect(refA.imports.find(i => i.name === 'a')?.usages).toHaveLength(1);
+    const refA = result.references.find((r) => r.source === './moduleA') as FileReference;
+    expect(refA.imports.find((i) => i.name === 'a')?.usages).toHaveLength(1);
 
     // Second re-export: { b, c }
-    const refB = result.references.find(r => r.source === './moduleB') as FileReference;
-    expect(refB.imports.find(i => i.name === 'b')?.usages).toHaveLength(1);
-    expect(refB.imports.find(i => i.name === 'c')?.usages).toHaveLength(1);
+    const refB = result.references.find((r) => r.source === './moduleB') as FileReference;
+    expect(refB.imports.find((i) => i.name === 'b')?.usages).toHaveLength(1);
+    expect(refB.imports.find((i) => i.name === 'c')?.usages).toHaveLength(1);
 
     // Third re-export: * (namespace)
-    const refC = result.references.find(r => r.source === './moduleC') as FileReference;
-    expect(refC.imports.find(i => i.name === '*')?.usages).toHaveLength(1);
+    const refC = result.references.find((r) => r.source === './moduleC') as FileReference;
+    expect(refC.imports.find((i) => i.name === '*')?.usages).toHaveLength(1);
   });
 });

@@ -2,20 +2,16 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { LLMist } from 'llmist';
 
-import { openDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, openDatabase } from '../_shared/index.js';
+import { isValidModulePath, parseAssignmentCsv, parseTreeCsv } from './_shared/module-csv.js';
 import {
-  parseTreeCsv,
-  parseAssignmentCsv,
-  isValidModulePath,
-} from './_shared/module-csv.js';
-import {
-  buildTreeSystemPrompt,
-  buildTreeUserPrompt,
-  buildAssignmentSystemPrompt,
-  buildAssignmentUserPrompt,
-  toSymbolForAssignment,
   type DomainSummary,
   type TreeGenerationContext,
+  buildAssignmentSystemPrompt,
+  buildAssignmentUserPrompt,
+  buildTreeSystemPrompt,
+  buildTreeUserPrompt,
+  toSymbolForAssignment,
 } from './_shared/module-prompts.js';
 
 export default class Modules extends Command {
@@ -82,11 +78,13 @@ export default class Modules extends Command {
 
       if (existingModuleCount > 0 && !flags.force && !incremental) {
         if (isJson) {
-          this.log(JSON.stringify({
-            error: 'Modules already exist',
-            moduleCount: existingModuleCount,
-            hint: 'Use --force to recreate or --incremental to assign unassigned symbols',
-          }));
+          this.log(
+            JSON.stringify({
+              error: 'Modules already exist',
+              moduleCount: existingModuleCount,
+              hint: 'Use --force to recreate or --incremental to assign unassigned symbols',
+            })
+          );
         } else {
           this.log(chalk.yellow(`${existingModuleCount} modules already exist.`));
           this.log(chalk.gray('Use --force to recreate or --incremental to assign unassigned symbols.'));
@@ -140,7 +138,7 @@ export default class Modules extends Command {
     flags: { model: string; 'dry-run': boolean },
     dryRun: boolean,
     isJson: boolean,
-    verbose: boolean,
+    verbose: boolean
   ): Promise<void> {
     if (!isJson) {
       this.log(chalk.bold('Phase 1: Tree Structure Generation'));
@@ -206,12 +204,18 @@ export default class Modules extends Command {
 
     if (dryRun) {
       if (isJson) {
-        this.log(JSON.stringify({
-          phase: 'tree',
-          dryRun: true,
-          proposedModules: parsedModules,
-          parseErrors: errors,
-        }, null, 2));
+        this.log(
+          JSON.stringify(
+            {
+              phase: 'tree',
+              dryRun: true,
+              proposedModules: parsedModules,
+              parseErrors: errors,
+            },
+            null,
+            2
+          )
+        );
       } else {
         this.log(chalk.gray(`  Proposed modules: ${parsedModules.length}`));
         this.log('');
@@ -268,7 +272,7 @@ export default class Modules extends Command {
     flags: { model: string; 'batch-size': number; 'max-iterations': number },
     dryRun: boolean,
     isJson: boolean,
-    verbose: boolean,
+    verbose: boolean
   ): Promise<void> {
     if (!isJson) {
       this.log('');
@@ -287,7 +291,7 @@ export default class Modules extends Command {
     }
 
     // Build module path lookup
-    const moduleByPath = new Map(modules.map(m => [m.fullPath, m]));
+    const moduleByPath = new Map(modules.map((m) => [m.fullPath, m]));
 
     // Get unassigned symbols
     const unassignedSymbols = db.getUnassignedSymbols();
@@ -379,12 +383,18 @@ export default class Modules extends Command {
 
     if (dryRun) {
       if (isJson) {
-        this.log(JSON.stringify({
-          phase: 'assign',
-          dryRun: true,
-          proposedAssignments: allAssignments,
-          totalAssigned,
-        }, null, 2));
+        this.log(
+          JSON.stringify(
+            {
+              phase: 'assign',
+              dryRun: true,
+              proposedAssignments: allAssignments,
+              totalAssigned,
+            },
+            null,
+            2
+          )
+        );
       } else {
         this.log(chalk.gray(`  Would assign ${totalAssigned} symbols`));
       }
@@ -400,16 +410,19 @@ export default class Modules extends Command {
    * Build context for tree generation from database.
    */
   private buildTreeContext(
-    db: ReturnType<typeof openDatabase> extends Promise<infer T> ? T : never,
+    db: ReturnType<typeof openDatabase> extends Promise<infer T> ? T : never
   ): TreeGenerationContext {
     // Get all annotated symbols
     const allSymbols = db.getUnassignedSymbols();
 
     // Aggregate by domain
-    const domainMap = new Map<string, {
-      count: number;
-      symbols: Array<{ name: string; kind: string; role: string | null }>;
-    }>();
+    const domainMap = new Map<
+      string,
+      {
+        count: number;
+        symbols: Array<{ name: string; kind: string; role: string | null }>;
+      }
+    >();
 
     for (const sym of allSymbols) {
       const domains = sym.domain ?? ['untagged'];

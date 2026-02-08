@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 export default class Relationships extends Command {
   static override description = 'List relationship annotations between symbols';
@@ -130,7 +130,9 @@ export default class Relationships extends Command {
         this.log('');
         const total = db.getRelationshipAnnotationCount();
         if (relationships.length < total) {
-          this.log(chalk.gray(`Showing ${relationships.length} of ${total} relationship(s) (use --limit to show more)`));
+          this.log(
+            chalk.gray(`Showing ${relationships.length} of ${total} relationship(s) (use --limit to show more)`)
+          );
         } else {
           this.log(chalk.gray(`Found ${relationships.length} relationship annotation(s)`));
         }
@@ -138,13 +140,16 @@ export default class Relationships extends Command {
     });
   }
 
-  private outputRelationships(relationships: Array<{
-    fromName: string;
-    toName: string;
-    semantic: string;
-    toFilePath: string;
-    toLine: number;
-  }>, context: string): void {
+  private outputRelationships(
+    relationships: Array<{
+      fromName: string;
+      toName: string;
+      semantic: string;
+      toFilePath: string;
+      toLine: number;
+    }>,
+    context: string
+  ): void {
     if (relationships.length === 0) {
       this.log(chalk.gray(`No relationship annotations found ${context}.`));
     } else {

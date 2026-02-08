@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { IndexDatabase, computeHash } from '../../src/db/database.js';
 
 describe('Relationship Annotations', () => {
@@ -176,7 +176,7 @@ describe('Relationship Annotations', () => {
 
       const relationships = db.getRelationshipsFrom(controller);
       expect(relationships).toHaveLength(2);
-      expect(relationships.map(r => r.toName).sort()).toEqual(['authService', 'dbService']);
+      expect(relationships.map((r) => r.toName).sort()).toEqual(['authService', 'dbService']);
     });
   });
 
@@ -222,7 +222,7 @@ describe('Relationship Annotations', () => {
 
       const relationships = db.getRelationshipsTo(userService);
       expect(relationships).toHaveLength(2);
-      expect(relationships.map(r => r.fromName).sort()).toEqual(['authController', 'userController']);
+      expect(relationships.map((r) => r.fromName).sort()).toEqual(['authController', 'userController']);
     });
   });
 
@@ -410,7 +410,7 @@ describe('Enhanced Relationship Context', () => {
       });
 
       expect(relationships.length).toBeGreaterThan(0);
-      expect(relationships.every(r => r.fromDefinitionId === controllerDefId)).toBe(true);
+      expect(relationships.every((r) => r.fromDefinitionId === controllerDefId)).toBe(true);
     });
 
     it('excludes annotated relationships', () => {
@@ -429,7 +429,7 @@ describe('Enhanced Relationship Context', () => {
         fromDefinitionId: controllerDefId,
       });
       const stillHasThisRel = relationships.some(
-        r => r.fromDefinitionId === controllerDefId && r.toDefinitionId === serviceDefId
+        (r) => r.fromDefinitionId === controllerDefId && r.toDefinitionId === serviceDefId
       );
       expect(stillHasThisRel).toBe(false);
     });

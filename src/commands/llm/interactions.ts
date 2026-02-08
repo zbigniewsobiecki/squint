@@ -1,8 +1,8 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { LLMist } from 'llmist';
-import { openDatabase, SharedFlags } from '../_shared/index.js';
 import type { EnrichedModuleCallEdge } from '../../db/schema.js';
+import { SharedFlags, openDatabase } from '../_shared/index.js';
 
 interface InteractionSuggestion {
   fromModuleId: number;
@@ -70,11 +70,13 @@ export default class Interactions extends Command {
       const existingCount = db.getInteractionCount();
       if (existingCount > 0 && !flags.force) {
         if (isJson) {
-          this.log(JSON.stringify({
-            error: 'Interactions already exist',
-            count: existingCount,
-            hint: 'Use --force to re-detect',
-          }));
+          this.log(
+            JSON.stringify({
+              error: 'Interactions already exist',
+              count: existingCount,
+              hint: 'Use --force to re-detect',
+            })
+          );
         } else {
           this.log(chalk.yellow(`${existingCount} interactions already exist.`));
           this.log(chalk.gray('Use --force to re-detect interactions.'));
@@ -110,8 +112,8 @@ export default class Interactions extends Command {
       }
 
       // Count utility vs business edges
-      const utilityCount = enrichedEdges.filter(e => e.edgePattern === 'utility').length;
-      const businessCount = enrichedEdges.filter(e => e.edgePattern === 'business').length;
+      const utilityCount = enrichedEdges.filter((e) => e.edgePattern === 'utility').length;
+      const businessCount = enrichedEdges.filter((e) => e.edgePattern === 'business').length;
 
       if (!isJson && verbose) {
         this.log(chalk.gray(`Found ${enrichedEdges.length} module-to-module edges`));
@@ -129,7 +131,9 @@ export default class Interactions extends Command {
           interactions.push(...suggestions);
 
           if (!isJson && verbose) {
-            this.log(chalk.gray(`  Batch ${Math.floor(i / batchSize) + 1}: Generated ${suggestions.length} interactions`));
+            this.log(
+              chalk.gray(`  Batch ${Math.floor(i / batchSize) + 1}: Generated ${suggestions.length} interactions`)
+            );
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -155,7 +159,9 @@ export default class Interactions extends Command {
             });
           } catch {
             if (verbose && !isJson) {
-              this.log(chalk.yellow(`  Skipping duplicate: ${interaction.fromModulePath} → ${interaction.toModulePath}`));
+              this.log(
+                chalk.yellow(`  Skipping duplicate: ${interaction.fromModulePath} → ${interaction.toModulePath}`)
+              );
             }
           }
         }
@@ -196,7 +202,9 @@ export default class Interactions extends Command {
         this.log(`  Total relationships: ${relCoverage.totalRelationships}`);
         this.log(`  Cross-module: ${relCoverage.crossModuleRelationships}`);
         this.log(`  Same-module (internal cohesion): ${relCoverage.sameModuleCount}`);
-        this.log(`  Contributing to interactions: ${relCoverage.relationshipsContributingToInteractions}/${relCoverage.crossModuleRelationships} (${relCoverage.coveragePercent.toFixed(1)}%)`);
+        this.log(
+          `  Contributing to interactions: ${relCoverage.relationshipsContributingToInteractions}/${relCoverage.crossModuleRelationships} (${relCoverage.coveragePercent.toFixed(1)}%)`
+        );
         if (relCoverage.orphanedCount > 0) {
           this.log(chalk.yellow(`  Orphaned (missing module): ${relCoverage.orphanedCount}`));
         }
@@ -237,11 +245,16 @@ Guidelines:
 - Focus on the business purpose, not implementation details`;
 
     // Build edge descriptions with symbol details
-    const edgeDescriptions = edges.map((e, i) => {
-      const symbolList = e.calledSymbols.slice(0, 5).map(s => s.name).join(', ');
-      const patternInfo = `[${e.edgePattern.toUpperCase()}]`;
-      return `${i + 1}. ${patternInfo} ${e.fromModulePath} → ${e.toModulePath} (${e.weight} calls)\n   Symbols: ${symbolList}`;
-    }).join('\n');
+    const edgeDescriptions = edges
+      .map((e, i) => {
+        const symbolList = e.calledSymbols
+          .slice(0, 5)
+          .map((s) => s.name)
+          .join(', ');
+        const patternInfo = `[${e.edgePattern.toUpperCase()}]`;
+        return `${i + 1}. ${patternInfo} ${e.fromModulePath} → ${e.toModulePath} (${e.weight} calls)\n   Symbols: ${symbolList}`;
+      })
+      .join('\n');
 
     const userPrompt = `## Module Interactions to Describe (${edges.length})
 
@@ -265,11 +278,10 @@ Generate semantic descriptions for each interaction in CSV format.`;
     const results: InteractionSuggestion[] = [];
 
     // Find CSV block
-    const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/) ||
-      response.match(/```\n([\s\S]*?)\n```/);
+    const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/) || response.match(/```\n([\s\S]*?)\n```/);
     const csvContent = csvMatch ? csvMatch[1] : response;
 
-    const lines = csvContent.split('\n').filter(l => l.trim() && !l.startsWith('from_module'));
+    const lines = csvContent.split('\n').filter((l) => l.trim() && !l.startsWith('from_module'));
 
     for (const line of lines) {
       const fields = this.parseCSVLine(line);
@@ -278,11 +290,9 @@ Generate semantic descriptions for each interaction in CSV format.`;
       const [fromPath, toPath, semantic] = fields;
 
       // Find matching edge
-      const edge = edges.find(e =>
-        e.fromModulePath === fromPath && e.toModulePath === toPath
-      ) || edges.find(e =>
-        e.fromModulePath.endsWith(fromPath) && e.toModulePath.endsWith(toPath)
-      );
+      const edge =
+        edges.find((e) => e.fromModulePath === fromPath && e.toModulePath === toPath) ||
+        edges.find((e) => e.fromModulePath.endsWith(fromPath) && e.toModulePath.endsWith(toPath));
 
       if (edge) {
         results.push({
@@ -292,7 +302,7 @@ Generate semantic descriptions for each interaction in CSV format.`;
           toModulePath: edge.toModulePath,
           semantic: semantic.trim().replace(/"/g, ''),
           pattern: edge.edgePattern,
-          symbols: edge.calledSymbols.map(s => s.name),
+          symbols: edge.calledSymbols.map((s) => s.name),
           weight: edge.weight,
         });
       }
@@ -300,7 +310,7 @@ Generate semantic descriptions for each interaction in CSV format.`;
 
     // Add defaults for any edges not covered
     for (const edge of edges) {
-      if (!results.find(r => r.fromModuleId === edge.fromModuleId && r.toModuleId === edge.toModuleId)) {
+      if (!results.find((r) => r.fromModuleId === edge.fromModuleId && r.toModuleId === edge.toModuleId)) {
         results.push(this.createDefaultInteraction(edge));
       }
     }
@@ -322,7 +332,7 @@ Generate semantic descriptions for each interaction in CSV format.`;
       toModulePath: edge.toModulePath,
       semantic: `${fromLast} uses ${toLast}`,
       pattern: edge.edgePattern,
-      symbols: edge.calledSymbols.map(s => s.name),
+      symbols: edge.calledSymbols.map((s) => s.name),
       weight: edge.weight,
     };
   }

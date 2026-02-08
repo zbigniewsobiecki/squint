@@ -2,49 +2,49 @@ import Database from 'better-sqlite3';
 import type { Definition } from '../parser/definition-extractor.js';
 import type { FileReference, ImportedSymbol, SymbolUsage } from '../parser/reference-extractor.js';
 import {
-  FileInsert,
-  CallsiteResult,
-  DependencyInfo,
-  DependencyWithMetadata,
-  IncomingDependency,
-  RelationshipType,
-  RelationshipAnnotation,
-  RelationshipWithDetails,
-  Domain,
-  DomainWithCount,
-  Module,
-  ModuleTreeNode,
-  ModuleWithMembers,
-  CallGraphEdge,
-  Interaction,
-  InteractionWithPaths,
-  Flow,
-  FlowStep,
-  FlowWithSteps,
-  FlowStakeholder,
-  ModuleCallEdge,
-  EnrichedModuleCallEdge,
-  FlowCoverageStats,
-  RelationshipInteractionCoverage,
-  RelationshipCoverageBreakdown,
-  ExpandedFlow,
-  AnnotatedSymbolInfo,
-  AnnotatedEdgeInfo,
-  EnhancedRelationshipContext,
-  IIndexWriter,
+  type AnnotatedEdgeInfo,
+  type AnnotatedSymbolInfo,
+  type CallGraphEdge,
+  type CallsiteResult,
+  type DependencyInfo,
+  type DependencyWithMetadata,
+  type Domain,
+  type DomainWithCount,
+  type EnhancedRelationshipContext,
+  type EnrichedModuleCallEdge,
+  type ExpandedFlow,
+  type FileInsert,
+  type Flow,
+  type FlowCoverageStats,
+  type FlowStakeholder,
+  type FlowStep,
+  type FlowWithSteps,
+  type IIndexWriter,
+  type IncomingDependency,
+  type Interaction,
+  type InteractionWithPaths,
+  type Module,
+  type ModuleCallEdge,
+  type ModuleTreeNode,
+  type ModuleWithMembers,
+  type RelationshipAnnotation,
+  type RelationshipCoverageBreakdown,
+  type RelationshipInteractionCoverage,
+  type RelationshipType,
+  type RelationshipWithDetails,
   SCHEMA,
 } from './schema.js';
 
-import { FileRepository } from './repositories/file-repository.js';
 import { DefinitionRepository } from './repositories/definition-repository.js';
-import { MetadataRepository } from './repositories/metadata-repository.js';
 import { DependencyRepository } from './repositories/dependency-repository.js';
-import { RelationshipRepository } from './repositories/relationship-repository.js';
 import { DomainRepository } from './repositories/domain-repository.js';
-import { ModuleRepository } from './repositories/module-repository.js';
-import { InteractionRepository, InteractionInsertOptions } from './repositories/interaction-repository.js';
-import { FlowRepository, FlowInsertOptions } from './repositories/flow-repository.js';
+import { FileRepository } from './repositories/file-repository.js';
+import { type FlowInsertOptions, FlowRepository } from './repositories/flow-repository.js';
 import { GraphRepository } from './repositories/graph-repository.js';
+import { type InteractionInsertOptions, InteractionRepository } from './repositories/interaction-repository.js';
+import { MetadataRepository } from './repositories/metadata-repository.js';
+import { ModuleRepository } from './repositories/module-repository.js';
+import { RelationshipRepository } from './repositories/relationship-repository.js';
 
 /**
  * Facade class that provides backward-compatible access to all database operations.
@@ -296,11 +296,7 @@ export class IndexDatabase implements IIndexWriter {
   }
 
   getPrerequisiteChain(definitionId: number, aspect: string) {
-    return this.dependencies.getPrerequisiteChain(
-      definitionId,
-      aspect,
-      (id) => this.definitions.getById(id)
-    );
+    return this.dependencies.getPrerequisiteChain(definitionId, aspect, (id) => this.definitions.getById(id));
   }
 
   getReadySymbols(aspect: string, options?: { limit?: number; kind?: string; filePattern?: string }) {
@@ -364,7 +360,10 @@ export class IndexDatabase implements IIndexWriter {
     return this.relationships.getUnannotatedCount(fromDefinitionId);
   }
 
-  getNextRelationshipToAnnotate(options?: { limit?: number; fromDefinitionId?: number }): EnhancedRelationshipContext[] {
+  getNextRelationshipToAnnotate(options?: {
+    limit?: number;
+    fromDefinitionId?: number;
+  }): EnhancedRelationshipContext[] {
     return this.relationships.getNextToAnnotate(
       options,
       (id) => this.metadata.get(id),
@@ -544,7 +543,10 @@ export class IndexDatabase implements IIndexWriter {
     return this.interactions.getToModule(moduleId);
   }
 
-  updateInteraction(id: number, updates: { direction?: 'uni' | 'bi'; pattern?: 'utility' | 'business'; symbols?: string[]; semantic?: string }): boolean {
+  updateInteraction(
+    id: number,
+    updates: { direction?: 'uni' | 'bi'; pattern?: 'utility' | 'business'; symbols?: string[]; semantic?: string }
+  ): boolean {
     return this.interactions.update(id, updates);
   }
 
@@ -620,7 +622,16 @@ export class IndexDatabase implements IIndexWriter {
     return this.flows.getWithSteps(flowId);
   }
 
-  updateFlow(flowId: number, updates: { name?: string; entryPointId?: number; entryPath?: string; stakeholder?: FlowStakeholder; description?: string }): boolean {
+  updateFlow(
+    flowId: number,
+    updates: {
+      name?: string;
+      entryPointId?: number;
+      entryPath?: string;
+      stakeholder?: FlowStakeholder;
+      description?: string;
+    }
+  ): boolean {
     return this.flows.update(flowId, updates);
   }
 
@@ -690,11 +701,20 @@ export class IndexDatabase implements IIndexWriter {
     return this.graph.findCycles(aspect);
   }
 
-  getCallGraphNeighborhood(startId: number, maxDepth: number, maxNodes: number): { nodes: AnnotatedSymbolInfo[]; edges: AnnotatedEdgeInfo[] } {
+  getCallGraphNeighborhood(
+    startId: number,
+    maxDepth: number,
+    maxNodes: number
+  ): { nodes: AnnotatedSymbolInfo[]; edges: AnnotatedEdgeInfo[] } {
     return this.graph.getNeighborhood(startId, maxDepth, maxNodes);
   }
 
-  getHighConnectivitySymbols(options?: { minIncoming?: number; minOutgoing?: number; exported?: boolean; limit?: number }) {
+  getHighConnectivitySymbols(options?: {
+    minIncoming?: number;
+    minOutgoing?: number;
+    exported?: boolean;
+    limit?: number;
+  }) {
     return this.graph.getHighConnectivitySymbols(options);
   }
 
@@ -711,7 +731,10 @@ export class IndexDatabase implements IIndexWriter {
     return this.graph.getNextToAnnotate(aspect, options);
   }
 
-  getAllUnannotatedSymbols(aspect: string, options?: { limit?: number; kind?: string; filePattern?: string; excludePattern?: string }) {
+  getAllUnannotatedSymbols(
+    aspect: string,
+    options?: { limit?: number; kind?: string; filePattern?: string; excludePattern?: string }
+  ) {
     return this.graph.getAllUnannotated(aspect, options);
   }
 
@@ -808,7 +831,8 @@ export class IndexDatabase implements IIndexWriter {
     }
 
     // Get all exported definitions
-    const allDefs = this.conn.prepare(`
+    const allDefs = this.conn
+      .prepare(`
       SELECT
         d.id,
         d.name,
@@ -819,9 +843,10 @@ export class IndexDatabase implements IIndexWriter {
       JOIN files f ON d.file_id = f.id
       WHERE d.is_exported = 1
       ORDER BY f.path, d.line
-    `).all() as Array<{ id: number; name: string; kind: string; filePath: string; line: number }>;
+    `)
+      .all() as Array<{ id: number; name: string; kind: string; filePath: string; line: number }>;
 
     // Filter to only those not called
-    return allDefs.filter(def => !calledIds.has(def.id));
+    return allDefs.filter((def) => !calledIds.has(def.id));
   }
 }

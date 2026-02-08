@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { MetadataRepository } from '../../../src/db/repositories/metadata-repository.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileRepository } from '../../../src/db/repositories/file-repository.js';
+import { MetadataRepository } from '../../../src/db/repositories/metadata-repository.js';
 import { SCHEMA } from '../../../src/db/schema.js';
 import type { Definition } from '../../../src/parser/definition-extractor.js';
 
@@ -191,13 +191,13 @@ describe('MetadataRepository', () => {
 
       const coverage = repo.getAspectCoverage();
 
-      const purposeCoverage = coverage.find(c => c.aspect === 'purpose');
+      const purposeCoverage = coverage.find((c) => c.aspect === 'purpose');
       expect(purposeCoverage).toBeDefined();
       expect(purposeCoverage!.covered).toBe(2);
       expect(purposeCoverage!.total).toBe(2);
       expect(purposeCoverage!.percentage).toBe(100);
 
-      const domainCoverage = coverage.find(c => c.aspect === 'domain');
+      const domainCoverage = coverage.find((c) => c.aspect === 'domain');
       expect(domainCoverage).toBeDefined();
       expect(domainCoverage!.covered).toBe(1);
       expect(domainCoverage!.total).toBe(2);

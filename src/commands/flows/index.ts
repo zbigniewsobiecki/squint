@@ -1,7 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { openDatabase, SharedFlags } from '../_shared/index.js';
 import type { Flow, FlowStakeholder } from '../../db/schema.js';
+import { SharedFlags, openDatabase } from '../_shared/index.js';
 
 export default class Flows extends Command {
   static override description = 'List all detected user journey flows';
@@ -103,7 +103,9 @@ export default class Flows extends Command {
       this.log(`Total flows: ${stats.flowCount}`);
       this.log(`With entry points: ${stats.withEntryPointCount}`);
       this.log(`Avg steps per flow: ${stats.avgStepsPerFlow.toFixed(1)}`);
-      this.log(`Interaction coverage: ${coverage.coveredByFlows}/${coverage.totalInteractions} (${coverage.percentage.toFixed(1)}%)`);
+      this.log(
+        `Interaction coverage: ${coverage.coveredByFlows}/${coverage.totalInteractions} (${coverage.percentage.toFixed(1)}%)`
+      );
     } finally {
       db.close();
     }

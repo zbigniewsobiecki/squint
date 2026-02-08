@@ -1,7 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { ReadySymbolInfo, DependencyWithMetadata } from '../../db/database.js';
-import { withDatabase, SharedFlags, truncate } from '../_shared/index.js';
+import type { DependencyWithMetadata, ReadySymbolInfo } from '../../db/database.js';
+import { SharedFlags, truncate, withDatabase } from '../_shared/index.js';
 
 interface ReadySymbolWithDeps extends ReadySymbolInfo {
   dependencies?: DependencyWithMetadata[];
@@ -70,7 +70,7 @@ export default class Ready extends Command {
       });
 
       // Enhance symbols with dependency info when verbose
-      const symbols: ReadySymbolWithDeps[] = result.symbols.map(symbol => {
+      const symbols: ReadySymbolWithDeps[] = result.symbols.map((symbol) => {
         if (flags.verbose) {
           const dependencies = db.getDependenciesWithMetadata(symbol.id, flags.aspect);
           return { ...symbol, dependencies };
@@ -106,7 +106,7 @@ export default class Ready extends Command {
       } else if (output.totalReady === 0) {
         this.log(chalk.yellow(`No symbols ready yet for aspect '${output.aspect}'.`));
         this.log(chalk.gray(`${output.remaining} symbols have unmet dependencies.`));
-        this.log(chalk.gray(`This may indicate circular dependencies. Try marking a symbol manually.`));
+        this.log(chalk.gray('This may indicate circular dependencies. Try marking a symbol manually.'));
       } else {
         this.log(chalk.yellow('No symbols found matching filters.'));
       }
@@ -118,8 +118,8 @@ export default class Ready extends Command {
     this.log(chalk.gray('─'.repeat(50)));
 
     // Calculate column widths
-    const nameWidth = Math.max(20, ...output.symbols.map(s => s.name.length));
-    const kindWidth = Math.max(8, ...output.symbols.map(s => s.kind.length));
+    const nameWidth = Math.max(20, ...output.symbols.map((s) => s.name.length));
+    const kindWidth = Math.max(8, ...output.symbols.map((s) => s.kind.length));
 
     const header = `  ${'Name'.padEnd(nameWidth)}  ${'Kind'.padEnd(kindWidth)}  ${'Deps'.padStart(4)}  Location`;
     this.log(chalk.gray(header));
@@ -139,9 +139,7 @@ export default class Ready extends Command {
       if (output.verbose && symbol.dependencies && symbol.dependencies.length > 0) {
         for (const dep of symbol.dependencies) {
           const status = dep.hasAspect ? chalk.green('✓') : chalk.gray('○');
-          const value = dep.aspectValue
-            ? chalk.gray(truncate(dep.aspectValue, 50))
-            : '';
+          const value = dep.aspectValue ? chalk.gray(truncate(dep.aspectValue, 50)) : '';
           this.log(`      ${status} ${chalk.cyan(dep.name)}: ${value}`);
         }
       }
@@ -151,9 +149,10 @@ export default class Ready extends Command {
 
     // Print summary
     const showingCount = output.symbols.length;
-    const totalMsg = output.totalReady > showingCount
-      ? `Found ${chalk.green(output.totalReady)} symbols ready (showing ${showingCount})`
-      : `Found ${chalk.green(output.totalReady)} symbols ready`;
+    const totalMsg =
+      output.totalReady > showingCount
+        ? `Found ${chalk.green(output.totalReady)} symbols ready (showing ${showingCount})`
+        : `Found ${chalk.green(output.totalReady)} symbols ready`;
     this.log(`${totalMsg}, ${chalk.yellow(output.remaining)} remaining`);
 
     // Print hint

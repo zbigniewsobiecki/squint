@@ -2,7 +2,7 @@
  * Prompt templates for LLM-driven hierarchical flow detection.
  */
 
-import type { AnnotatedSymbolInfo, AnnotatedEdgeInfo, FlowCoverageStats } from '../../../db/schema.js';
+import type { AnnotatedEdgeInfo, AnnotatedSymbolInfo, FlowCoverageStats } from '../../../db/schema.js';
 
 // ============================================
 // Phase 1: Entry Point Classification
@@ -231,8 +231,8 @@ export function buildFlowConstructionUserPrompt(contexts: FlowConstructionContex
     // Show edges with semantic annotations
     parts.push('**Call Relationships:**');
     for (const edge of ctx.neighborhood.edges.slice(0, 20)) {
-      const fromNode = ctx.neighborhood.nodes.find(n => n.id === edge.fromId);
-      const toNode = ctx.neighborhood.nodes.find(n => n.id === edge.toId);
+      const fromNode = ctx.neighborhood.nodes.find((n) => n.id === edge.fromId);
+      const toNode = ctx.neighborhood.nodes.find((n) => n.id === edge.toId);
       if (fromNode && toNode) {
         const semantic = edge.semantic ? `: "${edge.semantic}"` : '';
         parts.push(`- ${fromNode.name} (#${edge.fromId}) → ${toNode.name} (#${edge.toId})${semantic}`);
@@ -324,7 +324,9 @@ export function buildGapFillingUserPrompt(context: GapFillingContext): string {
   const parts: string[] = [];
 
   parts.push('## Current Coverage');
-  parts.push(`${context.coverageStats.covered}/${context.coverageStats.total} symbols covered (${context.coverageStats.percentage.toFixed(1)}%)`);
+  parts.push(
+    `${context.coverageStats.covered}/${context.coverageStats.total} symbols covered (${context.coverageStats.percentage.toFixed(1)}%)`
+  );
   parts.push('');
 
   parts.push('## Existing Flows');

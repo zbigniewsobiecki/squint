@@ -1,9 +1,9 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { LLMist } from 'llmist';
-import { openDatabase, SharedFlags } from '../_shared/index.js';
 import type { IndexDatabase } from '../../db/database.js';
-import type { InteractionWithPaths, FlowStakeholder } from '../../db/schema.js';
+import type { FlowStakeholder, InteractionWithPaths } from '../../db/schema.js';
+import { SharedFlags, openDatabase } from '../_shared/index.js';
 
 interface RootDefinition {
   id: number;
@@ -93,11 +93,13 @@ export default class Flows extends Command {
       const existingCount = db.getFlowCount();
       if (existingCount > 0 && !flags.force) {
         if (isJson) {
-          this.log(JSON.stringify({
-            error: 'Flows already exist',
-            count: existingCount,
-            hint: 'Use --force to re-detect',
-          }));
+          this.log(
+            JSON.stringify({
+              error: 'Flows already exist',
+              count: existingCount,
+              hint: 'Use --force to re-detect',
+            })
+          );
         } else {
           this.log(chalk.yellow(`${existingCount} flows already exist.`));
           this.log(chalk.gray('Use --force to re-detect flows.'));
@@ -180,7 +182,7 @@ export default class Flows extends Command {
             entryPath: `${entryPoint.name} (${entryPoint.filePath}:${entryPoint.line})`,
             stakeholder: this.inferStakeholder(entryPoint),
             description: `Flow starting from ${entryPoint.name}`,
-            interactionIds: path.map(i => i.id),
+            interactionIds: path.map((i) => i.id),
           });
         }
       }
@@ -217,7 +219,7 @@ export default class Flows extends Command {
         this.log(chalk.bold('Step 4: Creating Gap Flows for Uncovered Interactions'));
       }
 
-      const coveredIds = new Set(enhancedFlows.flatMap(f => f.interactionIds));
+      const coveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
       const gapFlows = this.createGapFlows(coveredIds, interactions);
       enhancedFlows.push(...gapFlows);
 
@@ -258,7 +260,7 @@ export default class Flows extends Command {
       }
 
       // Count user vs internal flows
-      const userFlowCount = enhancedFlows.filter(f => f.entryPointId !== null).length;
+      const userFlowCount = enhancedFlows.filter((f) => f.entryPointId !== null).length;
       const internalFlowCount = gapFlows.length;
 
       // Output results
@@ -267,11 +269,13 @@ export default class Flows extends Command {
         flowsCreated: enhancedFlows.length,
         userFlows: userFlowCount,
         internalFlows: internalFlowCount,
-        coverage: dryRun ? {
-          totalInteractions: interactions.length,
-          coveredByFlows: new Set(enhancedFlows.flatMap(f => f.interactionIds)).size,
-          percentage: (new Set(enhancedFlows.flatMap(f => f.interactionIds)).size / interactions.length) * 100,
-        } : db.getFlowCoverage(),
+        coverage: dryRun
+          ? {
+              totalInteractions: interactions.length,
+              coveredByFlows: new Set(enhancedFlows.flatMap((f) => f.interactionIds)).size,
+              percentage: (new Set(enhancedFlows.flatMap((f) => f.interactionIds)).size / interactions.length) * 100,
+            }
+          : db.getFlowCoverage(),
       };
 
       if (isJson) {
@@ -283,7 +287,9 @@ export default class Flows extends Command {
         this.log(`Flows created: ${result.flowsCreated}`);
         this.log(`  - User flows: ${result.userFlows}`);
         this.log(`  - Internal/gap flows: ${result.internalFlows}`);
-        this.log(`Interaction coverage: ${result.coverage.coveredByFlows}/${result.coverage.totalInteractions} (${result.coverage.percentage.toFixed(1)}%)`);
+        this.log(
+          `Interaction coverage: ${result.coverage.coveredByFlows}/${result.coverage.totalInteractions} (${result.coverage.percentage.toFixed(1)}%)`
+        );
 
         if (dryRun) {
           this.log('');
@@ -334,7 +340,7 @@ export default class Flows extends Command {
     try {
       classifications = await this.classifyEntryPoints(candidates, model);
       if (verbose && !isJson) {
-        const entryCount = classifications.filter(c => c.isEntryPoint).length;
+        const entryCount = classifications.filter((c) => c.isEntryPoint).length;
         this.log(chalk.gray(`  LLM classified ${entryCount}/${candidates.length} as entry points`));
       }
     } catch (error) {
@@ -344,7 +350,7 @@ export default class Flows extends Command {
         this.log(chalk.gray('  Falling back to heuristic detection'));
       }
       // Fallback to simple heuristics
-      classifications = candidates.map(c => ({
+      classifications = candidates.map((c) => ({
         definitionId: c.id,
         isEntryPoint: this.isLikelyEntryPointHeuristic(c),
         confidence: 'low' as const,
@@ -357,7 +363,7 @@ export default class Flows extends Command {
     for (const classification of classifications) {
       if (!classification.isEntryPoint) continue;
 
-      const def = candidates.find(c => c.id === classification.definitionId);
+      const def = candidates.find((c) => c.id === classification.definitionId);
       if (!def) continue;
 
       const moduleInfo = db.getDefinitionModule(def.id);
@@ -378,10 +384,7 @@ export default class Flows extends Command {
   /**
    * Use LLM to classify root definitions as entry points.
    */
-  private async classifyEntryPoints(
-    candidates: RootDefinition[],
-    model: string
-  ): Promise<EntryPointClassification[]> {
+  private async classifyEntryPoints(candidates: RootDefinition[], model: string): Promise<EntryPointClassification[]> {
     const systemPrompt = `You are classifying code symbols as entry points or internal helpers.
 
 Entry points are:
@@ -413,13 +416,15 @@ Guidelines:
 - Only mark as NOT entry point if clearly internal/utility`;
 
     // Build candidate descriptions
-    const candidateList = candidates.map(c => {
-      let desc = `${c.id}: ${c.name} (${c.kind}) in ${c.filePath}:${c.line}`;
-      if (c.purpose) desc += `\n   Purpose: ${c.purpose}`;
-      if (c.role) desc += `\n   Role: ${c.role}`;
-      desc += `\n   Outgoing deps: ${c.outgoingCount}`;
-      return desc;
-    }).join('\n\n');
+    const candidateList = candidates
+      .map((c) => {
+        let desc = `${c.id}: ${c.name} (${c.kind}) in ${c.filePath}:${c.line}`;
+        if (c.purpose) desc += `\n   Purpose: ${c.purpose}`;
+        if (c.role) desc += `\n   Role: ${c.role}`;
+        desc += `\n   Outgoing deps: ${c.outgoingCount}`;
+        return desc;
+      })
+      .join('\n\n');
 
     const userPrompt = `## Candidates to Classify (${candidates.length})
 
@@ -442,19 +447,18 @@ Classify each as entry point or internal helper.`;
   private parseEntryPointCSV(response: string, candidates: RootDefinition[]): EntryPointClassification[] {
     const results: EntryPointClassification[] = [];
 
-    const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/) ||
-      response.match(/```\n([\s\S]*?)\n```/);
+    const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/) || response.match(/```\n([\s\S]*?)\n```/);
     const csvContent = csvMatch ? csvMatch[1] : response;
 
-    const lines = csvContent.split('\n').filter(l => l.trim() && !l.startsWith('id,'));
+    const lines = csvContent.split('\n').filter((l) => l.trim() && !l.startsWith('id,'));
 
-    const candidateMap = new Map(candidates.map(c => [c.id, c]));
+    const candidateMap = new Map(candidates.map((c) => [c.id, c]));
 
     for (const line of lines) {
       const fields = this.parseCSVLine(line);
       if (fields.length < 4) continue;
 
-      const id = parseInt(fields[0].trim(), 10);
+      const id = Number.parseInt(fields[0].trim(), 10);
       if (!candidateMap.has(id)) continue;
 
       const isEntryPoint = fields[1].trim().toLowerCase() === 'true';
@@ -471,7 +475,7 @@ Classify each as entry point or internal helper.`;
 
     // Add fallback for any candidates not in response
     for (const candidate of candidates) {
-      if (!results.find(r => r.definitionId === candidate.id)) {
+      if (!results.find((r) => r.definitionId === candidate.id)) {
         results.push({
           definitionId: candidate.id,
           isEntryPoint: this.isLikelyEntryPointHeuristic(candidate),
@@ -524,7 +528,7 @@ Classify each as entry point or internal helper.`;
   ): InteractionWithPaths[] {
     const visited = new Set<number>();
     const path: InteractionWithPaths[] = [];
-    const maxDepth = 50;  // Increased from 10 for deep call chains
+    const maxDepth = 50; // Increased from 10 for deep call chains
 
     const trace = (moduleId: number, depth: number): void => {
       if (depth >= maxDepth) return;
@@ -547,11 +551,8 @@ Classify each as entry point or internal helper.`;
    * Create gap flows for interactions not covered by entry point flows.
    * Groups uncovered interactions by source module and creates internal flows.
    */
-  private createGapFlows(
-    coveredIds: Set<number>,
-    allInteractions: InteractionWithPaths[]
-  ): FlowSuggestion[] {
-    const uncovered = allInteractions.filter(i => !coveredIds.has(i.id));
+  private createGapFlows(coveredIds: Set<number>, allInteractions: InteractionWithPaths[]): FlowSuggestion[] {
+    const uncovered = allInteractions.filter((i) => !coveredIds.has(i.id));
     if (uncovered.length === 0) return [];
 
     // Group uncovered interactions by source module
@@ -569,17 +570,17 @@ Classify each as entry point or internal helper.`;
       const shortName = modulePath.split('.').pop() ?? 'Module';
 
       // Convert to PascalCase for flow name
-      const flowName = shortName.charAt(0).toUpperCase() + shortName.slice(1) + 'InternalFlow';
-      const slug = shortName.toLowerCase() + '-internal';
+      const flowName = `${shortName.charAt(0).toUpperCase() + shortName.slice(1)}InternalFlow`;
+      const slug = `${shortName.toLowerCase()}-internal`;
 
       gapFlows.push({
         name: flowName,
         slug: slug,
         entryPointId: null,
         entryPath: `Internal: ${modulePath}`,
-        stakeholder: 'developer',  // Internal, not user-facing
+        stakeholder: 'developer', // Internal, not user-facing
         description: `Internal interactions originating from ${modulePath}`,
-        interactionIds: interactions.map(i => i.id),
+        interactionIds: interactions.map((i) => i.id),
       });
     }
 
@@ -639,7 +640,7 @@ Classify each as entry point or internal helper.`;
     interactions: InteractionWithPaths[],
     model: string
   ): Promise<FlowSuggestion[]> {
-    const interactionMap = new Map(interactions.map(i => [i.id, i]));
+    const interactionMap = new Map(interactions.map((i) => [i.id, i]));
 
     const systemPrompt = `You are a software architect naming and describing user journey flows.
 
@@ -660,17 +661,19 @@ Guidelines:
 - Keep descriptions under 80 characters`;
 
     // Build flow descriptions
-    const flowDescriptions = flows.map((f, i) => {
-      const steps = f.interactionIds
-        .slice(0, 5)
-        .map(id => {
-          const interaction = interactionMap.get(id);
-          return interaction ? `${interaction.fromModulePath} → ${interaction.toModulePath}` : '?';
-        })
-        .join(' → ');
+    const flowDescriptions = flows
+      .map((f, i) => {
+        const steps = f.interactionIds
+          .slice(0, 5)
+          .map((id) => {
+            const interaction = interactionMap.get(id);
+            return interaction ? `${interaction.fromModulePath} → ${interaction.toModulePath}` : '?';
+          })
+          .join(' → ');
 
-      return `${i + 1}. Entry: ${f.entryPath}\n   Steps: ${steps}`;
-    }).join('\n\n');
+        return `${i + 1}. Entry: ${f.entryPath}\n   Steps: ${steps}`;
+      })
+      .join('\n\n');
 
     const userPrompt = `## Flows to Enhance (${flows.length})
 
@@ -693,11 +696,10 @@ Provide enhanced names and descriptions for each flow in CSV format.`;
   private parseEnhancedFlowsCSV(response: string, originalFlows: FlowSuggestion[]): FlowSuggestion[] {
     const results: FlowSuggestion[] = [];
 
-    const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/) ||
-      response.match(/```\n([\s\S]*?)\n```/);
+    const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/) || response.match(/```\n([\s\S]*?)\n```/);
     const csvContent = csvMatch ? csvMatch[1] : response;
 
-    const lines = csvContent.split('\n').filter(l => l.trim() && !l.startsWith('entry_point'));
+    const lines = csvContent.split('\n').filter((l) => l.trim() && !l.startsWith('entry_point'));
 
     for (let i = 0; i < originalFlows.length; i++) {
       const original = originalFlows[i];

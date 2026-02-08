@@ -1,9 +1,9 @@
-import { Args, Command, Flags } from '@oclif/core';
-import chalk from 'chalk';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { IndexDatabase } from '../../db/database.js';
-import { withDatabase, openDatabase, SymbolResolver, SharedFlags } from '../_shared/index.js';
+import { Args, Command, Flags } from '@oclif/core';
+import chalk from 'chalk';
+import type { IndexDatabase } from '../../db/database.js';
+import { SharedFlags, SymbolResolver, openDatabase, withDatabase } from '../_shared/index.js';
 
 interface BatchEntry {
   name?: string;
@@ -18,6 +18,7 @@ interface BatchResult {
   error?: string;
 }
 
+// biome-ignore lint/suspicious/noShadowRestrictedNames: Command class must match CLI command name
 export default class Set extends Command {
   static override description = 'Set metadata on a symbol';
 
@@ -96,7 +97,10 @@ export default class Set extends Command {
     });
   }
 
-  private async runBatchMode(key: string, flags: { database: string; json: boolean; 'input-file'?: string; batch?: boolean }): Promise<void> {
+  private async runBatchMode(
+    key: string,
+    flags: { database: string; json: boolean; 'input-file'?: string; batch?: boolean }
+  ): Promise<void> {
     const dbPath = path.resolve(flags.database);
 
     // Read input from file or stdin
@@ -189,16 +193,19 @@ export default class Set extends Command {
                 if (typeof d === 'string') allDomainsSet.add(d);
               }
             }
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
         }
         const unregistered = Array.from(allDomainsSet).filter((d: string) => !db2!.isDomainRegistered(d));
         if (unregistered.length > 0) {
           this.log('');
           this.log(chalk.yellow(`Warning: ${unregistered.length} unregistered domain(s): ${unregistered.join(', ')}`));
-          this.log(chalk.gray(`Register with: ats domains sync`));
+          this.log(chalk.gray('Register with: ats domains sync'));
         }
-      } catch { /* skip warnings if db fails */ }
-      finally {
+      } catch {
+        /* skip warnings if db fails */
+      } finally {
         db2?.close();
       }
     }
@@ -207,10 +214,12 @@ export default class Set extends Command {
     if (flags.json) {
       this.log(JSON.stringify({ key, results }, null, 2));
     } else {
-      const successCount = results.filter(r => r.success).length;
-      const failCount = results.filter(r => !r.success).length;
+      const successCount = results.filter((r) => r.success).length;
+      const failCount = results.filter((r) => !r.success).length;
 
-      this.log(`Set ${chalk.cyan(key)} on ${chalk.green(successCount)} symbols${failCount > 0 ? `, ${chalk.red(failCount)} failed` : ''}:`);
+      this.log(
+        `Set ${chalk.cyan(key)} on ${chalk.green(successCount)} symbols${failCount > 0 ? `, ${chalk.red(failCount)} failed` : ''}:`
+      );
 
       for (const result of results) {
         if (result.success) {
@@ -225,7 +234,7 @@ export default class Set extends Command {
   private async readStdin(): Promise<string> {
     // Check if stdin is a TTY (interactive terminal)
     if (process.stdin.isTTY) {
-      throw new Error('No input piped to stdin. Use: echo \'[...]\' | ats symbols set ... --batch');
+      throw new Error("No input piped to stdin. Use: echo '[...]' | ats symbols set ... --batch");
     }
 
     return new Promise((resolve, reject) => {
@@ -263,7 +272,7 @@ export default class Set extends Command {
         this.log('');
         this.log(chalk.yellow(`Warning: ${unregistered.length} unregistered domain(s): ${unregistered.join(', ')}`));
         this.log(chalk.gray(`Register with: ats domains add <name> "<description>"`));
-        this.log(chalk.gray(`Or sync all: ats domains sync`));
+        this.log(chalk.gray('Or sync all: ats domains sync'));
       }
     } catch {
       // Value is not valid JSON, skip warning

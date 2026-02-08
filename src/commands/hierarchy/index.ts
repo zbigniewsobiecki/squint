@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SymbolResolver, SharedFlags, outputJsonOrPlain } from '../_shared/index.js';
+import { SharedFlags, SymbolResolver, outputJsonOrPlain, withDatabase } from '../_shared/index.js';
 
 type RelationshipType = 'extends' | 'implements' | 'calls' | 'imports' | 'uses';
 
@@ -58,16 +58,16 @@ export default class Hierarchy extends Command {
       if (relType === 'extends' || relType === 'implements') {
         // Class/interface hierarchy from parsed data
         return this.showInheritanceHierarchy(db, relType, flags.json);
-      } else if (relType === 'calls') {
+      }
+      if (relType === 'calls') {
         // Call hierarchy from a specific root
         if (!flags.root) {
           this.error('--root is required for call hierarchy. Specify a function name to trace from.');
         }
         return this.showCallHierarchy(db, flags.root, flags.file, flags.depth, flags.json);
-      } else {
-        // Uses/imports hierarchy from relationship annotations
-        return this.showAnnotatedHierarchy(db, relType, flags.root, flags.json);
       }
+      // Uses/imports hierarchy from relationship annotations
+      return this.showAnnotatedHierarchy(db, relType, flags.root, flags.json);
     });
   }
 
@@ -79,7 +79,7 @@ export default class Hierarchy extends Command {
     const hierarchy = db.getClassHierarchy();
 
     // Filter links by type
-    const filteredLinks = hierarchy.links.filter(l => l.type === type);
+    const filteredLinks = hierarchy.links.filter((l) => l.type === type);
 
     // Build parent -> children map
     const childrenMap = new Map<number, number[]>();
@@ -99,7 +99,7 @@ export default class Hierarchy extends Command {
     }
 
     // Find roots (nodes that have children but no parent in this relationship type)
-    const nodeMap = new Map(hierarchy.nodes.map(n => [n.id, n]));
+    const nodeMap = new Map(hierarchy.nodes.map((n) => [n.id, n]));
     const roots: number[] = [];
 
     for (const [parentId] of childrenMap) {
@@ -165,7 +165,7 @@ export default class Hierarchy extends Command {
       type,
       roots: trees.length,
       totalNodes,
-      trees: trees.map(t => this.flattenTree(t)),
+      trees: trees.map((t) => this.flattenTree(t)),
     };
 
     outputJsonOrPlain(this, json, jsonData, () => {
@@ -320,7 +320,7 @@ export default class Hierarchy extends Command {
       imports: 'uses', // treat imports as uses for now
     };
     const relType = typeToRelType[type] ?? type;
-    const filtered = annotations.filter(a => a.relationshipType === relType);
+    const filtered = annotations.filter((a) => a.relationshipType === relType);
 
     // Build map of from -> to
     const childrenMap = new Map<number, number[]>();
@@ -339,7 +339,7 @@ export default class Hierarchy extends Command {
     const jsonData = {
       type,
       annotationCount: filtered.length,
-      annotations: filtered.slice(0, 100).map(a => ({
+      annotations: filtered.slice(0, 100).map((a) => ({
         from: {
           id: a.fromDefinitionId,
           name: a.fromName,
@@ -385,9 +385,8 @@ export default class Hierarchy extends Command {
         this.log(`${chalk.cyan(first.fromName)} ${chalk.gray(`(${first.fromKind})`)}`);
 
         for (const ann of anns.slice(0, 5)) {
-          const semanticStr = ann.semantic && ann.semantic !== 'PENDING_LLM_ANNOTATION'
-            ? ` - ${chalk.gray(ann.semantic)}`
-            : '';
+          const semanticStr =
+            ann.semantic && ann.semantic !== 'PENDING_LLM_ANNOTATION' ? ` - ${chalk.gray(ann.semantic)}` : '';
           this.log(`  └── ${chalk.yellow(ann.toName)} ${chalk.gray(`(${ann.toKind})`)}${semanticStr}`);
         }
 
@@ -410,7 +409,7 @@ export default class Hierarchy extends Command {
       kind: node.kind,
       filePath: node.filePath,
       line: node.line,
-      children: node.children.map(c => this.flattenTree(c)),
+      children: node.children.map((c) => this.flattenTree(c)),
     };
   }
 
@@ -424,7 +423,7 @@ export default class Hierarchy extends Command {
       this.log(`${prefix}${connector}${chalk.cyan(node.name)}${kindLabel}`);
     }
 
-    const childPrefix = isRoot ? '' : (prefix + (isLast ? '    ' : '│   '));
+    const childPrefix = isRoot ? '' : prefix + (isLast ? '    ' : '│   ');
     for (let i = 0; i < node.children.length; i++) {
       const isChildLast = i === node.children.length - 1;
       this.printTree(node.children[i], childPrefix, isChildLast, false);

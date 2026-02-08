@@ -4,12 +4,12 @@ import './styles/layout.css';
 import './styles/components.css';
 import './styles/graph.css';
 
-import { createStore } from './state/store';
 import { createApiClient } from './api/client';
-import { initForceGraph } from './views/force-graph';
-import { initSunburst } from './views/sunburst';
-import { initModulesTree } from './views/modules-tree';
+import { createStore } from './state/store';
 import { initFlowsDag } from './views/flows-dag';
+import { initForceGraph } from './views/force-graph';
+import { initModulesTree } from './views/modules-tree';
+import { initSunburst } from './views/sunburst';
 
 // Initialize store and API client
 const store = createStore();
@@ -153,7 +153,9 @@ function setupRelationshipFilters() {
       chip.classList.add('active');
 
       // Update store and re-render
-      store.setState({ selectedGrouping: type as 'structure' | 'extends' | 'implements' | 'calls' | 'imports' | 'uses' });
+      store.setState({
+        selectedGrouping: type as 'structure' | 'extends' | 'implements' | 'calls' | 'imports' | 'uses',
+      });
       if (currentView === 'sunburst') {
         renderCurrentView();
       }

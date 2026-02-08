@@ -1,7 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SymbolResolver, SharedFlags, outputJsonOrPlain } from '../_shared/index.js';
 import type { IndexDatabase } from '../../db/database.js';
+import { SharedFlags, SymbolResolver, outputJsonOrPlain, withDatabase } from '../_shared/index.js';
 
 interface TraceNode {
   id: number;
@@ -121,7 +121,7 @@ export default class FlowsTrace extends Command {
     }
 
     // BFS traversal
-    const visited = new Map<number, number>();  // defId -> depth
+    const visited = new Map<number, number>(); // defId -> depth
     const queue: Array<{ id: number; depth: number }> = [{ id: entryId, depth: 0 }];
 
     while (queue.length > 0) {
@@ -218,17 +218,19 @@ export default class FlowsTrace extends Command {
       };
     };
 
-    return buildNode(rootId, 0) ?? {
-      id: rootId,
-      name: 'unknown',
-      kind: 'unknown',
-      filePath: '',
-      line: 0,
-      depth: 0,
-      moduleId: null,
-      moduleName: null,
-      children: [],
-    };
+    return (
+      buildNode(rootId, 0) ?? {
+        id: rootId,
+        name: 'unknown',
+        kind: 'unknown',
+        filePath: '',
+        line: 0,
+        depth: 0,
+        moduleId: null,
+        moduleName: null,
+        children: [],
+      }
+    );
   }
 
   private flattenTree(node: TraceNode): Array<{

@@ -1,8 +1,8 @@
 import { Args, Command } from '@oclif/core';
 import chalk from 'chalk';
-import { openDatabase, SharedFlags } from '../_shared/index.js';
-import type { Flow } from '../../db/schema.js';
 import type { IndexDatabase } from '../../db/database.js';
+import type { Flow } from '../../db/schema.js';
+import { SharedFlags, openDatabase } from '../_shared/index.js';
 
 export default class FlowsShow extends Command {
   static override description = 'Show flow details with interaction steps';
@@ -34,20 +34,24 @@ export default class FlowsShow extends Command {
       if (!flow) {
         // Try partial match
         const allFlows = db.getAllFlows();
-        const matches = allFlows.filter(f =>
-          f.name.toLowerCase().includes(args.identifier.toLowerCase()) ||
-          f.slug.toLowerCase().includes(args.identifier.toLowerCase())
+        const matches = allFlows.filter(
+          (f) =>
+            f.name.toLowerCase().includes(args.identifier.toLowerCase()) ||
+            f.slug.toLowerCase().includes(args.identifier.toLowerCase())
         );
 
         if (matches.length === 1) {
           this.displayFlow(db, matches[0], isJson);
           return;
-        } else if (matches.length > 1) {
+        }
+        if (matches.length > 1) {
           if (isJson) {
-            this.log(JSON.stringify({
-              error: 'Multiple matches',
-              matches: matches.map(f => ({ id: f.id, name: f.name, slug: f.slug })),
-            }));
+            this.log(
+              JSON.stringify({
+                error: 'Multiple matches',
+                matches: matches.map((f) => ({ id: f.id, name: f.name, slug: f.slug })),
+              })
+            );
           } else {
             this.log(chalk.yellow(`Multiple flows match "${args.identifier}":`));
             for (const f of matches) {
@@ -75,8 +79,8 @@ export default class FlowsShow extends Command {
 
   private findFlow(db: IndexDatabase, identifier: string): Flow | null {
     // Try by ID
-    const id = parseInt(identifier, 10);
-    if (!isNaN(id)) {
+    const id = Number.parseInt(identifier, 10);
+    if (!Number.isNaN(id)) {
       const flow = db.getFlowById(id);
       if (flow) return flow;
     }
@@ -87,7 +91,7 @@ export default class FlowsShow extends Command {
 
     // Try exact name match
     const allFlows = db.getAllFlows();
-    const byName = allFlows.find(f => f.name === identifier);
+    const byName = allFlows.find((f) => f.name === identifier);
     return byName ?? null;
   }
 
@@ -122,11 +126,12 @@ export default class FlowsShow extends Command {
         const i = step.interaction;
         const fromShort = i.fromModulePath.split('.').slice(-2).join('.');
         const toShort = i.toModulePath.split('.').slice(-2).join('.');
-        const patternLabel = i.pattern === 'business'
-          ? chalk.cyan('[business]')
-          : i.pattern === 'utility'
-            ? chalk.yellow('[utility]')
-            : '';
+        const patternLabel =
+          i.pattern === 'business'
+            ? chalk.cyan('[business]')
+            : i.pattern === 'utility'
+              ? chalk.yellow('[utility]')
+              : '';
 
         this.log(`  ${step.stepOrder}. ${fromShort} → ${toShort} ${patternLabel}`);
         if (i.semantic) {

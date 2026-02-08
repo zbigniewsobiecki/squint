@@ -1,10 +1,10 @@
 import type {
-  SymbolGraphResponse,
-  ModulesResponse,
-  FlowsResponse,
-  FlowsDagResponse,
   DbStats,
+  FlowsDagResponse,
+  FlowsResponse,
   InteractionsResponse,
+  ModulesResponse,
+  SymbolGraphResponse,
 } from '../types/api';
 
 // API client interface

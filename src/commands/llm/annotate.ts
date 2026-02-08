@@ -1,27 +1,27 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { LLMist } from 'llmist';
-import { IndexDatabase, ReadySymbolInfo } from '../../db/database.js';
-import { openDatabase, SharedFlags, readSourceAsString } from '../_shared/index.js';
+import type { IndexDatabase, ReadySymbolInfo } from '../../db/database.js';
+import { SharedFlags, openDatabase, readSourceAsString } from '../_shared/index.js';
+import {
+  type AnnotationResult,
+  type IterationSummary,
+  type RelationshipAnnotationResult,
+  type RelationshipCoverageInfo,
+  filterCoverageForAspects,
+  formatFinalSummary,
+  formatIterationResults,
+} from './_shared/coverage.js';
 import { parseCombinedCsv } from './_shared/csv.js';
 import {
+  type CoverageInfo,
+  type DependencyContextEnhanced,
+  type IncomingDependencyContext,
+  type RelationshipToAnnotate,
+  type SymbolContextEnhanced,
   buildSystemPrompt,
   buildUserPromptEnhanced,
-  SymbolContextEnhanced,
-  DependencyContextEnhanced,
-  RelationshipToAnnotate,
-  CoverageInfo,
-  IncomingDependencyContext,
 } from './_shared/prompts.js';
-import {
-  formatIterationResults,
-  formatFinalSummary,
-  filterCoverageForAspects,
-  AnnotationResult,
-  RelationshipAnnotationResult,
-  RelationshipCoverageInfo,
-  IterationSummary,
-} from './_shared/coverage.js';
 
 interface EnhancedSymbol extends ReadySymbolInfo {
   sourceCode: string;
@@ -263,16 +263,17 @@ export default class Annotate extends Command {
               this.log(chalk.green(`All symbols have '${primaryAspect}' annotated!`));
             }
             break;
-          } else if (blockedCount > 0 && !forceMode) {
+          }
+          if (blockedCount > 0 && !forceMode) {
             // Check for circular dependencies
             const cycles = db.findCycles(primaryAspect);
 
             if (cycles.length === 0) {
               // No cycles found - truly blocked
               if (!isJson) {
-                this.log(chalk.yellow(`No symbols ready for annotation.`));
+                this.log(chalk.yellow('No symbols ready for annotation.'));
                 this.log(chalk.gray(`${blockedCount} symbols have unmet dependencies.`));
-                this.log(chalk.gray(`Use --force to annotate them anyway.`));
+                this.log(chalk.gray('Use --force to annotate them anyway.'));
               }
               break;
             }
@@ -286,9 +287,9 @@ export default class Annotate extends Command {
             for (const cycle of cycles) {
               // Get full symbol info for cycle members
               const cycleSymbols: ReadySymbolInfo[] = cycle
-                .map(id => db.getDefinitionById(id))
+                .map((id) => db.getDefinitionById(id))
                 .filter((def): def is NonNullable<typeof def> => def !== null)
-                .map(def => ({
+                .map((def) => ({
                   id: def.id,
                   name: def.name,
                   kind: def.kind,
@@ -300,7 +301,7 @@ export default class Annotate extends Command {
 
               if (cycleSymbols.length === 0) continue;
 
-              const cycleNames = cycleSymbols.map(s => s.name).join(', ');
+              const cycleNames = cycleSymbols.map((s) => s.name).join(', ');
               if (!isJson) {
                 this.log(chalk.gray(`  Processing cycle: ${cycleNames} (${cycleSymbols.length} symbols)`));
               }
@@ -320,7 +321,7 @@ export default class Annotate extends Command {
               const coverage = filterCoverageForAspects(cycleCoverage, aspects, cycleTotalSymbols);
 
               // Build prompt with cycle context
-              const symbolContexts: SymbolContextEnhanced[] = enhancedCycleSymbols.map(s => ({
+              const symbolContexts: SymbolContextEnhanced[] = enhancedCycleSymbols.map((s) => ({
                 id: s.id,
                 name: s.name,
                 kind: s.kind,
@@ -337,7 +338,8 @@ export default class Annotate extends Command {
 
               // Build user prompt with cycle note
               const basePrompt = buildUserPromptEnhanced(symbolContexts, aspects, coverage);
-              const cycleNote = `\nNote: These symbols have circular dependencies - they reference each other. Annotate them based on their collective purpose and individual contributions.\n`;
+              const cycleNote =
+                '\nNote: These symbols have circular dependencies - they reference each other. Annotate them based on their collective purpose and individual contributions.\n';
               const userPrompt = cycleNote + basePrompt;
 
               // Call LLM
@@ -359,7 +361,7 @@ export default class Annotate extends Command {
 
               // Parse and persist results
               const parseResult = parseCombinedCsv(response);
-              const validSymbolIds = new Set(enhancedCycleSymbols.map(s => s.id));
+              const validSymbolIds = new Set(enhancedCycleSymbols.map((s) => s.id));
 
               // Build valid relationship map for cycle symbols
               const cycleValidRelationships = new Map<number, Set<number>>();
@@ -415,7 +417,9 @@ export default class Annotate extends Command {
               }
 
               if (!isJson) {
-                this.log(chalk.green(`    ✓ Annotated ${cycleAnnotations} symbols, ${cycleRelAnnotations} relationships`));
+                this.log(
+                  chalk.green(`    ✓ Annotated ${cycleAnnotations} symbols, ${cycleRelAnnotations} relationships`)
+                );
               }
             }
 
@@ -440,7 +444,7 @@ export default class Annotate extends Command {
         const coverage = filterCoverageForAspects(allCoverage, aspects, totalSymbols);
 
         // Build prompt
-        const symbolContexts: SymbolContextEnhanced[] = enhancedSymbols.map(s => ({
+        const symbolContexts: SymbolContextEnhanced[] = enhancedSymbols.map((s) => ({
           id: s.id,
           name: s.name,
           kind: s.kind,
@@ -506,8 +510,8 @@ export default class Annotate extends Command {
         // Process results
         const iterationResults: AnnotationResult[] = [];
         const iterationRelResults: RelationshipAnnotationResult[] = [];
-        const validSymbolIds = new Set(enhancedSymbols.map(s => s.id));
-        const symbolNameById = new Map(enhancedSymbols.map(s => [s.id, s.name]));
+        const validSymbolIds = new Set(enhancedSymbols.map((s) => s.id));
+        const symbolNameById = new Map(enhancedSymbols.map((s) => [s.id, s.name]));
 
         // Build valid relationship map (from_id -> Set of valid to_ids)
         const validRelationships = new Map<number, Map<number, string>>();
@@ -749,21 +753,25 @@ ${sourceCode}
 \`\`\`
 
 Relationships to annotate:
-${toIds.map(toId => {
-  const toDef = db.getDefinitionById(toId);
-  return toDef ? `- ${def.name} → ${toDef.name} (${toDef.kind} in ${toDef.filePath})` : null;
-}).filter(Boolean).join('\n')}
+${toIds
+  .map((toId) => {
+    const toDef = db.getDefinitionById(toId);
+    return toDef ? `- ${def.name} → ${toDef.name} (${toDef.kind} in ${toDef.filePath})` : null;
+  })
+  .filter(Boolean)
+  .join('\n')}
 
 Format: CSV with columns: from_id,to_id,relationship_annotation
 \`\`\`csv
 from_id,to_id,relationship_annotation
-${toIds.map(toId => `${fromId},${toId},"<describe how ${def.name} uses this dependency>"`).join('\n')}
+${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this dependency>"`).join('\n')}
 \`\`\``;
 
           try {
             const response = await LLMist.complete(retryPrompt, {
               model: flags.model,
-              systemPrompt: 'You are annotating code relationships. Provide clear, concise descriptions of how symbols are related.',
+              systemPrompt:
+                'You are annotating code relationships. Provide clear, concise descriptions of how symbols are related.',
               temperature: 0,
             });
 
@@ -772,8 +780,8 @@ ${toIds.map(toId => `${fromId},${toId},"<describe how ${def.name} uses this depe
             for (const line of lines) {
               const match = line.match(/^(\d+),(\d+),["']?(.+?)["']?$/);
               if (match) {
-                const retryFromId = parseInt(match[1], 10);
-                const retryToId = parseInt(match[2], 10);
+                const retryFromId = Number.parseInt(match[1], 10);
+                const retryToId = Number.parseInt(match[2], 10);
                 const value = match[3].trim();
 
                 if (retryFromId === fromId && toIds.includes(retryToId) && value.length >= 5) {
@@ -831,7 +839,14 @@ ${toIds.map(toId => `${fromId},${toId},"<describe how ${def.name} uses this depe
         };
         this.log(JSON.stringify(jsonOutput, null, 2));
       } else {
-        for (const line of formatFinalSummary(totalAnnotations, totalRelationshipAnnotations, totalErrors, iteration - 1, coverage, finalRelCoverage)) {
+        for (const line of formatFinalSummary(
+          totalAnnotations,
+          totalRelationshipAnnotations,
+          totalErrors,
+          iteration - 1,
+          coverage,
+          finalRelCoverage
+        )) {
           this.log(line);
         }
       }
@@ -847,7 +862,7 @@ ${toIds.map(toId => `${fromId},${toId},"<describe how ${def.name} uses this depe
     db: IndexDatabase,
     symbols: ReadySymbolInfo[],
     aspects: string[],
-    relationshipLimit: number,
+    relationshipLimit: number
   ): Promise<EnhancedSymbol[]> {
     const enhanced: EnhancedSymbol[] = [];
 
@@ -856,16 +871,18 @@ ${toIds.map(toId => `${fromId},${toId},"<describe how ${def.name} uses this depe
 
       // Get dependencies with all their metadata
       const deps = db.getDependenciesWithMetadata(symbol.id, aspects[0]);
-      const dependencies: DependencyContextEnhanced[] = deps.map(dep => {
+      const dependencies: DependencyContextEnhanced[] = deps.map((dep) => {
         // Get all metadata for this dependency
         const metadata = db.getDefinitionMetadata(dep.id);
 
         let domains: string[] | null = null;
         try {
-          if (metadata['domain']) {
-            domains = JSON.parse(metadata['domain']) as string[];
+          if (metadata.domain) {
+            domains = JSON.parse(metadata.domain) as string[];
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
 
         return {
           id: dep.id,
@@ -873,10 +890,10 @@ ${toIds.map(toId => `${fromId},${toId},"<describe how ${def.name} uses this depe
           kind: dep.kind,
           filePath: dep.filePath,
           line: dep.line,
-          purpose: metadata['purpose'] || null,
+          purpose: metadata.purpose || null,
           domains,
-          role: metadata['role'] || null,
-          pure: metadata['pure'] ? metadata['pure'] === 'true' : null,
+          role: metadata.role || null,
+          pure: metadata.pure ? metadata.pure === 'true' : null,
         };
       });
 
@@ -889,7 +906,7 @@ ${toIds.map(toId => `${fromId},${toId},"<describe how ${def.name} uses this depe
         // Table doesn't exist - continue with empty relationships
       }
       // These are usage-based relationships (calls), so they're all 'uses' type
-      const relationshipsToAnnotate: RelationshipToAnnotate[] = unannotatedRels.map(rel => ({
+      const relationshipsToAnnotate: RelationshipToAnnotate[] = unannotatedRels.map((rel) => ({
         toId: rel.toDefinitionId,
         toName: rel.toName,
         toKind: rel.toKind,
@@ -900,7 +917,7 @@ ${toIds.map(toId => `${fromId},${toId},"<describe how ${def.name} uses this depe
       // Get incoming dependencies (who uses this symbol)
       const incomingDeps = db.getIncomingDependencies(symbol.id, 5);
       const incomingDependencyCount = db.getIncomingDependencyCount(symbol.id);
-      const incomingDependencies: IncomingDependencyContext[] = incomingDeps.map(inc => ({
+      const incomingDependencies: IncomingDependencyContext[] = incomingDeps.map((inc) => ({
         id: inc.id,
         name: inc.name,
         kind: inc.kind,
@@ -936,7 +953,7 @@ ${toIds.map(toId => `${fromId},${toId},"<describe how ${def.name} uses this depe
           if (!Array.isArray(parsed)) {
             return 'domain must be a JSON array';
           }
-          if (!parsed.every(d => typeof d === 'string')) {
+          if (!parsed.every((d) => typeof d === 'string')) {
             return 'domain array must contain only strings';
           }
         } catch {

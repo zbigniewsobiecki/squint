@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SymbolResolver, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, SymbolResolver, withDatabase } from '../_shared/index.js';
 
 export default class Unset extends Command {
   static override description = 'Remove a relationship annotation between two symbols';
@@ -61,9 +61,15 @@ export default class Unset extends Command {
       const removed = db.removeRelationshipAnnotation(fromDef.id, toDef.id);
 
       if (removed) {
-        this.log(`Removed relationship: ${chalk.yellow(fromDetails?.name ?? String(fromDef.id))} ${chalk.gray('->')} ${chalk.cyan(toDetails?.name ?? String(toDef.id))}`);
+        this.log(
+          `Removed relationship: ${chalk.yellow(fromDetails?.name ?? String(fromDef.id))} ${chalk.gray('->')} ${chalk.cyan(toDetails?.name ?? String(toDef.id))}`
+        );
       } else {
-        this.log(chalk.gray(`No relationship annotation found between ${fromDetails?.name ?? String(fromDef.id)} and ${toDetails?.name ?? String(toDef.id)}`));
+        this.log(
+          chalk.gray(
+            `No relationship annotation found between ${fromDetails?.name ?? String(fromDef.id)} and ${toDetails?.name ?? String(toDef.id)}`
+          )
+        );
       }
     });
   }

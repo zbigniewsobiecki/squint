@@ -38,16 +38,7 @@ export const LAYER_COLORS: Record<string, { fill: string; stroke: string }> = {
 /**
  * Flow colors palette
  */
-export const FLOW_COLORS = [
-  '#4fc1ff',
-  '#ce9178',
-  '#6a9955',
-  '#c586c0',
-  '#dcdcaa',
-  '#9cdcfe',
-  '#d7ba7d',
-  '#b5cea8',
-];
+export const FLOW_COLORS = ['#4fc1ff', '#ce9178', '#6a9955', '#c586c0', '#dcdcaa', '#9cdcfe', '#d7ba7d', '#b5cea8'];
 
 /**
  * Get flow color by index
@@ -70,9 +61,11 @@ export function getHierarchyColor(d: d3.HierarchyNode<HierarchyNode>): string {
   if (d.data.data) {
     // Symbol node - use kind color
     return KIND_COLORS[d.data.data.kind] || '#666';
-  } else if (d.data.isFile) {
+  }
+  if (d.data.isFile) {
     return HIERARCHY_COLORS.file;
-  } else if (d.data.isDirectory) {
+  }
+  if (d.data.isDirectory) {
     return HIERARCHY_COLORS.directory;
   }
   return '#2d2d2d';

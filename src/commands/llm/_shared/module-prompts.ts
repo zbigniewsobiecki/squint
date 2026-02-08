@@ -70,7 +70,7 @@ module,project.backend,api,"API","HTTP endpoint handlers"
 export function buildTreeUserPrompt(context: TreeGenerationContext): string {
   const parts: string[] = [];
 
-  parts.push(`## Codebase Overview`);
+  parts.push('## Codebase Overview');
   parts.push(`Total symbols: ${context.totalSymbolCount}`);
   parts.push('');
 
@@ -89,7 +89,7 @@ export function buildTreeUserPrompt(context: TreeGenerationContext): string {
   }
 
   // Directory structure overview
-  parts.push(`## Directory Structure`);
+  parts.push('## Directory Structure');
   for (const dir of context.directoryStructure.slice(0, 30)) {
     parts.push(`- ${dir}`);
   }
@@ -173,10 +173,7 @@ export function formatModuleTreeForPrompt(modules: Module[]): string {
 /**
  * Build the user prompt for Phase 2 (symbol assignment batch).
  */
-export function buildAssignmentUserPrompt(
-  modules: Module[],
-  symbols: SymbolForAssignment[],
-): string {
+export function buildAssignmentUserPrompt(modules: Module[], symbols: SymbolForAssignment[]): string {
   const parts: string[] = [];
 
   // Module tree

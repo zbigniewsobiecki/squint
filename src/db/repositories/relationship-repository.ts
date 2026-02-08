@@ -1,11 +1,11 @@
 import type Database from 'better-sqlite3';
-import type {
-  RelationshipType,
-  RelationshipAnnotation,
-  RelationshipWithDetails,
-  EnhancedRelationshipContext,
-} from '../schema.js';
 import { ensureRelationshipTypeColumn } from '../schema-manager.js';
+import type {
+  EnhancedRelationshipContext,
+  RelationshipAnnotation,
+  RelationshipType,
+  RelationshipWithDetails,
+} from '../schema.js';
 
 export interface UnannotatedInheritance {
   id: number;
@@ -190,7 +190,7 @@ export class RelationshipRepository {
   /**
    * Get unannotated inheritance relationships (extends/implements with placeholder semantic).
    */
-  getUnannotatedInheritance(limit: number = 50): UnannotatedInheritance[] {
+  getUnannotatedInheritance(limit = 50): UnannotatedInheritance[] {
     ensureRelationshipTypeColumn(this.db);
     const stmt = this.db.prepare(`
       SELECT
@@ -399,15 +399,19 @@ export class RelationshipRepository {
       let fromDomains: string[] | null = null;
       let toDomains: string[] | null = null;
       try {
-        if (fromMeta['domain']) {
-          fromDomains = JSON.parse(fromMeta['domain']) as string[];
+        if (fromMeta.domain) {
+          fromDomains = JSON.parse(fromMeta.domain) as string[];
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       try {
-        if (toMeta['domain']) {
-          toDomains = JSON.parse(toMeta['domain']) as string[];
+        if (toMeta.domain) {
+          toDomains = JSON.parse(toMeta.domain) as string[];
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       // Calculate shared domains
       const sharedDomains: string[] = [];
@@ -421,8 +425,8 @@ export class RelationshipRepository {
 
       // Get other relationships from source (what else does source call?)
       const otherFromRels = getDefinitionDependencies(row.fromDefinitionId)
-        .filter(d => d.dependencyId !== row.toDefinitionId)
-        .map(d => d.name);
+        .filter((d) => d.dependencyId !== row.toDefinitionId)
+        .map((d) => d.name);
 
       // Get other relationships to target (what else calls target?)
       const otherToRelsStmt = this.db.prepare(`
@@ -454,18 +458,18 @@ export class RelationshipRepository {
         toFilePath: row.toFilePath,
         toLine: row.toLine,
         toEndLine: row.toEndLine,
-        fromPurpose: fromMeta['purpose'] ?? null,
+        fromPurpose: fromMeta.purpose ?? null,
         fromDomains,
-        fromRole: fromMeta['role'] ?? null,
-        fromPure: fromMeta['pure'] ? fromMeta['pure'] === 'true' : null,
-        toPurpose: toMeta['purpose'] ?? null,
+        fromRole: fromMeta.role ?? null,
+        fromPure: fromMeta.pure ? fromMeta.pure === 'true' : null,
+        toPurpose: toMeta.purpose ?? null,
         toDomains,
-        toRole: toMeta['role'] ?? null,
-        toPure: toMeta['pure'] ? toMeta['pure'] === 'true' : null,
+        toRole: toMeta.role ?? null,
+        toPure: toMeta.pure ? toMeta.pure === 'true' : null,
         relationshipType: 'call', // Default to call for now
         usageLine: row.usageLine,
         otherFromRelationships: otherFromRels.slice(0, 10),
-        otherToRelationships: otherToRels.map(r => r.name),
+        otherToRelationships: otherToRels.map((r) => r.name),
         sharedDomains,
       });
     }

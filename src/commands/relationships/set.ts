@@ -1,7 +1,8 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SymbolResolver, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, SymbolResolver, withDatabase } from '../_shared/index.js';
 
+// biome-ignore lint/suspicious/noShadowRestrictedNames: Command class must match CLI command name
 export default class Set extends Command {
   static override description = 'Set a semantic annotation on a relationship between two symbols';
 
@@ -67,7 +68,9 @@ export default class Set extends Command {
       const fromDetails = db.getDefinitionById(fromDef.id);
       const toDetails = db.getDefinitionById(toDef.id);
 
-      this.log(`Set relationship: ${chalk.yellow(fromDetails?.name ?? String(fromDef.id))} ${chalk.gray('->')} ${chalk.cyan(toDetails?.name ?? String(toDef.id))}`);
+      this.log(
+        `Set relationship: ${chalk.yellow(fromDetails?.name ?? String(fromDef.id))} ${chalk.gray('->')} ${chalk.cyan(toDetails?.name ?? String(toDef.id))}`
+      );
       this.log(`  ${args.semantic}`);
     });
   }

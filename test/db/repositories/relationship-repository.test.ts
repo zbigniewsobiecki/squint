@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { RelationshipRepository } from '../../../src/db/repositories/relationship-repository.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileRepository } from '../../../src/db/repositories/file-repository.js';
 import { MetadataRepository } from '../../../src/db/repositories/metadata-repository.js';
+import { RelationshipRepository } from '../../../src/db/repositories/relationship-repository.js';
 import { SCHEMA } from '../../../src/db/schema.js';
 
 describe('RelationshipRepository', () => {
@@ -126,7 +126,7 @@ describe('RelationshipRepository', () => {
 
       const rels = repo.getFrom(defId1);
       expect(rels).toHaveLength(2);
-      expect(rels.map(r => r.toName).sort()).toEqual(['HelperC', 'ServiceB']);
+      expect(rels.map((r) => r.toName).sort()).toEqual(['HelperC', 'ServiceB']);
     });
 
     it('returns empty array when no relationships', () => {
@@ -142,7 +142,7 @@ describe('RelationshipRepository', () => {
 
       const rels = repo.getTo(defId3);
       expect(rels).toHaveLength(2);
-      expect(rels.map(r => r.fromName).sort()).toEqual(['ServiceA', 'ServiceB']);
+      expect(rels.map((r) => r.fromName).sort()).toEqual(['ServiceA', 'ServiceB']);
     });
   });
 
@@ -218,12 +218,17 @@ describe('RelationshipRepository', () => {
   describe('getUnannotated', () => {
     it('returns relationships that need annotation', () => {
       // Create a call from defId1 to defId2
-      const symId = fileRepo.insertSymbol(null, defId2, {
-        name: 'ServiceB',
-        localName: 'ServiceB',
-        kind: 'class',
-        usages: [],
-      }, fileId);
+      const symId = fileRepo.insertSymbol(
+        null,
+        defId2,
+        {
+          name: 'ServiceB',
+          localName: 'ServiceB',
+          kind: 'class',
+          usages: [],
+        },
+        fileId
+      );
 
       fileRepo.insertUsage(symId, {
         position: { row: 10, column: 5 },
@@ -237,12 +242,17 @@ describe('RelationshipRepository', () => {
 
     it('filters by fromDefinitionId', () => {
       // Create calls from both defId1 and defId2
-      const symId1 = fileRepo.insertSymbol(null, defId3, {
-        name: 'HelperC',
-        localName: 'HelperC',
-        kind: 'function',
-        usages: [],
-      }, fileId);
+      const symId1 = fileRepo.insertSymbol(
+        null,
+        defId3,
+        {
+          name: 'HelperC',
+          localName: 'HelperC',
+          kind: 'function',
+          usages: [],
+        },
+        fileId
+      );
       fileRepo.insertUsage(symId1, {
         position: { row: 10, column: 5 },
         context: 'call_expression',
@@ -250,18 +260,23 @@ describe('RelationshipRepository', () => {
       });
 
       const unannotated = repo.getUnannotated({ fromDefinitionId: defId1 });
-      expect(unannotated.every(u => u.fromDefinitionId === defId1)).toBe(true);
+      expect(unannotated.every((u) => u.fromDefinitionId === defId1)).toBe(true);
     });
   });
 
   describe('getUnannotatedCount', () => {
     it('returns count of unannotated relationships', () => {
-      const symId = fileRepo.insertSymbol(null, defId2, {
-        name: 'ServiceB',
-        localName: 'ServiceB',
-        kind: 'class',
-        usages: [],
-      }, fileId);
+      const symId = fileRepo.insertSymbol(
+        null,
+        defId2,
+        {
+          name: 'ServiceB',
+          localName: 'ServiceB',
+          kind: 'class',
+          usages: [],
+        },
+        fileId
+      );
 
       fileRepo.insertUsage(symId, {
         position: { row: 10, column: 5 },
@@ -283,12 +298,17 @@ describe('RelationshipRepository', () => {
       metadataRepo.set(defId2, 'domain', '["auth", "api"]');
 
       // Create a call from defId1 to defId2
-      const symId = fileRepo.insertSymbol(null, defId2, {
-        name: 'ServiceB',
-        localName: 'ServiceB',
-        kind: 'class',
-        usages: [],
-      }, fileId);
+      const symId = fileRepo.insertSymbol(
+        null,
+        defId2,
+        {
+          name: 'ServiceB',
+          localName: 'ServiceB',
+          kind: 'class',
+          usages: [],
+        },
+        fileId
+      );
       fileRepo.insertUsage(symId, {
         position: { row: 10, column: 5 },
         context: 'call_expression',

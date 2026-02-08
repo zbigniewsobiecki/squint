@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { IndexDatabase, computeHash } from '../../src/db/database.js';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { IndexDatabase, computeHash } from '../../src/db/database.js';
 
 describe('symbols metadata commands', () => {
   let testDir: string;
@@ -434,7 +434,9 @@ describe('symbols metadata commands', () => {
       const json = JSON.parse(output);
       expect(json.verbose).toBe(true);
       // Symbols that have dependencies should include them
-      const symbolsWithDeps = json.symbols.filter((s: { dependencies?: unknown[] }) => s.dependencies && s.dependencies.length > 0);
+      const symbolsWithDeps = json.symbols.filter(
+        (s: { dependencies?: unknown[] }) => s.dependencies && s.dependencies.length > 0
+      );
       if (symbolsWithDeps.length > 0) {
         expect(symbolsWithDeps[0].dependencies).toBeDefined();
       }
@@ -450,10 +452,13 @@ describe('symbols metadata commands', () => {
   describe('symbols set --batch', () => {
     it('sets metadata on multiple symbols from input file', () => {
       const batchFile = path.join(testDir, 'batch.json');
-      fs.writeFileSync(batchFile, JSON.stringify([
-        { name: 'add', value: 'Adds two numbers' },
-        { name: 'subtract', value: 'Subtracts two numbers' },
-      ]));
+      fs.writeFileSync(
+        batchFile,
+        JSON.stringify([
+          { name: 'add', value: 'Adds two numbers' },
+          { name: 'subtract', value: 'Subtracts two numbers' },
+        ])
+      );
 
       const output = runCommand(`symbols set purpose -i ${batchFile} -d ${dbPath}`);
       expect(output).toContain('Set purpose on 2 symbols');
@@ -469,10 +474,13 @@ describe('symbols metadata commands', () => {
 
     it('reports failures for non-existent symbols', () => {
       const batchFile = path.join(testDir, 'batch.json');
-      fs.writeFileSync(batchFile, JSON.stringify([
-        { name: 'add', value: 'Adds numbers' },
-        { name: 'nonexistent', value: 'Should fail' },
-      ]));
+      fs.writeFileSync(
+        batchFile,
+        JSON.stringify([
+          { name: 'add', value: 'Adds numbers' },
+          { name: 'nonexistent', value: 'Should fail' },
+        ])
+      );
 
       const output = runCommand(`symbols set purpose -i ${batchFile} -d ${dbPath}`);
       expect(output).toContain('1 failed');
@@ -482,9 +490,7 @@ describe('symbols metadata commands', () => {
 
     it('supports --id in batch entries', () => {
       const batchFile = path.join(testDir, 'batch.json');
-      fs.writeFileSync(batchFile, JSON.stringify([
-        { id: 1, value: 'By ID' },
-      ]));
+      fs.writeFileSync(batchFile, JSON.stringify([{ id: 1, value: 'By ID' }]));
 
       const output = runCommand(`symbols set purpose -i ${batchFile} -d ${dbPath}`);
       expect(output).toContain('Set purpose on 1 symbols');
@@ -496,9 +502,7 @@ describe('symbols metadata commands', () => {
 
     it('returns JSON output with --json flag', () => {
       const batchFile = path.join(testDir, 'batch.json');
-      fs.writeFileSync(batchFile, JSON.stringify([
-        { name: 'add', value: 'Test' },
-      ]));
+      fs.writeFileSync(batchFile, JSON.stringify([{ name: 'add', value: 'Test' }]));
 
       const output = runCommand(`symbols set purpose -i ${batchFile} --json -d ${dbPath}`);
       const json = JSON.parse(output);
@@ -525,9 +529,12 @@ describe('symbols metadata commands', () => {
 
     it('handles entries missing value', () => {
       const batchFile = path.join(testDir, 'batch.json');
-      fs.writeFileSync(batchFile, JSON.stringify([
-        { name: 'add' }, // missing value
-      ]));
+      fs.writeFileSync(
+        batchFile,
+        JSON.stringify([
+          { name: 'add' }, // missing value
+        ])
+      );
 
       const output = runCommand(`symbols set purpose -i ${batchFile} -d ${dbPath}`);
       expect(output).toContain('✗');

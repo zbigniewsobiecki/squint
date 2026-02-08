@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createStore, toggleFlow, toggleModule, selectAllFlows, clearFlowSelection } from './store';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearFlowSelection, createStore, selectAllFlows, toggleFlow, toggleModule } from './store';
 import type { Store } from './store';
 
 describe('store', () => {

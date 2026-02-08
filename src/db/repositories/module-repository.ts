@@ -1,12 +1,6 @@
 import type Database from 'better-sqlite3';
-import type {
-  Module,
-  ModuleTreeNode,
-  ModuleWithMembers,
-  AnnotatedSymbolInfo,
-  CallGraphEdge,
-} from '../schema.js';
 import { ensureModulesTables } from '../schema-manager.js';
+import type { AnnotatedSymbolInfo, CallGraphEdge, Module, ModuleTreeNode, ModuleWithMembers } from '../schema.js';
 import { buildSingleRootTree } from '../utils/tree-builder.js';
 
 export interface ModuleSymbol {
@@ -51,9 +45,11 @@ export class ModuleRepository {
   ensureRoot(): number {
     ensureModulesTables(this.db);
 
-    const existing = this.db.prepare(`
+    const existing = this.db
+      .prepare(`
       SELECT id FROM modules WHERE full_path = 'project'
-    `).get() as { id: number } | undefined;
+    `)
+      .get() as { id: number } | undefined;
 
     if (existing) return existing.id;
 
@@ -68,12 +64,7 @@ export class ModuleRepository {
   /**
    * Insert a new module in the tree.
    */
-  insert(
-    parentId: number | null,
-    slug: string,
-    name: string,
-    description?: string
-  ): number {
+  insert(parentId: number | null, slug: string, name: string, description?: string): number {
     ensureModulesTables(this.db);
 
     // Calculate full_path and depth
@@ -84,9 +75,11 @@ export class ModuleRepository {
       fullPath = slug;
       depth = 0;
     } else {
-      const parent = this.db.prepare(`
+      const parent = this.db
+        .prepare(`
         SELECT full_path, depth FROM modules WHERE id = ?
-      `).get(parentId) as { full_path: string; depth: number } | undefined;
+      `)
+        .get(parentId) as { full_path: string; depth: number } | undefined;
 
       if (!parent) {
         throw new Error(`Parent module ${parentId} not found`);
@@ -197,10 +190,7 @@ export class ModuleRepository {
     const modules = this.getAll();
     if (modules.length === 0) return null;
 
-    return buildSingleRootTree(
-      modules,
-      (m): ModuleTreeNode => ({ ...m, children: [] })
-    );
+    return buildSingleRootTree(modules, (m): ModuleTreeNode => ({ ...m, children: [] }));
   }
 
   /**
@@ -262,7 +252,7 @@ export class ModuleRepository {
       role: string | null;
     }>;
 
-    return rows.map(row => ({
+    return rows.map((row) => ({
       id: row.id,
       name: row.name,
       kind: row.kind,
@@ -311,7 +301,7 @@ export class ModuleRepository {
     const members = this.getSymbols(moduleId);
     return {
       ...module,
-      members: members.map(m => ({ ...m, definitionId: m.id })),
+      members: members.map((m) => ({ ...m, definitionId: m.id })),
     };
   }
 
@@ -321,11 +311,11 @@ export class ModuleRepository {
   getAllWithMembers(): ModuleWithMembers[] {
     ensureModulesTables(this.db);
     const modules = this.getAll();
-    return modules.map(m => {
+    return modules.map((m) => {
       const members = this.getSymbols(m.id);
       return {
         ...m,
-        members: members.map(mem => ({ ...mem, definitionId: mem.id })),
+        members: members.map((mem) => ({ ...mem, definitionId: mem.id })),
       };
     });
   }

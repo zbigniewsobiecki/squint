@@ -1,9 +1,9 @@
 import * as d3 from 'd3';
-import type { Store } from '../state/store';
 import type { ApiClient } from '../api/client';
-import type { SymbolNode, SymbolEdge } from '../types/api';
 import { getKindColor, getNodeRadius } from '../d3/colors';
 import { setupZoom } from '../d3/zoom';
+import type { Store } from '../state/store';
+import type { SymbolEdge, SymbolNode } from '../types/api';
 
 interface SimulationNode extends SymbolNode, d3.SimulationNodeDatum {}
 
@@ -126,7 +126,7 @@ function renderForceGraph(nodes: SymbolNode[], edges: SymbolEdge[]) {
     .attr('class', 'link-label')
     .text((d) => {
       const label = d.semantic || '';
-      return label.length > 25 ? label.substring(0, 22) + '...' : label;
+      return label.length > 25 ? `${label.substring(0, 22)}...` : label;
     });
 
   // Draw nodes
@@ -137,14 +137,8 @@ function renderForceGraph(nodes: SymbolNode[], edges: SymbolEdge[]) {
     .data(simNodes)
     .enter()
     .append('g')
-    .attr('class', (d) => 'node' + (d.hasAnnotations ? '' : ' greyed-out'))
-    .call(
-      d3
-        .drag<SVGGElement, SimulationNode>()
-        .on('start', dragstarted)
-        .on('drag', dragged)
-        .on('end', dragended)
-    );
+    .attr('class', (d) => `node${d.hasAnnotations ? '' : ' greyed-out'}`)
+    .call(d3.drag<SVGGElement, SimulationNode>().on('start', dragstarted).on('drag', dragged).on('end', dragended));
 
   // Node circles
   node
@@ -167,7 +161,7 @@ function renderForceGraph(nodes: SymbolNode[], edges: SymbolEdge[]) {
   node
     .on('mouseover', (_event, d) => {
       const domainHtml = d.domain
-        ? `<div class="domains">${d.domain.map((dom) => '<span class="domain-tag">' + dom + '</span>').join('')}</div>`
+        ? `<div class="domains">${d.domain.map((dom) => `<span class="domain-tag">${dom}</span>`).join('')}</div>`
         : '';
       const pureHtml =
         d.pure !== undefined
@@ -186,7 +180,7 @@ function renderForceGraph(nodes: SymbolNode[], edges: SymbolEdge[]) {
       `);
     })
     .on('mousemove', (event) => {
-      tooltip.style('left', event.pageX + 10 + 'px').style('top', event.pageY - 10 + 'px');
+      tooltip.style('left', `${event.pageX + 10}px`).style('top', `${event.pageY - 10}px`);
     })
     .on('mouseout', () => {
       tooltip.style('display', 'none');
@@ -203,7 +197,7 @@ function renderForceGraph(nodes: SymbolNode[], edges: SymbolEdge[]) {
       `);
     })
     .on('mousemove', (event) => {
-      tooltip.style('left', event.pageX + 10 + 'px').style('top', event.pageY - 10 + 'px');
+      tooltip.style('left', `${event.pageX + 10}px`).style('top', `${event.pageY - 10}px`);
     })
     .on('mouseout', () => {
       tooltip.style('display', 'none');

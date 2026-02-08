@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DomainRepository } from '../../../src/db/repositories/domain-repository.js';
 import { FileRepository } from '../../../src/db/repositories/file-repository.js';
 import { MetadataRepository } from '../../../src/db/repositories/metadata-repository.js';
@@ -103,7 +103,7 @@ describe('DomainRepository', () => {
 
       const domains = repo.getAll();
       expect(domains).toHaveLength(3);
-      expect(domains.map(d => d.name)).toEqual(['api', 'auth', 'core']); // sorted
+      expect(domains.map((d) => d.name)).toEqual(['api', 'auth', 'core']); // sorted
     });
 
     it('returns empty array when no domains', () => {
@@ -122,10 +122,10 @@ describe('DomainRepository', () => {
 
       const domains = repo.getAllWithCounts();
 
-      const authDomain = domains.find(d => d.name === 'auth');
+      const authDomain = domains.find((d) => d.name === 'auth');
       expect(authDomain!.symbolCount).toBe(2);
 
-      const apiDomain = domains.find(d => d.name === 'api');
+      const apiDomain = domains.find((d) => d.name === 'api');
       expect(apiDomain!.symbolCount).toBe(1);
     });
   });
@@ -194,7 +194,7 @@ describe('DomainRepository', () => {
 
       const meta1 = metadataRepo.getValue(defId1, 'domain');
       const domains = JSON.parse(meta1!) as string[];
-      expect(domains.filter(d => d === 'auth').length).toBe(1);
+      expect(domains.filter((d) => d === 'auth').length).toBe(1);
     });
   });
 

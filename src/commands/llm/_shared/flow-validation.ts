@@ -10,7 +10,7 @@ import type { Flow, Interaction, InteractionWithPaths } from '../../../db/schema
 // ============================================
 
 export interface ValidationOptions {
-  maxSteps: number;  // Maximum steps per flow
+  maxSteps: number; // Maximum steps per flow
 }
 
 export const DEFAULT_VALIDATION_OPTIONS: ValidationOptions = {
@@ -30,9 +30,7 @@ export interface FlowValidationError {
   flowName?: string;
 }
 
-export type FlowValidationWarningType =
-  | 'no_steps'
-  | 'missing_description';
+export type FlowValidationWarningType = 'no_steps' | 'missing_description';
 
 export interface FlowValidationWarning {
   type: FlowValidationWarningType;
@@ -173,10 +171,7 @@ export interface InteractionValidationError {
   interactionId: number;
 }
 
-export function validateInteraction(
-  db: IndexDatabase,
-  interaction: Interaction
-): InteractionValidationError[] {
+export function validateInteraction(db: IndexDatabase, interaction: Interaction): InteractionValidationError[] {
   const errors: InteractionValidationError[] = [];
 
   const fromModule = db.getModuleById(interaction.fromModuleId);

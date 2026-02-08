@@ -1,7 +1,7 @@
-import { Args, Command, Flags } from '@oclif/core';
-import chalk from 'chalk';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { Args, Command, Flags } from '@oclif/core';
+import chalk from 'chalk';
 import { IndexDatabase } from '../../db/database.js';
 
 export default class Merge extends Command {
@@ -34,7 +34,9 @@ export default class Merge extends Command {
     try {
       await fs.access(dbPath);
     } catch {
-      this.error(chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
+      this.error(
+        chalk.red(`Database file "${dbPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`)
+      );
     }
 
     // Open database

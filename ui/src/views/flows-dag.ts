@@ -1,9 +1,9 @@
 import * as d3 from 'd3';
-import type { Store } from '../state/store';
 import type { ApiClient } from '../api/client';
-import type { DagModule, DagFlow } from '../types/api';
 import { getFlowColor } from '../d3/colors';
+import type { Store } from '../state/store';
 import { selectFlow } from '../state/store';
+import type { DagFlow, DagModule } from '../types/api';
 
 interface ModuleTreeNode extends DagModule {
   children: ModuleTreeNode[];
@@ -15,7 +15,7 @@ interface ModuleTreeNode extends DagModule {
   _y?: number;
 }
 
-let modulePositions = new Map<number, { x: number; y: number; width: number; height: number }>();
+const modulePositions = new Map<number, { x: number; y: number; width: number; height: number }>();
 let originalSidebarHtml: string | null = null;
 
 export function initFlowsDag(store: Store, _api: ApiClient) {
@@ -253,7 +253,9 @@ function initializeModuleDAG(store: Store) {
   const g = svg.append('g');
 
   // Define arrowhead marker
-  svg.append('defs').append('marker')
+  svg
+    .append('defs')
+    .append('marker')
     .attr('id', 'arrowhead')
     .attr('viewBox', '0 -5 10 10')
     .attr('refX', 8)
@@ -364,9 +366,9 @@ function updateFlowArrows(store: Store) {
       const midY = (fromY + toY) / 2;
 
       // Perpendicular offset based on step number for separation
-      const perpX = -dy / len;  // perpendicular direction
+      const perpX = -dy / len; // perpendicular direction
       const perpY = dx / len;
-      const curveOffset = (stepNum - 1) * 15;  // 15px offset per step
+      const curveOffset = (stepNum - 1) * 15; // 15px offset per step
 
       const ctrlX = midX + perpX * curveOffset;
       const ctrlY = midY + perpY * curveOffset;
@@ -376,7 +378,7 @@ function updateFlowArrows(store: Store) {
         const mt = 1 - t;
         return {
           x: mt * mt * x0 + 2 * mt * t * cx + t * t * x1,
-          y: mt * mt * y0 + 2 * mt * t * cy + t * t * y1
+          y: mt * mt * y0 + 2 * mt * t * cy + t * t * y1,
         };
       }
 
@@ -393,7 +395,7 @@ function updateFlowArrows(store: Store) {
         .attr('stroke-width', 3)
         .attr('fill', 'none')
         .attr('marker-end', 'url(#arrowhead)')
-        .style('color', color);  // for marker fill inheritance
+        .style('color', color); // for marker fill inheritance
 
       // Add step number at start of arrow
       g.append('text')
@@ -430,7 +432,7 @@ function updateModuleDimming(activeModuleIds: Set<number>) {
 
   d3.selectAll('.module-box').each(function () {
     const el = d3.select(this);
-    const moduleId = parseInt(el.attr('data-module-id') || '0');
+    const moduleId = Number.parseInt(el.attr('data-module-id') || '0');
 
     if (hasSelection && !activeModuleIds.has(moduleId)) {
       el.classed('module-dimmed', true);
@@ -453,11 +455,11 @@ function highlightStep(store: Store, stepIdx: number) {
 
   // Dim all arrows except the hovered one
   d3.selectAll('.flow-arrow').classed('arrow-dimmed', function () {
-    return parseInt(d3.select(this).attr('data-step-idx') || '-1') !== stepIdx;
+    return Number.parseInt(d3.select(this).attr('data-step-idx') || '-1') !== stepIdx;
   });
 
   d3.selectAll('.flow-step-number').classed('number-dimmed', function () {
-    return parseInt(d3.select(this).attr('data-step-idx') || '-1') !== stepIdx;
+    return Number.parseInt(d3.select(this).attr('data-step-idx') || '-1') !== stepIdx;
   });
 
   // Update module dimming - only show from/to modules
@@ -502,7 +504,7 @@ function setupSidebarInteractions(store: Store) {
   // Flow item clicks
   document.querySelectorAll('.flow-item').forEach((item) => {
     item.addEventListener('click', () => {
-      const flowId = parseInt(item.getAttribute('data-flow-id') || '0');
+      const flowId = Number.parseInt(item.getAttribute('data-flow-id') || '0');
 
       // Single-select: clear others, select this one
       selectFlow(store, flowId);
@@ -572,7 +574,7 @@ function showFlowSteps(store: Store, flowId: number) {
     <div class="step-item" data-step-idx="${idx}">
       <span class="step-number">${idx + 1}</span>
       <div class="step-content">
-        <div class="step-name">${step.semantic || 'Step ' + (idx + 1)}</div>
+        <div class="step-name">${step.semantic || `Step ${idx + 1}`}</div>
       </div>
     </div>
   `
@@ -598,7 +600,7 @@ function showFlowSteps(store: Store, flowId: number) {
   // Setup step hover handlers
   document.querySelectorAll('.step-item').forEach((item) => {
     item.addEventListener('mouseenter', () => {
-      const stepIdx = parseInt(item.getAttribute('data-step-idx') || '0');
+      const stepIdx = Number.parseInt(item.getAttribute('data-step-idx') || '0');
       highlightStep(store, stepIdx);
     });
 

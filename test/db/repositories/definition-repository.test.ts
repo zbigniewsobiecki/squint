@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DefinitionRepository } from '../../../src/db/repositories/definition-repository.js';
 import { FileRepository } from '../../../src/db/repositories/file-repository.js';
 import { SCHEMA } from '../../../src/db/schema.js';
@@ -199,7 +199,7 @@ describe('DefinitionRepository', () => {
 
       const subclasses = repo.getSubclasses('BaseClass');
       expect(subclasses).toHaveLength(2);
-      expect(subclasses.map(s => s.name).sort()).toEqual(['Child1', 'Child2']);
+      expect(subclasses.map((s) => s.name).sort()).toEqual(['Child1', 'Child2']);
     });
 
     it('returns empty array when no subclasses', () => {
@@ -219,7 +219,7 @@ describe('DefinitionRepository', () => {
 
       const impls = repo.getImplementations('MyInterface');
       expect(impls).toHaveLength(2);
-      expect(impls.map(i => i.name).sort()).toEqual(['Impl1', 'Impl2']);
+      expect(impls.map((i) => i.name).sort()).toEqual(['Impl1', 'Impl2']);
     });
   });
 
@@ -235,10 +235,10 @@ describe('DefinitionRepository', () => {
       expect(nodes).toHaveLength(4);
       expect(links).toHaveLength(2);
 
-      const extendsLink = links.find(l => l.type === 'extends');
+      const extendsLink = links.find((l) => l.type === 'extends');
       expect(extendsLink).toBeDefined();
 
-      const implementsLink = links.find(l => l.type === 'implements');
+      const implementsLink = links.find((l) => l.type === 'implements');
       expect(implementsLink).toBeDefined();
     });
   });

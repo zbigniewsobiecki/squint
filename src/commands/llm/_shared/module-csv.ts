@@ -74,14 +74,15 @@ export function parseTreeCsv(content: string): TreeParseResult {
   }
 
   const expectedHeaders = ['type', 'parent_path', 'slug', 'name', 'description'];
-  const normalizedHeaders = header.map(h => h.toLowerCase().trim().replace(/_/g, '_'));
+  const normalizedHeaders = header.map((h) => h.toLowerCase().trim().replace(/_/g, '_'));
 
   // Check headers (allow some flexibility)
-  const headerOk = normalizedHeaders[0] === 'type' &&
-                   (normalizedHeaders[1] === 'parent_path' || normalizedHeaders[1] === 'parentpath') &&
-                   normalizedHeaders[2] === 'slug' &&
-                   normalizedHeaders[3] === 'name' &&
-                   (normalizedHeaders[4] === 'description' || normalizedHeaders[4] === 'desc');
+  const headerOk =
+    normalizedHeaders[0] === 'type' &&
+    (normalizedHeaders[1] === 'parent_path' || normalizedHeaders[1] === 'parentpath') &&
+    normalizedHeaders[2] === 'slug' &&
+    normalizedHeaders[3] === 'name' &&
+    (normalizedHeaders[4] === 'description' || normalizedHeaders[4] === 'desc');
 
   if (!headerOk) {
     errors.push(`Invalid header columns: expected "${expectedHeaders.join(',')}", got "${header.join(',')}"`);
@@ -104,7 +105,7 @@ export function parseTreeCsv(content: string): TreeParseResult {
       continue;
     }
 
-    const [rowType, parentPath, slug, name, description] = parsed.map(v => v.trim());
+    const [rowType, parentPath, slug, name, description] = parsed.map((v) => v.trim());
 
     if (rowType !== 'module') {
       errors.push(`Line ${i + 1}: Unknown type "${rowType}", expected "module"`);
@@ -182,10 +183,11 @@ export function parseAssignmentCsv(content: string): AssignmentParseResult {
     return { assignments, errors };
   }
 
-  const normalizedHeaders = header.map(h => h.toLowerCase().trim().replace(/_/g, '_'));
-  const headerOk = normalizedHeaders[0] === 'type' &&
-                   (normalizedHeaders[1] === 'symbol_id' || normalizedHeaders[1] === 'symbolid') &&
-                   (normalizedHeaders[2] === 'module_path' || normalizedHeaders[2] === 'modulepath');
+  const normalizedHeaders = header.map((h) => h.toLowerCase().trim().replace(/_/g, '_'));
+  const headerOk =
+    normalizedHeaders[0] === 'type' &&
+    (normalizedHeaders[1] === 'symbol_id' || normalizedHeaders[1] === 'symbolid') &&
+    (normalizedHeaders[2] === 'module_path' || normalizedHeaders[2] === 'modulepath');
 
   if (!headerOk) {
     errors.push(`Invalid header columns: expected "type,symbol_id,module_path", got "${header.join(',')}"`);
@@ -208,15 +210,15 @@ export function parseAssignmentCsv(content: string): AssignmentParseResult {
       continue;
     }
 
-    const [rowType, symbolIdStr, modulePath] = parsed.map(v => v.trim());
+    const [rowType, symbolIdStr, modulePath] = parsed.map((v) => v.trim());
 
     if (rowType !== 'assignment') {
       errors.push(`Line ${i + 1}: Unknown type "${rowType}", expected "assignment"`);
       continue;
     }
 
-    const symbolId = parseInt(symbolIdStr, 10);
-    if (isNaN(symbolId)) {
+    const symbolId = Number.parseInt(symbolIdStr, 10);
+    if (Number.isNaN(symbolId)) {
       errors.push(`Line ${i + 1}: Invalid symbol_id "${symbolIdStr}"`);
       continue;
     }
@@ -262,7 +264,6 @@ function splitCsvLines(csv: string): string[] {
       lines.push(current);
       current = '';
     } else if (char === '\r' && !inQuotes) {
-      continue;
     } else {
       current += char;
     }

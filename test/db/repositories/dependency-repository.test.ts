@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DependencyRepository } from '../../../src/db/repositories/dependency-repository.js';
 import { FileRepository } from '../../../src/db/repositories/file-repository.js';
 import { MetadataRepository } from '../../../src/db/repositories/metadata-repository.js';
@@ -57,12 +57,17 @@ describe('DependencyRepository', () => {
 
   function createCallFromTo(fromDefId: number, toDefId: number, line: number): void {
     // Create internal symbol pointing to the target definition
-    const symId = fileRepo.insertSymbol(null, toDefId, {
-      name: 'callee',
-      localName: 'callee',
-      kind: 'function',
-      usages: [],
-    }, fileId);
+    const symId = fileRepo.insertSymbol(
+      null,
+      toDefId,
+      {
+        name: 'callee',
+        localName: 'callee',
+        kind: 'function',
+        usages: [],
+      },
+      fileId
+    );
 
     // Create a call usage within the caller's line range
     fileRepo.insertUsage(symId, {
@@ -170,12 +175,17 @@ describe('DependencyRepository', () => {
       createCallFromTo(callerDefId, calleeDefId, 5);
 
       // Create another internal symbol for the second call
-      const symId2 = fileRepo.insertSymbol(null, calleeDefId, {
-        name: 'callee',
-        localName: 'callee',
-        kind: 'function',
-        usages: [],
-      }, fileId);
+      const symId2 = fileRepo.insertSymbol(
+        null,
+        calleeDefId,
+        {
+          name: 'callee',
+          localName: 'callee',
+          kind: 'function',
+          usages: [],
+        },
+        fileId
+      );
 
       fileRepo.insertUsage(symId2, {
         position: { row: 34, column: 5 },
@@ -265,12 +275,17 @@ describe('DependencyRepository', () => {
       });
 
       // caller calls middle (at line 5)
-      const symMiddle = fileRepo.insertSymbol(null, middleDefId, {
-        name: 'middle',
-        localName: 'middle',
-        kind: 'function',
-        usages: [],
-      }, fileId);
+      const symMiddle = fileRepo.insertSymbol(
+        null,
+        middleDefId,
+        {
+          name: 'middle',
+          localName: 'middle',
+          kind: 'function',
+          usages: [],
+        },
+        fileId
+      );
       fileRepo.insertUsage(symMiddle, {
         position: { row: 4, column: 5 },
         context: 'call_expression',
@@ -278,12 +293,17 @@ describe('DependencyRepository', () => {
       });
 
       // middle calls callee (at line 45)
-      const symCallee = fileRepo.insertSymbol(null, calleeDefId, {
-        name: 'callee',
-        localName: 'callee',
-        kind: 'function',
-        usages: [],
-      }, fileId);
+      const symCallee = fileRepo.insertSymbol(
+        null,
+        calleeDefId,
+        {
+          name: 'callee',
+          localName: 'callee',
+          kind: 'function',
+          usages: [],
+        },
+        fileId
+      );
       fileRepo.insertUsage(symCallee, {
         position: { row: 44, column: 5 },
         context: 'call_expression',
@@ -297,7 +317,7 @@ describe('DependencyRepository', () => {
           JOIN files f ON d.file_id = f.id
           WHERE d.id = ?
         `);
-        return stmt.get(id) as { name: string; kind: string; filePath: string; line: number } | undefined ?? null;
+        return (stmt.get(id) as { name: string; kind: string; filePath: string; line: number } | undefined) ?? null;
       };
 
       const chain = repo.getPrerequisiteChain(callerDefId, 'purpose', getDefById);
@@ -319,7 +339,7 @@ describe('DependencyRepository', () => {
 
     it('respects filters', () => {
       const result = repo.getReadySymbols('purpose', { kind: 'function' });
-      expect(result.symbols.every(s => s.kind === 'function')).toBe(true);
+      expect(result.symbols.every((s) => s.kind === 'function')).toBe(true);
     });
 
     it('respects limit', () => {

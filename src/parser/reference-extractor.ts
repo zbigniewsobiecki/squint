@@ -1,19 +1,19 @@
-import type { SyntaxNode } from 'tree-sitter';
-import path from 'node:path';
 import fs from 'node:fs';
+import path from 'node:path';
+import type { SyntaxNode } from 'tree-sitter';
 import type { Definition } from './definition-extractor.js';
 
 export interface CallsiteMetadata {
   argumentCount: number;
-  isMethodCall: boolean;      // true for obj.foo(), false for foo()
+  isMethodCall: boolean; // true for obj.foo(), false for foo()
   isConstructorCall: boolean; // true for new Foo()
-  receiverName?: string;      // 'obj' in obj.foo()
+  receiverName?: string; // 'obj' in obj.foo()
 }
 
 export interface SymbolUsage {
   position: { row: number; column: number };
   context: string; // Parent node type: 'call_expression', 'member_expression', etc.
-  callsite?: CallsiteMetadata;  // Present when context is 'call_expression' or 'new_expression'
+  callsite?: CallsiteMetadata; // Present when context is 'call_expression' or 'new_expression'
 }
 
 export interface ImportedSymbol {
@@ -71,11 +71,7 @@ function findPackageJsonImports(startDir: string): { imports: Record<string, str
 /**
  * Resolve a subpath import (#...) using package.json imports field
  */
-function resolveSubpathImport(
-  source: string,
-  imports: Record<string, string>,
-  pkgDir: string
-): string | null {
+function resolveSubpathImport(source: string, imports: Record<string, string>, pkgDir: string): string | null {
   // Sort by specificity (longer patterns first)
   const patterns = Object.keys(imports).sort((a, b) => b.length - a.length);
 
@@ -105,11 +101,7 @@ function resolveSubpathImport(
 /**
  * Resolve an import path to an absolute path if it exists in the known files set
  */
-export function resolveImportPath(
-  source: string,
-  fromFile: string,
-  knownFiles: Set<string>
-): string | undefined {
+export function resolveImportPath(source: string, fromFile: string, knownFiles: Set<string>): string | undefined {
   const fromDir = path.dirname(fromFile);
 
   // Handle subpath imports (#...)
@@ -126,7 +118,7 @@ export function resolveImportPath(
         }
         // Try index files
         for (const ext of EXTENSIONS_TO_TRY) {
-          const indexPath = path.join(resolved, 'index' + ext);
+          const indexPath = path.join(resolved, `index${ext}`);
           if (knownFiles.has(indexPath)) return indexPath;
         }
       }
@@ -336,18 +328,12 @@ function getUsageContext(node: SyntaxNode): UsageInfo {
 /**
  * Find all usages of a symbol name in the AST
  */
-export function findSymbolUsages(
-  rootNode: SyntaxNode,
-  symbolName: string
-): SymbolUsage[] {
+export function findSymbolUsages(rootNode: SyntaxNode, symbolName: string): SymbolUsage[] {
   const usages: SymbolUsage[] = [];
 
   function walk(node: SyntaxNode): void {
     // Check both regular identifiers and type identifiers (for type annotations)
-    if (
-      (node.type === 'identifier' || node.type === 'type_identifier') &&
-      node.text === symbolName
-    ) {
+    if ((node.type === 'identifier' || node.type === 'type_identifier') && node.text === symbolName) {
       if (isValidUsage(node)) {
         const usageInfo = getUsageContext(node);
         const usage: SymbolUsage = {
@@ -408,14 +394,10 @@ function isTypeOnlyImport(node: SyntaxNode): boolean {
 /**
  * Extract imported symbols from an import statement
  */
-function extractImportedSymbols(
-  importNode: SyntaxNode,
-  rootNode: SyntaxNode
-): ImportedSymbol[] {
+function extractImportedSymbols(importNode: SyntaxNode, rootNode: SyntaxNode): ImportedSymbol[] {
   const symbols: ImportedSymbol[] = [];
 
-  const importClause = importNode.childForFieldName('import') ||
-    findChildByType(importNode, 'import_clause');
+  const importClause = importNode.childForFieldName('import') || findChildByType(importNode, 'import_clause');
 
   if (!importClause) {
     // Side-effect import: import './file'
@@ -445,8 +427,7 @@ function extractImportedSymbols(
       });
     } else if (child.type === 'namespace_import') {
       // Namespace import: import * as Foo from './file'
-      const nameNode = child.childForFieldName('name') ||
-        findChildByType(child, 'identifier');
+      const nameNode = child.childForFieldName('name') || findChildByType(child, 'identifier');
       if (nameNode) {
         const localName = nameNode.text;
         symbols.push({
@@ -488,10 +469,7 @@ function extractImportedSymbols(
  * For re-exports, we create a synthetic usage at the export location
  * to ensure dependency edges are created in the database.
  */
-function extractReExportedSymbols(
-  exportNode: SyntaxNode,
-  _rootNode: SyntaxNode
-): ImportedSymbol[] {
+function extractReExportedSymbols(exportNode: SyntaxNode, _rootNode: SyntaxNode): ImportedSymbol[] {
   const symbols: ImportedSymbol[] = [];
 
   const exportClause = findChildByType(exportNode, 'export_clause');
@@ -698,11 +676,7 @@ function extractRequireCall(
 /**
  * Extract all references from an AST
  */
-export function extractReferences(
-  rootNode: SyntaxNode,
-  filePath: string,
-  knownFiles: Set<string>
-): FileReference[] {
+export function extractReferences(rootNode: SyntaxNode, filePath: string, knownFiles: Set<string>): FileReference[] {
   const references: FileReference[] = [];
 
   function walk(node: SyntaxNode): void {
@@ -734,9 +708,7 @@ export function extractReferences(
         const imports = extractReExportedSymbols(node, rootNode);
 
         // Determine if it's export-all or re-export
-        const isExportAll = imports.some(
-          (imp) => imp.name === '*' && imp.kind === 'namespace'
-        );
+        const isExportAll = imports.some((imp) => imp.name === '*' && imp.kind === 'namespace');
 
         references.push({
           type: isExportAll ? 'export-all' : 're-export',
@@ -753,24 +725,14 @@ export function extractReferences(
       }
     } else if (node.type === 'call_expression') {
       // Check for dynamic import
-      const dynamicImport = extractDynamicImport(
-        node,
-        rootNode,
-        filePath,
-        knownFiles
-      );
+      const dynamicImport = extractDynamicImport(node, rootNode, filePath, knownFiles);
       if (dynamicImport) {
         references.push(dynamicImport);
         return; // Don't recurse into import()
       }
 
       // Check for require()
-      const requireCall = extractRequireCall(
-        node,
-        rootNode,
-        filePath,
-        knownFiles
-      );
+      const requireCall = extractRequireCall(node, rootNode, filePath, knownFiles);
       if (requireCall) {
         references.push(requireCall);
         return; // Don't recurse into require()
@@ -850,21 +812,19 @@ export function extractInternalUsages(
 
     // Filter out the definition itself (where the function/class is declared)
     // by checking if the usage is at the same position as the definition
-    const filteredUsages = usages.filter(usage => {
+    const filteredUsages = usages.filter((usage) => {
       // Definition position is 0-based, usage position is also 0-based
-      const isDefinitionSite =
-        usage.position.row === def.position.row &&
-        usage.position.column === def.position.column;
+      const isDefinitionSite = usage.position.row === def.position.row && usage.position.column === def.position.column;
       return !isDefinitionSite;
     });
 
     // Include call usages
-    const callUsages = filteredUsages.filter(u => u.callsite);
+    const callUsages = filteredUsages.filter((u) => u.callsite);
 
     // Optionally include type usages
     let typeUsages: SymbolUsage[] = [];
     if (includeTypeUsages) {
-      typeUsages = filteredUsages.filter(u => !u.callsite && isTypeContext(u.context));
+      typeUsages = filteredUsages.filter((u) => !u.callsite && isTypeContext(u.context));
     }
 
     const allUsages = [...callUsages, ...typeUsages];

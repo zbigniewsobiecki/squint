@@ -1,7 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { EnhancedRelationshipContext } from '../../db/database.js';
-import { withDatabase, SymbolResolver, SharedFlags, readSourceAsString } from '../_shared/index.js';
+import type { EnhancedRelationshipContext } from '../../db/database.js';
+import { SharedFlags, SymbolResolver, readSourceAsString, withDatabase } from '../_shared/index.js';
 
 interface EnhancedRelationshipWithSource extends EnhancedRelationshipContext {
   fromSourceCode: string;
@@ -75,16 +75,8 @@ export default class Next extends Command {
       // Enhance with source code
       const enhancedRelationships: EnhancedRelationshipWithSource[] = [];
       for (const rel of relationships) {
-        const fromSourceCode = await readSourceAsString(
-          rel.fromFilePath,
-          rel.fromLine,
-          rel.fromEndLine
-        );
-        const toSourceCode = await readSourceAsString(
-          rel.toFilePath,
-          rel.toLine,
-          rel.toEndLine
-        );
+        const fromSourceCode = await readSourceAsString(rel.fromFilePath, rel.fromLine, rel.fromEndLine);
+        const toSourceCode = await readSourceAsString(rel.toFilePath, rel.toLine, rel.toEndLine);
 
         enhancedRelationships.push({
           ...rel,
@@ -94,10 +86,16 @@ export default class Next extends Command {
       }
 
       if (flags.json) {
-        this.log(JSON.stringify({
-          relationships: enhancedRelationships,
-          remaining: totalRemaining,
-        }, null, 2));
+        this.log(
+          JSON.stringify(
+            {
+              relationships: enhancedRelationships,
+              remaining: totalRemaining,
+            },
+            null,
+            2
+          )
+        );
       } else {
         for (let i = 0; i < enhancedRelationships.length; i++) {
           if (i > 0) {
@@ -133,7 +131,7 @@ export default class Next extends Command {
 
     // Metadata details
     if (rel.fromDomains && rel.fromDomains.length > 0) {
-      this.log(`  Domains: ${chalk.magenta('[' + rel.fromDomains.join(', ') + ']')}`);
+      this.log(`  Domains: ${chalk.magenta(`[${rel.fromDomains.join(', ')}]`)}`);
     }
     if (rel.fromPurpose) {
       this.log(`  Purpose: ${chalk.cyan(rel.fromPurpose)}`);
@@ -147,13 +145,13 @@ export default class Next extends Command {
 
     // Other relationships from this symbol
     if (rel.otherFromRelationships.length > 0) {
-      this.log(`  Other calls: ${chalk.gray('[' + rel.otherFromRelationships.join(', ') + ']')}`);
+      this.log(`  Other calls: ${chalk.gray(`[${rel.otherFromRelationships.join(', ')}]`)}`);
     }
 
     this.log('');
-    this.log(chalk.gray('  ' + '─'.repeat(64)));
+    this.log(chalk.gray(`  ${'─'.repeat(64)}`));
     this.outputSourceCode(rel.fromSourceCode, rel.fromLine, maxLines);
-    this.log(chalk.gray('  ' + '─'.repeat(64)));
+    this.log(chalk.gray(`  ${'─'.repeat(64)}`));
 
     this.log('');
 
@@ -163,7 +161,7 @@ export default class Next extends Command {
 
     // Metadata details
     if (rel.toDomains && rel.toDomains.length > 0) {
-      this.log(`  Domains: ${chalk.magenta('[' + rel.toDomains.join(', ') + ']')}`);
+      this.log(`  Domains: ${chalk.magenta(`[${rel.toDomains.join(', ')}]`)}`);
     }
     if (rel.toPurpose) {
       this.log(`  Purpose: ${chalk.cyan(rel.toPurpose)}`);
@@ -177,13 +175,13 @@ export default class Next extends Command {
 
     // Other symbols that call this target
     if (rel.otherToRelationships.length > 0) {
-      this.log(`  Also called by: ${chalk.gray('[' + rel.otherToRelationships.join(', ') + ']')}`);
+      this.log(`  Also called by: ${chalk.gray(`[${rel.otherToRelationships.join(', ')}]`)}`);
     }
 
     this.log('');
-    this.log(chalk.gray('  ' + '─'.repeat(64)));
+    this.log(chalk.gray(`  ${'─'.repeat(64)}`));
     this.outputSourceCode(rel.toSourceCode, rel.toLine, maxLines);
-    this.log(chalk.gray('  ' + '─'.repeat(64)));
+    this.log(chalk.gray(`  ${'─'.repeat(64)}`));
 
     this.log('');
 
@@ -191,14 +189,18 @@ export default class Next extends Command {
     this.log(chalk.bold('Relationship context:'));
     this.log(`  Type: ${chalk.yellow(rel.relationshipType)} (line ${rel.usageLine})`);
     if (rel.sharedDomains.length > 0) {
-      this.log(`  Domain overlap: ${chalk.magenta('[' + rel.sharedDomains.join(', ') + ']')}`);
+      this.log(`  Domain overlap: ${chalk.magenta(`[${rel.sharedDomains.join(', ')}]`)}`);
     } else if (rel.fromDomains && rel.toDomains) {
       this.log(`  Domain overlap: ${chalk.gray('(none)')}`);
     }
 
     this.log('');
     this.log('To annotate this relationship:');
-    this.log(chalk.gray(`  ats relationships set "<semantic description>" --from-id ${rel.fromDefinitionId} --to-id ${rel.toDefinitionId}`));
+    this.log(
+      chalk.gray(
+        `  ats relationships set "<semantic description>" --from-id ${rel.fromDefinitionId} --to-id ${rel.toDefinitionId}`
+      )
+    );
     this.log('');
     this.log(chalk.gray('Example annotations:'));
     this.log(chalk.gray('  "delegates authentication - controller hands off to service"'));

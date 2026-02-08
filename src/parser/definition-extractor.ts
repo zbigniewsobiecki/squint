@@ -1,13 +1,6 @@
 import type { SyntaxNode } from 'tree-sitter';
 
-export type DefinitionKind =
-  | 'function'
-  | 'class'
-  | 'variable'
-  | 'const'
-  | 'type'
-  | 'interface'
-  | 'enum';
+export type DefinitionKind = 'function' | 'class' | 'variable' | 'const' | 'type' | 'interface' | 'enum';
 
 export interface Definition {
   name: string;
@@ -16,9 +9,9 @@ export interface Definition {
   isDefault: boolean;
   position: { row: number; column: number };
   endPosition: { row: number; column: number };
-  extends?: string;        // Parent class name (classes only)
-  implements?: string[];   // Implemented interfaces (classes only)
-  extendsAll?: string[];   // Extended interfaces (interfaces only, can be multiple)
+  extends?: string; // Parent class name (classes only)
+  implements?: string[]; // Implemented interfaces (classes only)
+  extendsAll?: string[]; // Extended interfaces (interfaces only, can be multiple)
 }
 
 interface ExportedName {
@@ -148,7 +141,8 @@ function extractClassInheritance(classNode: SyntaxNode): { extends?: string; imp
             if (typeNode?.type === 'identifier' || typeNode?.type === 'type_identifier') {
               result.extends = typeNode.text;
               break;
-            } else if (typeNode?.type === 'generic_type') {
+            }
+            if (typeNode?.type === 'generic_type') {
               // For generic types like Base<T>, get the base name
               const nameNode = typeNode.childForFieldName('name');
               if (nameNode) {

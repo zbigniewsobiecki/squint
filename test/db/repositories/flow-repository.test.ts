@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FlowRepository } from '../../../src/db/repositories/flow-repository.js';
 import { InteractionRepository } from '../../../src/db/repositories/interaction-repository.js';
 import { ModuleRepository } from '../../../src/db/repositories/module-repository.js';
@@ -324,9 +324,9 @@ describe('FlowRepository', () => {
       const stats = repo.getStats();
 
       expect(stats.flowCount).toBe(3);
-      expect(stats.byStakeholder['user']).toBe(1);
-      expect(stats.byStakeholder['admin']).toBe(1);
-      expect(stats.byStakeholder['system']).toBe(1);
+      expect(stats.byStakeholder.user).toBe(1);
+      expect(stats.byStakeholder.admin).toBe(1);
+      expect(stats.byStakeholder.system).toBe(1);
     });
   });
 

@@ -76,8 +76,8 @@
   --transition-normal: 0.3s;
 
   /* Font families */
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-  --font-mono: 'SF Mono', Monaco, Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+  --font-mono: "SF Mono", Monaco, Consolas, monospace;
 
   /* Spacing */
   --spacing-xs: 4px;

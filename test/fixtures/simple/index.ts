@@ -1,4 +1,4 @@
-import { add, subtract, PI, type Calculator, type Operation } from './utils';
+import { type Calculator, type Operation, PI, add, subtract } from './utils';
 
 export function calculate(op: Operation, a: number, b: number): number {
   if (op === 'add') {

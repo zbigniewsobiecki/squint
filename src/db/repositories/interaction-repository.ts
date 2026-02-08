@@ -1,15 +1,15 @@
 import type Database from 'better-sqlite3';
+import { ensureInteractionsTables, ensureModulesTables } from '../schema-manager.js';
 import type {
+  CallGraphEdge,
+  CalledSymbolInfo,
+  EnrichedModuleCallEdge,
   Interaction,
   InteractionWithPaths,
   ModuleCallEdge,
-  EnrichedModuleCallEdge,
-  CalledSymbolInfo,
-  CallGraphEdge,
-  RelationshipInteractionCoverage,
   RelationshipCoverageBreakdown,
+  RelationshipInteractionCoverage,
 } from '../schema.js';
-import { ensureInteractionsTables, ensureModulesTables } from '../schema-manager.js';
 
 export interface InteractionInsertOptions {
   direction?: 'uni' | 'bi';
@@ -43,11 +43,7 @@ export class InteractionRepository {
    * Insert a new interaction.
    * Throws if an interaction between these modules already exists.
    */
-  insert(
-    fromModuleId: number,
-    toModuleId: number,
-    options?: InteractionInsertOptions
-  ): number {
+  insert(fromModuleId: number, toModuleId: number, options?: InteractionInsertOptions): number {
     ensureInteractionsTables(this.db);
 
     const stmt = this.db.prepare(`
@@ -71,11 +67,7 @@ export class InteractionRepository {
   /**
    * Upsert an interaction (insert or update on conflict).
    */
-  upsert(
-    fromModuleId: number,
-    toModuleId: number,
-    options?: InteractionInsertOptions
-  ): number {
+  upsert(fromModuleId: number, toModuleId: number, options?: InteractionInsertOptions): number {
     ensureInteractionsTables(this.db);
 
     const existing = this.getByModules(fromModuleId, toModuleId);
@@ -88,8 +80,7 @@ export class InteractionRepository {
       });
       // Update weight separately if provided
       if (options?.weight !== undefined) {
-        this.db.prepare('UPDATE interactions SET weight = ? WHERE id = ?')
-          .run(options.weight, existing.id);
+        this.db.prepare('UPDATE interactions SET weight = ? WHERE id = ?').run(options.weight, existing.id);
       }
       return existing.id;
     }
@@ -343,19 +334,13 @@ export class InteractionRepository {
 
     const totalCount = this.getCount();
 
-    const businessStmt = this.db.prepare(
-      "SELECT COUNT(*) as count FROM interactions WHERE pattern = 'business'"
-    );
+    const businessStmt = this.db.prepare("SELECT COUNT(*) as count FROM interactions WHERE pattern = 'business'");
     const businessCount = (businessStmt.get() as { count: number }).count;
 
-    const utilityStmt = this.db.prepare(
-      "SELECT COUNT(*) as count FROM interactions WHERE pattern = 'utility'"
-    );
+    const utilityStmt = this.db.prepare("SELECT COUNT(*) as count FROM interactions WHERE pattern = 'utility'");
     const utilityCount = (utilityStmt.get() as { count: number }).count;
 
-    const biStmt = this.db.prepare(
-      "SELECT COUNT(*) as count FROM interactions WHERE direction = 'bi'"
-    );
+    const biStmt = this.db.prepare("SELECT COUNT(*) as count FROM interactions WHERE direction = 'bi'");
     const biDirectionalCount = (biStmt.get() as { count: number }).count;
 
     return {
@@ -377,11 +362,13 @@ export class InteractionRepository {
 
     // Build module lookup for definitions
     const defModuleMap = new Map<number, { moduleId: number; modulePath: string }>();
-    const moduleMembers = this.db.prepare(`
+    const moduleMembers = this.db
+      .prepare(`
       SELECT mm.definition_id, mm.module_id, m.full_path
       FROM module_members mm
       JOIN modules m ON mm.module_id = m.id
-    `).all() as Array<{ definition_id: number; module_id: number; full_path: string }>;
+    `)
+      .all() as Array<{ definition_id: number; module_id: number; full_path: string }>;
 
     for (const mm of moduleMembers) {
       defModuleMap.set(mm.definition_id, {
@@ -426,7 +413,8 @@ export class InteractionRepository {
     ensureModulesTables(this.db);
 
     // Query for symbol-level details with module context
-    const symbolEdges = this.db.prepare(`
+    const symbolEdges = this.db
+      .prepare(`
       SELECT
         from_mm.module_id as from_module_id,
         to_mm.module_id as to_module_id,
@@ -477,7 +465,8 @@ export class InteractionRepository {
         AND s.definition_id != from_d.id
         AND from_mm.module_id != to_mm.module_id
       GROUP BY from_mm.module_id, to_mm.module_id, to_d.id, from_d.id
-    `).all() as Array<{
+    `)
+      .all() as Array<{
       from_module_id: number;
       to_module_id: number;
       from_module_path: string;
@@ -490,16 +479,19 @@ export class InteractionRepository {
     }>;
 
     // Aggregate into enriched edges
-    const edgeMap = new Map<string, {
-      fromModuleId: number;
-      toModuleId: number;
-      fromModulePath: string;
-      toModulePath: string;
-      weight: number;
-      symbols: Map<string, CalledSymbolInfo>;
-      callers: Set<number>;
-      minUsageLine: number;
-    }>();
+    const edgeMap = new Map<
+      string,
+      {
+        fromModuleId: number;
+        toModuleId: number;
+        fromModulePath: string;
+        toModulePath: string;
+        weight: number;
+        symbols: Map<string, CalledSymbolInfo>;
+        callers: Set<number>;
+        minUsageLine: number;
+      }
+    >();
 
     for (const row of symbolEdges) {
       const key = `${row.from_module_id}->${row.to_module_id}`;
@@ -540,8 +532,7 @@ export class InteractionRepository {
     const result: EnrichedModuleCallEdge[] = [];
 
     for (const edge of edgeMap.values()) {
-      const calledSymbols = Array.from(edge.symbols.values())
-        .sort((a, b) => b.callCount - a.callCount);
+      const calledSymbols = Array.from(edge.symbols.values()).sort((a, b) => b.callCount - a.callCount);
 
       const symbolCount = calledSymbols.length;
       const avgCallsPerSymbol = symbolCount > 0 ? edge.weight / symbolCount : 0;
@@ -549,13 +540,8 @@ export class InteractionRepository {
       const isHighFrequency = edge.weight > 10;
 
       // Classify edge as utility or business logic
-      const hasClassCall = calledSymbols.some(s => s.kind === 'class');
-      const isLikelyUtility = (
-        isHighFrequency &&
-        distinctCallers >= 3 &&
-        avgCallsPerSymbol > 3 &&
-        !hasClassCall
-      );
+      const hasClassCall = calledSymbols.some((s) => s.kind === 'class');
+      const isLikelyUtility = isHighFrequency && distinctCallers >= 3 && avgCallsPerSymbol > 3 && !hasClassCall;
 
       result.push({
         fromModuleId: edge.fromModuleId,
@@ -586,7 +572,7 @@ export class InteractionRepository {
 
     for (const edge of enrichedEdges) {
       const existing = this.getByModules(edge.fromModuleId, edge.toModuleId);
-      const symbols = edge.calledSymbols.map(s => s.name);
+      const symbols = edge.calledSymbols.map((s) => s.name);
 
       if (existing) {
         this.update(existing.id, {
@@ -594,8 +580,7 @@ export class InteractionRepository {
           symbols,
         });
         // Update weight
-        this.db.prepare('UPDATE interactions SET weight = ? WHERE id = ?')
-          .run(edge.weight, existing.id);
+        this.db.prepare('UPDATE interactions SET weight = ? WHERE id = ?').run(edge.weight, existing.id);
         updated++;
       } else {
         this.insert(edge.fromModuleId, edge.toModuleId, {
@@ -621,9 +606,7 @@ export class InteractionRepository {
     ensureModulesTables(this.db);
 
     // Count total relationship annotations
-    const totalStmt = this.db.prepare(
-      'SELECT COUNT(*) as count FROM relationship_annotations'
-    );
+    const totalStmt = this.db.prepare('SELECT COUNT(*) as count FROM relationship_annotations');
     const totalRelationships = (totalStmt.get() as { count: number }).count;
 
     // Count cross-module relationships (both symbols in different modules)
@@ -674,9 +657,7 @@ export class InteractionRepository {
       sameModuleCount,
       orphanedCount: totalRelationships - relationshipsWithModules,
       // Coverage is now based on cross-module relationships only
-      coveragePercent: crossModuleRelationships > 0
-        ? (contributing / crossModuleRelationships) * 100
-        : 100,
+      coveragePercent: crossModuleRelationships > 0 ? (contributing / crossModuleRelationships) * 100 : 100,
     };
   }
 

@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 export default class Domains extends Command {
   static override description = 'List all registered domains with symbol counts';
@@ -55,15 +55,13 @@ export default class Domains extends Command {
         this.log(chalk.gray(`Or use 'ats domains sync' to register all domains currently in use.`));
       } else {
         // Calculate column widths
-        const maxNameLen = Math.max(...domainsWithCounts.map(d => d.name.length), 10);
-        const maxCountLen = Math.max(...domainsWithCounts.map(d => String(d.symbolCount).length + 8), 10);
+        const maxNameLen = Math.max(...domainsWithCounts.map((d) => d.name.length), 10);
+        const maxCountLen = Math.max(...domainsWithCounts.map((d) => String(d.symbolCount).length + 8), 10);
 
         for (const domain of domainsWithCounts) {
           const countStr = `${domain.symbolCount} symbol${domain.symbolCount !== 1 ? 's' : ''}`;
           const desc = domain.description || chalk.gray('(no description)');
-          this.log(
-            `${chalk.cyan(domain.name.padEnd(maxNameLen))}  ${countStr.padEnd(maxCountLen)}  ${desc}`
-          );
+          this.log(`${chalk.cyan(domain.name.padEnd(maxNameLen))}  ${countStr.padEnd(maxCountLen)}  ${desc}`);
         }
         this.log('');
         this.log(chalk.gray(`${domainsWithCounts.length} domain(s) registered`));

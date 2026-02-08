@@ -1,7 +1,7 @@
-import { Command } from '@oclif/core';
-import chalk from 'chalk';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { Command } from '@oclif/core';
+import chalk from 'chalk';
 import { IndexDatabase } from '../../db/database.js';
 
 /**
@@ -15,7 +15,11 @@ export async function openDatabase(dbPath: string, command: Command): Promise<In
   try {
     await fs.access(resolvedPath);
   } catch {
-    command.error(chalk.red(`Database file "${resolvedPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`));
+    command.error(
+      chalk.red(
+        `Database file "${resolvedPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`
+      )
+    );
   }
 
   // Open database

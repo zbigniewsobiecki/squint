@@ -1,4 +1,4 @@
-import { Command } from '@oclif/core';
+import type { Command } from '@oclif/core';
 
 /**
  * Output data as JSON or plain text based on the json flag.
@@ -7,12 +7,7 @@ import { Command } from '@oclif/core';
  * @param data The data to output (for JSON mode)
  * @param plainFn Function to call for plain text output
  */
-export function outputJsonOrPlain<T>(
-  command: Command,
-  json: boolean,
-  data: T,
-  plainFn: () => void
-): void {
+export function outputJsonOrPlain<T>(command: Command, json: boolean, data: T, plainFn: () => void): void {
   if (json) {
     command.log(JSON.stringify(data, null, 2));
   } else {
@@ -25,7 +20,7 @@ export function outputJsonOrPlain<T>(
  */
 export function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
-  return str.slice(0, maxLen - 3) + '...';
+  return `${str.slice(0, maxLen - 3)}...`;
 }
 
 /**

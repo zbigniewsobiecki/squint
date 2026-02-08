@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileRepository } from '../../../src/db/repositories/file-repository.js';
 import { SCHEMA } from '../../../src/db/schema.js';
 import type { Definition } from '../../../src/parser/definition-extractor.js';
@@ -154,8 +154,8 @@ describe('FileRepository', () => {
       const stats = repo.getAllWithStats();
       expect(stats).toHaveLength(2);
 
-      const aStats = stats.find(s => s.path === '/test/a.ts');
-      const bStats = stats.find(s => s.path === '/test/b.ts');
+      const aStats = stats.find((s) => s.path === '/test/a.ts');
+      const bStats = stats.find((s) => s.path === '/test/b.ts');
 
       expect(aStats!.importsCount).toBe(1);
       expect(aStats!.importedByCount).toBe(0);

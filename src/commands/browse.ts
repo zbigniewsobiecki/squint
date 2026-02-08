@@ -1,8 +1,8 @@
+import { exec } from 'node:child_process';
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { exec } from 'node:child_process';
 import { createServer, startServer } from '../web/server.js';
-import { openDatabase, SharedFlags } from './_shared/index.js';
+import { SharedFlags, openDatabase } from './_shared/index.js';
 
 export default class Browse extends Command {
   static override description = 'Launch interactive code browser for indexed database';
@@ -37,7 +37,11 @@ export default class Browse extends Command {
     // Get stats to verify database is valid
     try {
       const stats = db.getStats();
-      this.log(chalk.gray(`  ${stats.files} files, ${stats.definitions} definitions, ${stats.imports} imports, ${stats.usages} usages`));
+      this.log(
+        chalk.gray(
+          `  ${stats.files} files, ${stats.definitions} definitions, ${stats.imports} imports, ${stats.usages} usages`
+        )
+      );
     } catch (error) {
       db.close();
       const message = error instanceof Error ? error.message : String(error);

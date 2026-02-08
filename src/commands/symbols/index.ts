@@ -1,7 +1,7 @@
+import path from 'node:path';
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import path from 'node:path';
-import { withDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 export default class Symbols extends Command {
   static override description = 'List all symbols in the index';
@@ -53,7 +53,11 @@ export default class Symbols extends Command {
       if (flags.domains) {
         const domains = db.getAllDomains();
         if (domains.length === 0) {
-          this.log(chalk.gray('No domains found. Use `ats symbols set domain \'["tag1", "tag2"]\' --name SymbolName` to add domains.'));
+          this.log(
+            chalk.gray(
+              'No domains found. Use `ats symbols set domain \'["tag1", "tag2"]\' --name SymbolName` to add domains.'
+            )
+          );
         } else {
           this.log('Domains in use:');
           for (const domain of domains) {
@@ -121,11 +125,11 @@ export default class Symbols extends Command {
       // Apply metadata filters
       if (flags.has) {
         const idsWithKey = new Set(db.getDefinitionsWithMetadata(flags.has));
-        symbols = symbols.filter(sym => idsWithKey.has(sym.id));
+        symbols = symbols.filter((sym) => idsWithKey.has(sym.id));
       }
       if (flags.missing) {
         const idsWithoutKey = new Set(db.getDefinitionsWithoutMetadata(flags.missing));
-        symbols = symbols.filter(sym => idsWithoutKey.has(sym.id));
+        symbols = symbols.filter((sym) => idsWithoutKey.has(sym.id));
       }
 
       if (symbols.length === 0) {

@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 interface CoverageResult {
   aspect: string;
@@ -64,12 +64,14 @@ export default class Understood extends Command {
       // Filter to specific aspect if requested
       let filteredCoverage = coverage;
       if (flags.aspect) {
-        filteredCoverage = coverage.filter(c => c.aspect === flags.aspect);
+        filteredCoverage = coverage.filter((c) => c.aspect === flags.aspect);
         if (filteredCoverage.length === 0) {
           // Check if the aspect exists at all
           const allKeys = db.getMetadataKeys();
           if (!allKeys.includes(flags.aspect)) {
-            this.error(chalk.red(`Aspect "${flags.aspect}" not found. Available aspects: ${allKeys.join(', ') || '(none)'}`));
+            this.error(
+              chalk.red(`Aspect "${flags.aspect}" not found. Available aspects: ${allKeys.join(', ') || '(none)'}`)
+            );
           }
         }
       }
@@ -108,7 +110,7 @@ export default class Understood extends Command {
     }
 
     // Print header
-    const aspectWidth = Math.max(12, ...output.coverage.map(c => c.aspect.length));
+    const aspectWidth = Math.max(12, ...output.coverage.map((c) => c.aspect.length));
     const header = `${'Aspect'.padEnd(aspectWidth)}  ${'Covered'.padStart(8)}  ${'Total'.padStart(6)}  ${'Coverage'.padStart(10)}`;
     const separator = '─'.repeat(header.length);
 

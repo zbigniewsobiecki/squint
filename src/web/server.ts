@@ -1,5 +1,5 @@
-import * as http from 'node:http';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { IndexDatabase } from '../db/database.js';
@@ -55,7 +55,7 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
       } else if (path === '/api/files') {
         jsonResponse(res, db.getAllFiles());
       } else if (path.match(/^\/api\/files\/(\d+)$/)) {
-        const id = parseInt(path.split('/')[3]);
+        const id = Number.parseInt(path.split('/')[3]);
         const file = db.getFileById(id);
         if (file) {
           const definitions = db.getFileDefinitions(id);
@@ -70,7 +70,7 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
         const exported = exportedParam === null ? undefined : exportedParam === 'true';
         jsonResponse(res, db.getAllDefinitions({ kind, exported }));
       } else if (path.match(/^\/api\/definitions\/(\d+)$/)) {
-        const id = parseInt(path.split('/')[3]);
+        const id = Number.parseInt(path.split('/')[3]);
         const def = db.getDefinitionById(id);
         if (def) {
           jsonResponse(res, def);
@@ -78,7 +78,7 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
           notFound(res, 'Definition not found');
         }
       } else if (path.match(/^\/api\/definitions\/(\d+)\/callsites$/)) {
-        const id = parseInt(path.split('/')[3]);
+        const id = Number.parseInt(path.split('/')[3]);
         const callsites = db.getCallsites(id);
         jsonResponse(res, callsites);
       } else if (path === '/api/graph/imports') {
@@ -92,7 +92,7 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
       } else if (path === '/api/modules/stats') {
         jsonResponse(res, db.getModuleStats());
       } else if (path.match(/^\/api\/modules\/(\d+)$/)) {
-        const id = parseInt(path.split('/')[3]);
+        const id = Number.parseInt(path.split('/')[3]);
         const module = db.getModuleWithMembers(id);
         if (module) {
           jsonResponse(res, module);
@@ -104,11 +104,11 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
       } else if (path === '/api/interactions/stats') {
         jsonResponse(res, db.getInteractionStats());
       } else if (path.match(/^\/api\/interactions\/(\d+)$/)) {
-        const id = parseInt(path.split('/')[3]);
+        const id = Number.parseInt(path.split('/')[3]);
         const interaction = db.getInteractionById(id);
         if (interaction) {
           const modules = db.getAllModules();
-          const moduleMap = new Map(modules.map(m => [m.id, m.fullPath]));
+          const moduleMap = new Map(modules.map((m) => [m.id, m.fullPath]));
           jsonResponse(res, {
             ...interaction,
             fromModulePath: moduleMap.get(interaction.fromModuleId) ?? null,
@@ -127,7 +127,7 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
       } else if (path === '/api/flows/dag') {
         jsonResponse(res, getFlowsDagData(db));
       } else if (path.match(/^\/api\/flows\/(\d+)$/)) {
-        const id = parseInt(path.split('/')[3]);
+        const id = Number.parseInt(path.split('/')[3]);
         const flowWithSteps = db.getFlowWithSteps(id);
         if (flowWithSteps) {
           jsonResponse(res, flowWithSteps);
@@ -135,7 +135,7 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
           notFound(res, 'Flow not found');
         }
       } else if (path.match(/^\/api\/flows\/(\d+)\/expand$/)) {
-        const id = parseInt(path.split('/')[3]);
+        const id = Number.parseInt(path.split('/')[3]);
         const expanded = db.expandFlow(id);
         jsonResponse(res, expanded);
       } else {
@@ -179,7 +179,7 @@ function notFound(res: http.ServerResponse, message: string): void {
  */
 function serveStatic(res: http.ServerResponse, urlPath: string): void {
   // Map / to /index.html
-  let filePath = urlPath === '/' ? '/index.html' : urlPath;
+  const filePath = urlPath === '/' ? '/index.html' : urlPath;
 
   // Resolve to actual file path
   const fullPath = path.join(UI_DIST_PATH, filePath);
@@ -294,7 +294,7 @@ function getSymbolGraph(db: IndexDatabase): {
   }
 
   // Build nodes array with metadata
-  const nodes = allDefs.map(def => {
+  const nodes = allDefs.map((def) => {
     const metadata = metadataMap.get(def.id) || {};
     let domain: string[] | undefined;
     if (metadata.domain) {
@@ -321,7 +321,7 @@ function getSymbolGraph(db: IndexDatabase): {
   });
 
   // Build edges array from relationships
-  const edges = relationships.map(rel => ({
+  const edges = relationships.map((rel) => ({
     source: rel.fromDefinitionId,
     target: rel.toDefinitionId,
     semantic: rel.semantic,
@@ -371,7 +371,7 @@ function getModulesData(database: IndexDatabase): {
     const stats = database.getModuleStats();
 
     return {
-      modules: modulesWithMembers.map(module => ({
+      modules: modulesWithMembers.map((module) => ({
         id: module.id,
         parentId: module.parentId,
         slug: module.slug,
@@ -434,7 +434,7 @@ function getInteractionsData(database: IndexDatabase): {
     const relationshipCoverage = database.getRelationshipCoverage();
 
     return {
-      interactions: interactions.map(i => ({
+      interactions: interactions.map((i) => ({
         id: i.id,
         fromModuleId: i.fromModuleId,
         toModuleId: i.toModuleId,
@@ -507,7 +507,7 @@ function getFlowsData(database: IndexDatabase): {
     const coverage = database.getFlowCoverage();
 
     return {
-      flows: flows.map(flow => {
+      flows: flows.map((flow) => {
         const flowWithSteps = database.getFlowWithSteps(flow.id);
         const steps = flowWithSteps?.steps ?? [];
 
@@ -519,7 +519,7 @@ function getFlowsData(database: IndexDatabase): {
           stakeholder: flow.stakeholder,
           description: flow.description,
           stepCount: steps.length,
-          steps: steps.map(step => ({
+          steps: steps.map((step) => ({
             stepOrder: step.stepOrder,
             fromModulePath: step.interaction.fromModulePath,
             toModulePath: step.interaction.toModulePath,
@@ -585,7 +585,7 @@ function getFlowsDagData(database: IndexDatabase): {
   try {
     // Get all modules
     const modulesWithMembers = database.getAllModulesWithMembers();
-    const modules = modulesWithMembers.map(m => ({
+    const modules = modulesWithMembers.map((m) => ({
       id: m.id,
       parentId: m.parentId,
       name: m.name,
@@ -596,7 +596,7 @@ function getFlowsDagData(database: IndexDatabase): {
 
     // Get module call graph edges (or interactions)
     const callGraph = database.getModuleCallGraph();
-    const edges = callGraph.map(e => ({
+    const edges = callGraph.map((e) => ({
       fromModuleId: e.fromModuleId,
       toModuleId: e.toModuleId,
       weight: e.weight,
@@ -604,7 +604,7 @@ function getFlowsDagData(database: IndexDatabase): {
 
     // Get all flows with their steps
     const allFlows = database.getAllFlows();
-    const flows = allFlows.map(flow => {
+    const flows = allFlows.map((flow) => {
       const flowWithSteps = database.getFlowWithSteps(flow.id);
       const steps = flowWithSteps?.steps ?? [];
 
@@ -613,7 +613,7 @@ function getFlowsDagData(database: IndexDatabase): {
         name: flow.name,
         stakeholder: flow.stakeholder,
         stepCount: steps.length,
-        steps: steps.map(step => ({
+        steps: steps.map((step) => ({
           interactionId: step.interactionId,
           fromModuleId: step.interaction.fromModuleId,
           toModuleId: step.interaction.toModuleId,

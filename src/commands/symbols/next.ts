@@ -1,7 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { ReadySymbolInfo, DependencyWithMetadata } from '../../db/database.js';
-import { withDatabase, SharedFlags, readSourceAsString } from '../_shared/index.js';
+import type { DependencyWithMetadata, ReadySymbolInfo } from '../../db/database.js';
+import { SharedFlags, readSourceAsString, withDatabase } from '../_shared/index.js';
 
 interface UnannotatedRelationship {
   toDefinitionId: number;
@@ -64,7 +64,7 @@ export default class Next extends Command {
         } else if (result.totalReady === 0) {
           this.log(chalk.yellow(`No symbols ready yet for aspect '${flags.aspect}'.`));
           this.log(chalk.gray(`${result.remaining} symbols have unmet dependencies.`));
-          this.log(chalk.gray(`This may indicate circular dependencies. Try marking a symbol manually.`));
+          this.log(chalk.gray('This may indicate circular dependencies. Try marking a symbol manually.'));
         }
         return;
       }
@@ -77,7 +77,7 @@ export default class Next extends Command {
         const sourceCode = await readSourceAsString(symbol.filePath, symbol.line, symbol.endLine);
         const dependencies = db.getDependenciesWithMetadata(symbol.id, flags.aspect);
         const unannotatedRels = db.getUnannotatedRelationships({ fromDefinitionId: symbol.id, limit: 10 });
-        const unannotatedRelationships: UnannotatedRelationship[] = unannotatedRels.map(rel => ({
+        const unannotatedRelationships: UnannotatedRelationship[] = unannotatedRels.map((rel) => ({
           toDefinitionId: rel.toDefinitionId,
           toName: rel.toName,
           toKind: rel.toKind,
@@ -134,16 +134,14 @@ export default class Next extends Command {
     this.log('');
 
     // Symbol info
-    const lineRange = symbol.line === symbol.endLine
-      ? `${symbol.line}`
-      : `${symbol.line}-${symbol.endLine}`;
+    const lineRange = symbol.line === symbol.endLine ? `${symbol.line}` : `${symbol.line}-${symbol.endLine}`;
     this.log(`${chalk.bold(symbol.name)} (${symbol.kind}) - ${symbol.filePath}:${lineRange}`);
 
     // Dependencies
     if (symbol.dependencies.length === 0) {
       this.log(`Dependencies: ${chalk.green('none')}`);
     } else {
-      const depNames = symbol.dependencies.map(d => d.name).join(', ');
+      const depNames = symbol.dependencies.map((d) => d.name).join(', ');
       this.log(`Dependencies: ${chalk.cyan(depNames)}`);
     }
 

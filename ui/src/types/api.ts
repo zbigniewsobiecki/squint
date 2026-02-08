@@ -210,13 +210,4 @@ export const KIND_COLORS: Record<string, string> = {
 };
 
 // Flow colors palette
-export const FLOW_COLORS = [
-  '#4fc1ff',
-  '#ce9178',
-  '#6a9955',
-  '#c586c0',
-  '#dcdcaa',
-  '#9cdcfe',
-  '#d7ba7d',
-  '#b5cea8',
-];
+export const FLOW_COLORS = ['#4fc1ff', '#ce9178', '#6a9955', '#c586c0', '#dcdcaa', '#9cdcfe', '#d7ba7d', '#b5cea8'];

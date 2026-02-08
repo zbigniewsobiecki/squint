@@ -190,13 +190,35 @@
 }
 
 /* Kind colors for tooltip badges */
-.kind-function { background: var(--kind-function); color: var(--kind-function-text); }
-.kind-class { background: var(--kind-class); color: var(--kind-class-text); }
-.kind-interface { background: var(--kind-interface); color: var(--kind-interface-text); }
-.kind-type { background: var(--kind-type); color: var(--kind-type-text); }
-.kind-variable, .kind-const { background: var(--kind-variable); color: var(--kind-variable-text); }
-.kind-enum { background: var(--kind-enum); color: var(--kind-enum-text); }
-.kind-method { background: var(--kind-method); color: var(--kind-method-text); }
+.kind-function {
+  background: var(--kind-function);
+  color: var(--kind-function-text);
+}
+.kind-class {
+  background: var(--kind-class);
+  color: var(--kind-class-text);
+}
+.kind-interface {
+  background: var(--kind-interface);
+  color: var(--kind-interface-text);
+}
+.kind-type {
+  background: var(--kind-type);
+  color: var(--kind-type-text);
+}
+.kind-variable,
+.kind-const {
+  background: var(--kind-variable);
+  color: var(--kind-variable-text);
+}
+.kind-enum {
+  background: var(--kind-enum);
+  color: var(--kind-enum-text);
+}
+.kind-method {
+  background: var(--kind-method);
+  color: var(--kind-method-text);
+}
 
 /* Cards */
 .card {
@@ -237,11 +259,26 @@
   font-weight: 500;
 }
 
-.card-badge.layer-controller { background: var(--layer-controller); color: var(--layer-controller-text); }
-.card-badge.layer-service { background: var(--layer-service); color: var(--layer-service-text); }
-.card-badge.layer-repository { background: var(--layer-repository); color: var(--layer-repository-text); }
-.card-badge.layer-adapter { background: var(--layer-adapter); color: var(--layer-adapter-text); }
-.card-badge.layer-utility { background: var(--layer-utility); color: var(--layer-utility-text); }
+.card-badge.layer-controller {
+  background: var(--layer-controller);
+  color: var(--layer-controller-text);
+}
+.card-badge.layer-service {
+  background: var(--layer-service);
+  color: var(--layer-service-text);
+}
+.card-badge.layer-repository {
+  background: var(--layer-repository);
+  color: var(--layer-repository-text);
+}
+.card-badge.layer-adapter {
+  background: var(--layer-adapter);
+  color: var(--layer-adapter-text);
+}
+.card-badge.layer-utility {
+  background: var(--layer-utility);
+  color: var(--layer-utility-text);
+}
 
 .card-description {
   font-size: 12px;
@@ -516,11 +553,21 @@
   margin-left: 0;
 }
 
-.module-node.depth-1 { margin-left: 24px; }
-.module-node.depth-2 { margin-left: 48px; }
-.module-node.depth-3 { margin-left: 72px; }
-.module-node.depth-4 { margin-left: 96px; }
-.module-node.depth-5 { margin-left: 120px; }
+.module-node.depth-1 {
+  margin-left: 24px;
+}
+.module-node.depth-2 {
+  margin-left: 48px;
+}
+.module-node.depth-3 {
+  margin-left: 72px;
+}
+.module-node.depth-4 {
+  margin-left: 96px;
+}
+.module-node.depth-5 {
+  margin-left: 120px;
+}
 
 .module-node-header {
   display: flex;
@@ -597,7 +644,7 @@
 
 /* Tree lines */
 .module-children::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 18px;
   top: 0;
@@ -607,7 +654,7 @@
 }
 
 .module-node::before {
-  content: '';
+  content: "";
   position: absolute;
   left: -6px;
   top: 18px;

@@ -3,8 +3,8 @@ import type {
   CallsiteResult,
   DependencyInfo,
   DependencyWithMetadata,
-  ReadySymbolInfo,
   IncomingDependency,
+  ReadySymbolInfo,
 } from '../schema.js';
 
 export interface ImportGraphNode {
@@ -167,7 +167,7 @@ export class DependencyRepository {
    * Get incoming dependencies - symbols that use this definition.
    * This finds all definitions that have usages pointing to this definition.
    */
-  getIncoming(definitionId: number, limit: number = 5): IncomingDependency[] {
+  getIncoming(definitionId: number, limit = 5): IncomingDependency[] {
     const stmt = this.db.prepare(`
       SELECT DISTINCT
         caller.id,
@@ -281,7 +281,7 @@ export class DependencyRepository {
       aspectValue: string | null;
     }>;
 
-    return rows.map(row => ({
+    return rows.map((row) => ({
       id: row.id,
       name: row.name,
       kind: row.kind,

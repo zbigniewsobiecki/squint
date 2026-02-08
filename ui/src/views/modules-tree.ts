@@ -1,5 +1,5 @@
-import type { Store } from '../state/store';
 import type { ApiClient } from '../api/client';
+import type { Store } from '../state/store';
 import type { Module } from '../types/api';
 
 interface ModuleTreeNode extends Module {
@@ -73,7 +73,7 @@ function renderModulesView(store: Store) {
   // Render tree HTML
   function renderTreeNode(module: ModuleTreeNode, depth = 0): string {
     const hasChildren = module.children.length > 0;
-    const depthClass = 'depth-' + Math.min(depth, 5);
+    const depthClass = `depth-${Math.min(depth, 5)}`;
     const isRoot = depth === 0;
 
     const membersHtml = module.members

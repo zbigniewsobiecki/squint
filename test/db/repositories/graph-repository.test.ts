@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { GraphRepository } from '../../../src/db/repositories/graph-repository.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileRepository } from '../../../src/db/repositories/file-repository.js';
+import { GraphRepository } from '../../../src/db/repositories/graph-repository.js';
 import { MetadataRepository } from '../../../src/db/repositories/metadata-repository.js';
 import { RelationshipRepository } from '../../../src/db/repositories/relationship-repository.js';
 import { SCHEMA } from '../../../src/db/schema.js';
@@ -79,12 +79,17 @@ describe('GraphRepository', () => {
   });
 
   function createCall(fromDefId: number, toDefId: number, line: number): void {
-    const symId = fileRepo.insertSymbol(null, toDefId, {
-      name: 'target',
-      localName: 'target',
-      kind: 'function',
-      usages: [],
-    }, fileId);
+    const symId = fileRepo.insertSymbol(
+      null,
+      toDefId,
+      {
+        name: 'target',
+        localName: 'target',
+        kind: 'function',
+        usages: [],
+      },
+      fileId
+    );
 
     fileRepo.insertUsage(symId, {
       position: { row: line - 1, column: 5 },
@@ -135,7 +140,7 @@ describe('GraphRepository', () => {
 
       const result = repo.getNeighborhood(defId1, 1, 10);
 
-      const baseNode = result.nodes.find(n => n.id === defId1);
+      const baseNode = result.nodes.find((n) => n.id === defId1);
       expect(baseNode).toBeDefined();
       expect(baseNode!.purpose).toBe('Base class purpose');
       expect(baseNode!.domain).toEqual(['core']);
@@ -147,7 +152,7 @@ describe('GraphRepository', () => {
 
       const result = repo.getNeighborhood(defId1, 1, 10);
 
-      const edge = result.edges.find(e => e.fromId === defId1 && e.toId === defId2);
+      const edge = result.edges.find((e) => e.fromId === defId1 && e.toId === defId2);
       if (edge) {
         expect(edge.semantic).toBe('delegates to child');
       }
@@ -185,7 +190,7 @@ describe('GraphRepository', () => {
       const result = repo.getHighConnectivitySymbols({ minIncoming: 2 });
 
       expect(result.length).toBeGreaterThan(0);
-      const highConnSymbol = result.find(s => s.id === defId2);
+      const highConnSymbol = result.find((s) => s.id === defId2);
       expect(highConnSymbol).toBeDefined();
       expect(highConnSymbol!.incomingDeps).toBeGreaterThanOrEqual(2);
     });
@@ -194,7 +199,7 @@ describe('GraphRepository', () => {
       createCall(defId1, defId2, 10);
 
       const exported = repo.getHighConnectivitySymbols({ exported: true });
-      expect(exported.every(s => true)).toBe(true); // All are exported in our setup
+      expect(exported.every((s) => true)).toBe(true); // All are exported in our setup
     });
 
     it('respects limit', () => {
@@ -267,7 +272,7 @@ describe('GraphRepository', () => {
     it('respects filters', () => {
       const result = repo.getNextToAnnotate('purpose', { kind: 'class' });
 
-      expect(result.symbols.every(s => s.kind === 'class')).toBe(true);
+      expect(result.symbols.every((s) => s.kind === 'class')).toBe(true);
     });
 
     it('respects limit', () => {
@@ -291,7 +296,7 @@ describe('GraphRepository', () => {
       const result = repo.getAllUnannotated('purpose');
 
       expect(result.symbols).toHaveLength(3);
-      expect(result.symbols.every(s => s.id !== defId1)).toBe(true);
+      expect(result.symbols.every((s) => s.id !== defId1)).toBe(true);
     });
 
     it('filters by kind', () => {

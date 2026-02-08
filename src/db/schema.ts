@@ -159,11 +159,11 @@ export interface Interaction {
   id: number;
   fromModuleId: number;
   toModuleId: number;
-  direction: 'uni' | 'bi';  // uni-directional or bi-directional
-  weight: number;  // Number of symbol-level calls
-  pattern: 'utility' | 'business' | null;  // Classification based on call patterns
-  symbols: string | null;  // JSON array of symbol names
-  semantic: string | null;  // What happens in this interaction
+  direction: 'uni' | 'bi'; // uni-directional or bi-directional
+  weight: number; // Number of symbol-level calls
+  pattern: 'utility' | 'business' | null; // Classification based on call patterns
+  symbols: string | null; // JSON array of symbol names
+  semantic: string | null; // What happens in this interaction
   createdAt: string;
 }
 
@@ -180,7 +180,7 @@ export interface InteractionWithPaths extends Interaction {
  */
 export interface CalledSymbolInfo {
   name: string;
-  kind: string;  // 'function', 'class', 'method', 'variable'
+  kind: string; // 'function', 'class', 'method', 'variable'
   callCount: number;
 }
 
@@ -190,7 +190,7 @@ export interface CalledSymbolInfo {
 export interface ModuleCallEdge {
   fromModuleId: number;
   toModuleId: number;
-  weight: number;  // Number of symbol-level calls
+  weight: number; // Number of symbol-level calls
   fromModulePath: string;
   toModulePath: string;
 }
@@ -201,10 +201,10 @@ export interface ModuleCallEdge {
 export interface EnrichedModuleCallEdge extends ModuleCallEdge {
   calledSymbols: CalledSymbolInfo[];
   avgCallsPerSymbol: number;
-  distinctCallers: number;  // Number of unique callers from source module
-  isHighFrequency: boolean;  // > 10 calls = likely utility
-  edgePattern: 'utility' | 'business';  // Classification based on call patterns
-  minUsageLine: number;  // Earliest line where this call occurs (for ordering)
+  distinctCallers: number; // Number of unique callers from source module
+  isHighFrequency: boolean; // > 10 calls = likely utility
+  edgePattern: 'utility' | 'business'; // Classification based on call patterns
+  minUsageLine: number; // Earliest line where this call occurs (for ordering)
 }
 
 // ============================================================
@@ -226,9 +226,9 @@ export interface Flow {
   id: number;
   name: string;
   slug: string;
-  entryPointId: number | null;  // FK to definitions (the entry point symbol)
-  entryPath: string | null;  // e.g., "POST /api/auth/login"
-  stakeholder: FlowStakeholder | null;  // user, admin, system, developer, external
+  entryPointId: number | null; // FK to definitions (the entry point symbol)
+  entryPath: string | null; // e.g., "POST /api/auth/login"
+  stakeholder: FlowStakeholder | null; // user, admin, system, developer, external
   description: string | null;
   createdAt: string;
 }
@@ -238,7 +238,7 @@ export interface Flow {
  */
 export interface FlowStep {
   flowId: number;
-  stepOrder: number;  // 1, 2, 3...
+  stepOrder: number; // 1, 2, 3...
   interactionId: number;
 }
 
@@ -246,9 +246,11 @@ export interface FlowStep {
  * Flow with its steps and interaction details for display
  */
 export interface FlowWithSteps extends Flow {
-  steps: Array<FlowStep & {
-    interaction: InteractionWithPaths;
-  }>;
+  steps: Array<
+    FlowStep & {
+      interaction: InteractionWithPaths;
+    }
+  >;
 }
 
 /**
@@ -256,7 +258,7 @@ export interface FlowWithSteps extends Flow {
  */
 export interface ExpandedFlow {
   flow: Flow;
-  interactions: InteractionWithPaths[];  // All interactions in order
+  interactions: InteractionWithPaths[]; // All interactions in order
 }
 
 /**
@@ -273,21 +275,21 @@ export interface FlowCoverageStats {
  */
 export interface RelationshipInteractionCoverage {
   totalRelationships: number;
-  crossModuleRelationships: number;  // Both symbols assigned to different modules
+  crossModuleRelationships: number; // Both symbols assigned to different modules
   relationshipsContributingToInteractions: number;
-  sameModuleCount: number;  // Relationships within the same module (excluded from coverage)
+  sameModuleCount: number; // Relationships within the same module (excluded from coverage)
   orphanedCount: number;
-  coveragePercent: number;  // Now based on cross-module only
+  coveragePercent: number; // Now based on cross-module only
 }
 
 /**
  * Detailed breakdown of relationship coverage for diagnostics
  */
 export interface RelationshipCoverageBreakdown {
-  covered: number;        // Cross-module with matching interaction edge
-  sameModule: number;     // Both symbols in the same module (internal cohesion)
-  noCallEdge: number;     // Cross-module but no matching interaction edge
-  orphaned: number;       // Missing module assignment for one or both symbols
+  covered: number; // Cross-module with matching interaction edge
+  sameModule: number; // Both symbols in the same module (internal cohesion)
+  noCallEdge: number; // Cross-module but no matching interaction edge
+  orphaned: number; // Missing module assignment for one or both symbols
   byType: {
     uses: number;
     extends: number;
@@ -321,7 +323,6 @@ export interface FlowTreeNode {
   fromModuleName?: string;
   toModuleName?: string;
 }
-
 
 // ============================================================
 // Annotated Symbol/Edge Types for LLM Context

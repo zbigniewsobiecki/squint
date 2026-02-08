@@ -1,14 +1,11 @@
 import { Command } from '@oclif/core';
 import chalk from 'chalk';
-import { withDatabase, SharedFlags } from '../_shared/index.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 export default class Sync extends Command {
   static override description = 'Register all domains currently in use (bulk registration)';
 
-  static override examples = [
-    '<%= config.bin %> domains sync',
-    '<%= config.bin %> domains sync --json',
-  ];
+  static override examples = ['<%= config.bin %> domains sync', '<%= config.bin %> domains sync --json'];
 
   static override flags = {
     database: SharedFlags.database,

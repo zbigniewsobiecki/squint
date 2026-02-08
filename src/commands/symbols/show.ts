@@ -1,7 +1,7 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { IndexDatabase } from '../../db/database.js';
-import { withDatabase, SymbolResolver, SharedFlags, readSourceLines, readAllLines } from '../_shared/index.js';
+import type { IndexDatabase } from '../../db/database.js';
+import { SharedFlags, SymbolResolver, readAllLines, readSourceLines, withDatabase } from '../_shared/index.js';
 
 interface CallSiteWithContext {
   filePath: string;
@@ -153,8 +153,8 @@ export default class Show extends Command {
       for (const cs of fileCallsites) {
         // Find containing function (smallest definition that contains this line)
         const containingDef = fileDefs
-          .filter(def => def.line <= cs.line && cs.line <= def.endLine)
-          .sort((a, b) => (a.endLine - a.line) - (b.endLine - b.line))[0];
+          .filter((def) => def.line <= cs.line && cs.line <= def.endLine)
+          .sort((a, b) => a.endLine - a.line - (b.endLine - b.line))[0];
 
         const containingFunction = containingDef?.name ?? null;
 

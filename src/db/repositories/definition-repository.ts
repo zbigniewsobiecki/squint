@@ -80,9 +80,7 @@ export class DefinitionRepository {
   constructor(private db: Database.Database) {}
 
   getByName(fileId: number, name: string): number | null {
-    const stmt = this.db.prepare(
-      'SELECT id FROM definitions WHERE file_id = ? AND name = ? AND is_exported = 1'
-    );
+    const stmt = this.db.prepare('SELECT id FROM definitions WHERE file_id = ? AND name = ? AND is_exported = 1');
     const row = stmt.get(fileId, name) as { id: number } | undefined;
     return row?.id ?? null;
   }
@@ -112,7 +110,7 @@ export class DefinitionRepository {
       isExported: number;
     }>;
 
-    return rows.map(row => ({
+    return rows.map((row) => ({
       id: row.id,
       filePath: row.filePath,
       name: row.name,
@@ -144,22 +142,24 @@ export class DefinitionRepository {
       JOIN files f ON d.file_id = f.id
       WHERE d.id = ?
     `);
-    const row = stmt.get(id) as {
-      id: number;
-      fileId: number;
-      filePath: string;
-      name: string;
-      kind: string;
-      isExported: number;
-      isDefault: number;
-      line: number;
-      column: number;
-      endLine: number;
-      endColumn: number;
-      extendsName: string | null;
-      implementsNames: string | null;
-      extendsInterfaces: string | null;
-    } | undefined;
+    const row = stmt.get(id) as
+      | {
+          id: number;
+          fileId: number;
+          filePath: string;
+          name: string;
+          kind: string;
+          isExported: number;
+          isDefault: number;
+          line: number;
+          column: number;
+          endLine: number;
+          endColumn: number;
+          extendsName: string | null;
+          implementsNames: string | null;
+          extendsInterfaces: string | null;
+        }
+      | undefined;
 
     if (!row) return null;
 
@@ -219,7 +219,7 @@ export class DefinitionRepository {
       implementsNames: string | null;
     }>;
 
-    return rows.map(row => ({
+    return rows.map((row) => ({
       id: row.id,
       name: row.name,
       kind: row.kind,
@@ -277,7 +277,7 @@ export class DefinitionRepository {
       extendsName: string | null;
     }>;
 
-    return rows.map(row => ({
+    return rows.map((row) => ({
       ...row,
       isExported: row.isExported === 1,
       isDefault: row.isDefault === 1,

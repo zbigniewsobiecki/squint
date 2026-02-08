@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
-import type { Domain, DomainWithCount } from '../schema.js';
 import { ensureDomainsTable } from '../schema-manager.js';
+import type { Domain, DomainWithCount } from '../schema.js';
 import { MetadataRepository } from './metadata-repository.js';
 
 /**
@@ -88,7 +88,7 @@ export class DomainRepository {
       }
     }
 
-    return domains.map(domain => ({
+    return domains.map((domain) => ({
       ...domain,
       symbolCount: domainCounts.get(domain.name) || 0,
     }));
@@ -239,7 +239,7 @@ export class DomainRepository {
     const domainsInUse = this.metadata.getAllDomains();
 
     // Get registered domains
-    const registeredDomains = new Set(this.getAll().map(d => d.name));
+    const registeredDomains = new Set(this.getAll().map((d) => d.name));
 
     // Register any missing domains
     const newlyRegistered: string[] = [];
@@ -261,8 +261,8 @@ export class DomainRepository {
   getUnregistered(): string[] {
     ensureDomainsTable(this.db);
     const domainsInUse = this.metadata.getAllDomains();
-    const registeredDomains = new Set(this.getAll().map(d => d.name));
-    return domainsInUse.filter(d => !registeredDomains.has(d));
+    const registeredDomains = new Set(this.getAll().map((d) => d.name));
+    return domainsInUse.filter((d) => !registeredDomains.has(d));
   }
 
   /**

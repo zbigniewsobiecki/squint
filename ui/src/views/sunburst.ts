@@ -1,9 +1,9 @@
 import * as d3 from 'd3';
-import type { Store } from '../state/store';
 import type { ApiClient } from '../api/client';
-import type { HierarchyNode, RelationshipType } from '../types/api';
+import { getHierarchyColor, getNodeRadius, getStrokeColor } from '../d3/colors';
 import { buildFileHierarchy, buildRelationshipHierarchy } from '../d3/hierarchy';
-import { getHierarchyColor, getStrokeColor, getNodeRadius } from '../d3/colors';
+import type { Store } from '../state/store';
+import type { HierarchyNode, RelationshipType } from '../types/api';
 // import { setupZoom } from '../d3/zoom';
 
 export function initSunburst(store: Store, _api: ApiClient) {
@@ -78,10 +78,10 @@ function renderSunburstGraph(store: Store) {
   treeLayout(root);
 
   // Calculate bounds
-  let x0 = Infinity;
-  let x1 = -Infinity;
-  let y0 = Infinity;
-  let y1 = -Infinity;
+  let x0 = Number.POSITIVE_INFINITY;
+  let x1 = Number.NEGATIVE_INFINITY;
+  let y0 = Number.POSITIVE_INFINITY;
+  let y1 = Number.NEGATIVE_INFINITY;
 
   root.each((d) => {
     if (d.x !== undefined && d.y !== undefined) {
@@ -148,9 +148,11 @@ function renderSunburstGraph(store: Store) {
       if (d.data.data) {
         const lines = d.data.data.lines || 1;
         return getNodeRadius(lines, 4, 12, 300);
-      } else if (d.data.isFile) {
+      }
+      if (d.data.isFile) {
         return 5;
-      } else if (d.data.isRoot) {
+      }
+      if (d.data.isRoot) {
         return 8;
       }
       return 6;
@@ -167,7 +169,7 @@ function renderSunburstGraph(store: Store) {
     .attr('text-anchor', (d) => (d.children ? 'end' : 'start'))
     .text((d) => {
       const name = d.data.name;
-      return name.length > 25 ? name.substring(0, 22) + '...' : name;
+      return name.length > 25 ? `${name.substring(0, 22)}...` : name;
     })
     .clone(true)
     .lower()
@@ -182,7 +184,7 @@ function renderSunburstGraph(store: Store) {
       if (d.data.data) {
         const sym = d.data.data;
         const domainHtml = sym.domain
-          ? `<div class="domains">${sym.domain.map((dom) => '<span class="domain-tag">' + dom + '</span>').join('')}</div>`
+          ? `<div class="domains">${sym.domain.map((dom) => `<span class="domain-tag">${dom}</span>`).join('')}</div>`
           : '';
         const pureHtml =
           sym.pure !== undefined
@@ -216,7 +218,7 @@ function renderSunburstGraph(store: Store) {
       }
     })
     .on('mousemove', (event) => {
-      tooltip.style('left', event.pageX + 10 + 'px').style('top', event.pageY - 10 + 'px');
+      tooltip.style('left', `${event.pageX + 10}px`).style('top', `${event.pageY - 10}px`);
     })
     .on('mouseout', () => {
       tooltip.style('display', 'none');

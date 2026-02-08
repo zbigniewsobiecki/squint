@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { IndexDatabase, computeHash } from '../../src/db/database.js';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { IndexDatabase, computeHash } from '../../src/db/database.js';
 
 describe('modules commands', () => {
   let testDir: string;
@@ -86,19 +86,9 @@ describe('modules commands', () => {
     // Create module tree
     const rootId = db.ensureRootModule();
 
-    const authModuleId = db.insertModule(
-      rootId,
-      'auth',
-      'Auth',
-      'Authentication and authorization logic'
-    );
+    const authModuleId = db.insertModule(rootId, 'auth', 'Auth', 'Authentication and authorization logic');
 
-    const userModuleId = db.insertModule(
-      rootId,
-      'user-api',
-      'User API',
-      'User management endpoints'
-    );
+    const userModuleId = db.insertModule(rootId, 'user-api', 'User API', 'User management endpoints');
 
     // Assign symbols to modules
     db.assignSymbolToModule(validateTokenId, authModuleId);
