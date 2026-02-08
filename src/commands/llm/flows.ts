@@ -33,14 +33,14 @@ interface FlowGrouping {
   slug: string;
   description: string;
   domain: string | null;
-  orderedLeafFlowSlugs: string[];  // Ordered by execution sequence
+  orderedLeafFlowIds: number[];  // Ordered by execution sequence (IDs for unambiguous matching)
 }
 
 interface RootFlowSuggestion {
   name: string;
   slug: string;
   description: string;
-  orderedParentFlowSlugs: string[];  // Ordered by journey sequence
+  orderedParentFlowIds: number[];  // Ordered by journey sequence (IDs for unambiguous matching)
 }
 
 export default class Flows extends Command {
@@ -240,29 +240,29 @@ export default class Flows extends Command {
     }
 
     // Persist leaf flows as orphans (parentId = null) for later reparenting
+    // Use a Set to track used slugs and ensure uniqueness upfront
     if (!dryRun) {
+      const usedSlugs = new Set<string>();
+
       for (const flow of leafFlows) {
+        // Ensure slug uniqueness by appending module IDs if needed
+        let slug = flow.slug;
+        if (usedSlugs.has(slug)) {
+          slug = `${flow.slug}-${flow.fromModuleId}-${flow.toModuleId}`;
+        }
+        usedSlugs.add(slug);
+
         try {
           // Create orphaned leaf flow (will be reparented in Phase 2)
-          db.insertFlow(null, flow.slug, flow.name, {
+          db.insertFlow(null, slug, flow.name, {
             fromModuleId: flow.fromModuleId,
             toModuleId: flow.toModuleId,
             semantic: flow.semantic,
           });
-        } catch (error) {
-          // Handle duplicate slugs by appending module IDs for uniqueness
-          const uniqueSlug = `${flow.slug}-${flow.fromModuleId}-${flow.toModuleId}`;
-          try {
-            db.insertFlow(null, uniqueSlug, flow.name, {
-              fromModuleId: flow.fromModuleId,
-              toModuleId: flow.toModuleId,
-              semantic: flow.semantic,
-            });
-          } catch {
-            // Skip if still fails
-            if (verbose && !isJson) {
-              this.log(chalk.yellow(`  Skipping duplicate flow: ${flow.name}`));
-            }
+        } catch {
+          // Skip if still fails (e.g., database constraint)
+          if (verbose && !isJson) {
+            this.log(chalk.yellow(`  Skipping duplicate flow: ${flow.name}`));
           }
         }
       }
@@ -286,19 +286,20 @@ export default class Flows extends Command {
 
 For each module-to-module transition, provide:
 1. A descriptive name for the flow (PascalCase, action-oriented)
-2. A slug (kebab-case, URL-safe)
+2. A UNIQUE slug (kebab-case, URL-safe) that includes module context
 3. A semantic description of what happens in this transition
 
 Output format - respond with ONLY a CSV table:
 
 \`\`\`csv
 from_module,to_module,name,slug,semantic
-project.controllers,project.services.auth,"ValidateCredentials","validate-credentials","Controller validates user credentials through auth service"
+project.controllers,project.services.auth,"ValidateCredentials","controllers-auth-validate-credentials","Controller validates user credentials through auth service"
 \`\`\`
 
 Guidelines:
 - Name should describe the business action (e.g., "ProcessPayment", "ValidateInput")
-- Slug should be lowercase-hyphenated version of the name
+- Slug MUST be unique - prefix with abbreviated module names to avoid collisions
+- Format: {from-module-short}-{to-module-short}-{action} (e.g., "api-db-fetch-user")
 - Semantic should explain WHY this module calls the other module
 - Keep descriptions concise (under 100 chars)`;
 
@@ -369,12 +370,14 @@ Generate flow metadata for each transition in CSV format.`;
 
   /**
    * Create a default leaf flow from an edge when LLM fails.
+   * Uses full module context in slug to prevent collisions.
    */
   private createDefaultLeafFlow(edge: ModuleCallEdge): LeafFlowSuggestion {
     const fromLast = edge.fromModulePath.split('.').pop() ?? 'source';
     const toLast = edge.toModulePath.split('.').pop() ?? 'target';
     const name = `${this.toPascalCase(fromLast)}To${this.toPascalCase(toLast)}`;
-    const slug = `${fromLast}-to-${toLast}`.toLowerCase();
+    // Include module IDs in slug to guarantee uniqueness
+    const slug = `${fromLast}-to-${toLast}-${edge.fromModuleId}-${edge.toModuleId}`.toLowerCase();
 
     return {
       fromModuleId: edge.fromModuleId,
@@ -412,14 +415,18 @@ Generate flow metadata for each transition in CSV format.`;
       this.log(chalk.gray(`  Analyzing ${leafFlows.length} leaf flows for grouping...`));
     }
 
-    // Build a map of slug to flow for lookup
-    const slugToFlow = new Map<string, Flow>();
+    // Build a map of ID to flow for validation
+    const idToFlow = new Map<number, Flow>();
     for (const flow of leafFlows) {
-      slugToFlow.set(flow.slug, flow);
+      idToFlow.set(flow.id, flow);
     }
 
+    // Get module names for context in prompts
+    const modules = db.getAllModules();
+    const moduleNameMap = new Map(modules.map(m => [m.id, m.fullPath]));
+
     try {
-      const groupings = await this.generateFlowGroupings(leafFlows, model);
+      const groupings = await this.generateFlowGroupings(leafFlows, moduleNameMap, model);
 
       if (!dryRun) {
         let reparentedCount = 0;
@@ -431,27 +438,30 @@ Generate flow metadata for each transition in CSV format.`;
             domain: group.domain ?? undefined,
           });
 
-          // Find and reparent leaf flows under this parent in order
-          const leafFlowIds: number[] = [];
-          for (const leafSlug of group.orderedLeafFlowSlugs) {
-            const leaf = slugToFlow.get(leafSlug);
+          // Validate and filter IDs - only use IDs that exist in our leaf flows
+          const validLeafFlowIds: number[] = [];
+          for (const leafId of group.orderedLeafFlowIds) {
+            const leaf = idToFlow.get(leafId);
             if (leaf) {
-              leafFlowIds.push(leaf.id);
+              validLeafFlowIds.push(leafId);
             } else if (verbose && !isJson) {
-              this.log(chalk.yellow(`  Warning: Leaf flow '${leafSlug}' not found for group '${group.name}'`));
+              this.log(chalk.yellow(`  Warning: Leaf flow ID ${leafId} not found for group '${group.name}'`));
             }
           }
 
           // Reparent leaf flows under the parent in the order specified
-          if (leafFlowIds.length > 0) {
-            db.reparentFlows(leafFlowIds, parentFlowId);
-            reparentedCount += leafFlowIds.length;
+          if (validLeafFlowIds.length > 0) {
+            db.reparentFlows(validLeafFlowIds, parentFlowId);
+            reparentedCount += validLeafFlowIds.length;
           }
 
           if (verbose && !isJson) {
-            this.log(chalk.gray(`  Created parent flow '${group.name}' with ${leafFlowIds.length} children`));
+            this.log(chalk.gray(`  Created parent flow '${group.name}' with ${validLeafFlowIds.length} children`));
           }
         }
+
+        // Handle orphan leaf flows after grouping
+        await this.handleOrphanFlows(db, 0, 'leaf', isJson, verbose, dryRun);
 
         if (!isJson) {
           this.log(chalk.gray(`  Created ${groupings.length} parent flows, reparented ${reparentedCount} leaf flows`));
@@ -472,10 +482,11 @@ Generate flow metadata for each transition in CSV format.`;
 
   /**
    * Generate flow groupings using LLM.
-   * Asks the LLM to group leaf flows and list them in execution order.
+   * Asks the LLM to group leaf flows by ID for unambiguous matching.
    */
   private async generateFlowGroupings(
     leafFlows: Flow[],
+    moduleNameMap: Map<number, string>,
     model: string
   ): Promise<FlowGrouping[]> {
     const systemPrompt = `You are a software architect grouping related module transitions into higher-level business flows.
@@ -488,24 +499,32 @@ Analyze the leaf flows (module-to-module transitions) and group them into logica
 Output format - respond with ONLY a CSV table:
 
 \`\`\`csv
-name,slug,description,domain,ordered_leaf_flows
-"Authentication","authentication","User authentication and session management","auth","validate-credentials,check-permissions,create-session"
-"PaymentProcessing","payment-processing","Payment validation and processing","payments","validate-payment,process-charge,update-balance"
+name,slug,description,domain,child_ids
+"Authentication","authentication","User authentication and session management","auth","12,15,18"
+"PaymentProcessing","payment-processing","Payment validation and processing","payments","22,25,28"
 \`\`\`
 
 IMPORTANT Guidelines:
 - Group flows that work together to accomplish a business goal
 - Name groups with PascalCase describing the feature/domain
 - Include 2-6 related leaf flows per group
-- **List member flows IN EXECUTION ORDER (first to last)** - the order matters!
+- **Reference flows by their ID numbers** (the number in brackets) for unambiguous matching
+- **List child IDs IN EXECUTION ORDER (first to last)** - the order matters!
 - Leaf flows can appear in multiple groups if they're truly shared
 - Leave ungroupable flows for the next phase`;
 
+    // Build flow list with IDs and module context for better LLM understanding
+    const flowList = leafFlows.map(f => {
+      const fromModule = f.fromModuleId ? moduleNameMap.get(f.fromModuleId) ?? 'unknown' : 'unknown';
+      const toModule = f.toModuleId ? moduleNameMap.get(f.toModuleId) ?? 'unknown' : 'unknown';
+      return `[${f.id}] ${f.slug} (${fromModule} → ${toModule})${f.semantic ? ` - "${f.semantic}"` : ''}`;
+    }).join('\n');
+
     const userPrompt = `## Leaf Flows to Group (${leafFlows.length})
 
-${leafFlows.map(f => `- ${f.slug}: ${f.name}${f.semantic ? ` - "${f.semantic}"` : ''}`).join('\n')}
+${flowList}
 
-Group these into logical parent flows in CSV format. List member flows in their execution order.`;
+Group these into logical parent flows in CSV format. Reference flows by their ID (number in brackets). List child IDs in execution order.`;
 
     const response = await LLMist.complete(userPrompt, {
       model,
@@ -517,7 +536,7 @@ Group these into logical parent flows in CSV format. List member flows in their 
   }
 
   /**
-   * Parse grouping CSV response.
+   * Parse grouping CSV response with ID-based child references.
    */
   private parseGroupingCSV(response: string): FlowGrouping[] {
     const results: FlowGrouping[] = [];
@@ -532,14 +551,20 @@ Group these into logical parent flows in CSV format. List member flows in their 
       const fields = this.parseCSVLine(line);
       if (fields.length < 5) continue;
 
-      const [name, slug, description, domain, orderedLeafFlowsStr] = fields;
+      const [name, slug, description, domain, childIdsStr] = fields;
+
+      // Parse IDs from comma-separated string, filtering non-numeric values
+      const childIds = childIdsStr
+        .split(',')
+        .map(s => parseInt(s.trim().replace(/"/g, ''), 10))
+        .filter(id => !isNaN(id) && id > 0);
 
       results.push({
         name: name.trim().replace(/"/g, ''),
         slug: slug.trim().replace(/"/g, ''),
         description: description.trim().replace(/"/g, ''),
         domain: domain.trim().replace(/"/g, '') || null,
-        orderedLeafFlowSlugs: orderedLeafFlowsStr.split(',').map(s => s.trim().replace(/"/g, '')),
+        orderedLeafFlowIds: childIds,
       });
     }
 
@@ -587,10 +612,10 @@ Group these into logical parent flows in CSV format. List member flows in their 
       this.log(chalk.gray(`  Analyzing ${candidateParentFlows.length} parent flows for root-level journeys...`));
     }
 
-    // Build a map of slug to flow for lookup
-    const slugToFlow = new Map<string, Flow>();
+    // Build a map of ID to flow for validation
+    const idToFlow = new Map<number, Flow>();
     for (const flow of candidateParentFlows) {
-      slugToFlow.set(flow.slug, flow);
+      idToFlow.set(flow.id, flow);
     }
 
     try {
@@ -605,27 +630,30 @@ Group these into logical parent flows in CSV format. List member flows in their 
             description: rootSuggestion.description,
           });
 
-          // Find and reparent parent flows under this root in order
-          const parentFlowIds: number[] = [];
-          for (const parentSlug of rootSuggestion.orderedParentFlowSlugs) {
-            const parent = slugToFlow.get(parentSlug);
+          // Validate and filter IDs - only use IDs that exist in our parent flows
+          const validParentFlowIds: number[] = [];
+          for (const parentId of rootSuggestion.orderedParentFlowIds) {
+            const parent = idToFlow.get(parentId);
             if (parent) {
-              parentFlowIds.push(parent.id);
+              validParentFlowIds.push(parentId);
             } else if (verbose && !isJson) {
-              this.log(chalk.yellow(`  Warning: Parent flow '${parentSlug}' not found for root '${rootSuggestion.name}'`));
+              this.log(chalk.yellow(`  Warning: Parent flow ID ${parentId} not found for root '${rootSuggestion.name}'`));
             }
           }
 
           // Reparent parent flows under the root in the order specified
-          if (parentFlowIds.length > 0) {
-            db.reparentFlows(parentFlowIds, rootFlowId);
-            reparentedCount += parentFlowIds.length;
+          if (validParentFlowIds.length > 0) {
+            db.reparentFlows(validParentFlowIds, rootFlowId);
+            reparentedCount += validParentFlowIds.length;
           }
 
           if (verbose && !isJson) {
-            this.log(chalk.gray(`  Created root flow '${rootSuggestion.name}' with ${parentFlowIds.length} parent flows`));
+            this.log(chalk.gray(`  Created root flow '${rootSuggestion.name}' with ${validParentFlowIds.length} parent flows`));
           }
         }
+
+        // Handle orphan parent flows after root creation
+        await this.handleOrphanFlows(db, 0, 'parent', isJson, verbose, dryRun);
 
         if (!isJson) {
           this.log(chalk.gray(`  Created ${rootFlowSuggestions.length} root flows, reparented ${reparentedCount} parent flows`));
@@ -646,7 +674,7 @@ Group these into logical parent flows in CSV format. List member flows in their 
 
   /**
    * Generate root-level flows using LLM.
-   * Asks the LLM to combine parent flows into user journeys with execution order.
+   * Asks the LLM to combine parent flows into user journeys by ID for unambiguous matching.
    */
   private async generateRootFlows(
     parentFlows: Flow[],
@@ -662,22 +690,29 @@ Analyze the parent flows and identify complete user journeys like:
 Output format - respond with ONLY a CSV table:
 
 \`\`\`csv
-name,slug,description,ordered_parent_flows
-"UserOnboarding","user-onboarding","Complete new user signup journey from registration to active account","authentication,profile-setup,notification"
+name,slug,description,child_ids
+"UserOnboarding","user-onboarding","Complete new user signup journey from registration to active account","12,15,18"
+"CheckoutProcess","checkout-process","Full checkout flow from cart to confirmation","22,25,28"
 \`\`\`
 
 IMPORTANT Guidelines:
 - Focus on end-to-end user experiences
 - Each journey should tell a complete user story
-- **List parent flows IN JOURNEY ORDER (first to last)** - the sequence matters!
+- **Reference flows by their ID numbers** (the number in brackets) for unambiguous matching
+- **List child IDs IN JOURNEY ORDER (first to last)** - the sequence matters!
 - Include 2-5 parent flows per journey
 - Parent flows can appear in multiple journeys if they're truly shared`;
 
+    // Build flow list with IDs for unambiguous LLM matching
+    const flowList = parentFlows.map(f =>
+      `[${f.id}] ${f.slug}: ${f.name}${f.description ? ` - "${f.description}"` : ''}`
+    ).join('\n');
+
     const userPrompt = `## Parent Flows (${parentFlows.length})
 
-${parentFlows.map(f => `- ${f.slug}: ${f.name}${f.description ? ` - "${f.description}"` : ''}`).join('\n')}
+${flowList}
 
-Identify user journeys combining these flows in CSV format. List parent flows in their journey sequence order.`;
+Identify user journeys combining these flows in CSV format. Reference flows by their ID (number in brackets). List child IDs in journey sequence order.`;
 
     const response = await LLMist.complete(userPrompt, {
       model,
@@ -697,17 +732,94 @@ Identify user journeys combining these flows in CSV format. List parent flows in
       const fields = this.parseCSVLine(line);
       if (fields.length < 4) continue;
 
-      const [name, slug, description, orderedParentFlowsStr] = fields;
+      const [name, slug, description, childIdsStr] = fields;
+
+      // Parse IDs from comma-separated string, filtering non-numeric values
+      const childIds = childIdsStr
+        .split(',')
+        .map(s => parseInt(s.trim().replace(/"/g, ''), 10))
+        .filter(id => !isNaN(id) && id > 0);
 
       results.push({
         name: name.trim().replace(/"/g, ''),
         slug: slug.trim().replace(/"/g, ''),
         description: description.trim().replace(/"/g, ''),
-        orderedParentFlowSlugs: orderedParentFlowsStr.split(',').map(s => s.trim().replace(/"/g, '')),
+        orderedParentFlowIds: childIds,
       });
     }
 
     return results;
+  }
+
+  /**
+   * Handle orphan flows that weren't grouped in Phase 2 or 3.
+   * Groups orphans by their domain or creates a catch-all parent.
+   */
+  private async handleOrphanFlows(
+    db: IndexDatabase,
+    depth: number,
+    flowType: 'leaf' | 'parent',
+    isJson: boolean,
+    verbose: boolean,
+    dryRun: boolean
+  ): Promise<void> {
+    const orphans = db.getOrphanFlows(depth);
+
+    // Filter based on flow type
+    const filteredOrphans = flowType === 'leaf'
+      ? orphans.filter(f => f.fromModuleId !== null && f.toModuleId !== null)
+      : orphans.filter(f => f.fromModuleId === null && f.toModuleId === null);
+
+    if (filteredOrphans.length === 0) {
+      return;
+    }
+
+    if (!isJson && verbose) {
+      this.log(chalk.gray(`  Found ${filteredOrphans.length} orphan ${flowType} flows at depth ${depth}`));
+    }
+
+    if (dryRun) {
+      return;
+    }
+
+    // Group orphans by domain
+    const grouped = new Map<string, Flow[]>();
+    for (const flow of filteredOrphans) {
+      const domain = flow.domain ?? 'misc';
+      const existing = grouped.get(domain) || [];
+      existing.push(flow);
+      grouped.set(domain, existing);
+    }
+
+    for (const [domain, flows] of grouped) {
+      const catchAllSlug = `${domain}-${flowType === 'leaf' ? 'operations' : 'misc'}`;
+      const catchAllName = `${this.toPascalCase(domain)} ${flowType === 'leaf' ? 'Operations' : '(Ungrouped)'}`;
+
+      try {
+        // Create catch-all parent flow
+        const parentFlowId = db.insertFlow(null, catchAllSlug, catchAllName, {
+          description: `Ungrouped ${flowType} flows in the ${domain} domain`,
+          domain,
+        });
+
+        // Reparent orphan flows under this catch-all
+        const flowIds = flows.map(f => f.id);
+        db.reparentFlows(flowIds, parentFlowId);
+
+        if (!isJson && verbose) {
+          this.log(chalk.gray(`  Created catch-all '${catchAllName}' with ${flowIds.length} ${flowType} flows`));
+        }
+      } catch {
+        // Slug collision - try with a unique suffix
+        const uniqueSlug = `${catchAllSlug}-${Date.now()}`;
+        const parentFlowId = db.insertFlow(null, uniqueSlug, catchAllName, {
+          description: `Ungrouped ${flowType} flows in the ${domain} domain`,
+          domain,
+        });
+        const flowIds = flows.map(f => f.id);
+        db.reparentFlows(flowIds, parentFlowId);
+      }
+    }
   }
 
   /**
