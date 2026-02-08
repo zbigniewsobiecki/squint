@@ -134,6 +134,7 @@ export interface CallGraphEdge {
   fromId: number;
   toId: number;
   weight: number;
+  minUsageLine: number; // Earliest line where this call occurs
 }
 
 // ============================================================
@@ -171,6 +172,29 @@ export interface FlowWithSteps extends Flow {
     moduleName: string | null;
     layer: string | null;
   }>;
+}
+
+export interface FlowDAGNode {
+  id: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  stepOrder: number;
+  layer: string | null;
+  moduleName: string | null;
+  isEntryPoint: boolean;
+}
+
+export interface FlowDAGEdge {
+  source: number;
+  target: number;
+  weight: number;
+}
+
+export interface FlowDAG {
+  flow: FlowWithSteps;
+  nodes: FlowDAGNode[];
+  edges: FlowDAGEdge[];
 }
 
 export interface EnhancedRelationshipContext {

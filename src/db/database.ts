@@ -24,6 +24,9 @@ export {
   type Flow,
   type FlowStep,
   type FlowWithSteps,
+  type FlowDAG,
+  type FlowDAGNode,
+  type FlowDAGEdge,
   type IIndexWriter,
   SCHEMA,
   computeHash,
@@ -48,6 +51,7 @@ import {
   type CallGraphEdge,
   type Flow,
   type FlowWithSteps,
+  type FlowDAG,
   type IIndexWriter,
   SCHEMA,
 } from './schema.js';
@@ -2722,7 +2726,8 @@ export class IndexDatabase implements IIndexWriter {
       SELECT
         caller.id as from_id,
         s.definition_id as to_id,
-        COUNT(*) as weight
+        COUNT(*) as weight,
+        MIN(u.line) as min_usage_line
       FROM definitions caller
       JOIN files f ON caller.file_id = f.id
       JOIN symbols s ON s.file_id = f.id AND s.definition_id IS NOT NULL
@@ -2735,7 +2740,8 @@ export class IndexDatabase implements IIndexWriter {
       SELECT
         caller.id as from_id,
         s.definition_id as to_id,
-        COUNT(*) as weight
+        COUNT(*) as weight,
+        MIN(u.line) as min_usage_line
       FROM definitions caller
       JOIN files f ON caller.file_id = f.id
       JOIN imports i ON i.from_file_id = f.id
@@ -2747,17 +2753,28 @@ export class IndexDatabase implements IIndexWriter {
       GROUP BY caller.id, s.definition_id
     `);
 
-    const rows = stmt.all() as Array<{ from_id: number; to_id: number; weight: number }>;
+    const rows = stmt.all() as Array<{
+      from_id: number;
+      to_id: number;
+      weight: number;
+      min_usage_line: number;
+    }>;
 
-    // Aggregate duplicate edges (from the UNION)
+    // Aggregate duplicate edges (from the UNION), keeping minimum usage line
     const edgeMap = new Map<string, CallGraphEdge>();
     for (const row of rows) {
       const key = `${row.from_id}-${row.to_id}`;
       const existing = edgeMap.get(key);
       if (existing) {
         existing.weight += row.weight;
+        existing.minUsageLine = Math.min(existing.minUsageLine, row.min_usage_line);
       } else {
-        edgeMap.set(key, { fromId: row.from_id, toId: row.to_id, weight: row.weight });
+        edgeMap.set(key, {
+          fromId: row.from_id,
+          toId: row.to_id,
+          weight: row.weight,
+          minUsageLine: row.min_usage_line,
+        });
       }
     }
 
@@ -2999,6 +3016,181 @@ export class IndexDatabase implements IIndexWriter {
     };
   }
 
+  /**
+   * Get definitions not assigned to any module.
+   * Optionally filter by kind (e.g., 'interface', 'type', 'enum').
+   */
+  getUnassignedDefinitions(kinds?: string[]): Array<{
+    id: number;
+    fileId: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    line: number;
+    isExported: boolean;
+  }> {
+    this.ensureModulesTables();
+
+    let sql = `
+      SELECT
+        d.id,
+        d.file_id as fileId,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        d.line,
+        d.is_exported as isExported
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      WHERE d.id NOT IN (SELECT definition_id FROM module_members)
+    `;
+
+    if (kinds && kinds.length > 0) {
+      const placeholders = kinds.map(() => '?').join(', ');
+      sql += ` AND d.kind IN (${placeholders})`;
+    }
+
+    sql += ' ORDER BY f.path, d.line';
+
+    const stmt = this.db.prepare(sql);
+    const rows = (kinds && kinds.length > 0 ? stmt.all(...kinds) : stmt.all()) as Array<{
+      id: number;
+      fileId: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      line: number;
+      isExported: number;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      fileId: row.fileId,
+      name: row.name,
+      kind: row.kind,
+      filePath: row.filePath,
+      line: row.line,
+      isExported: row.isExported === 1,
+    }));
+  }
+
+  /**
+   * Get all callers of a definition with their module assignments.
+   * Used for "voter" assignment of isolated nodes.
+   */
+  getIncomingEdgesFor(definitionId: number): Array<{
+    callerId: number;
+    callerName: string;
+    callerModuleId: number | null;
+    weight: number;
+  }> {
+    this.ensureModulesTables();
+
+    // Reuse the same call graph logic but filter for a specific target
+    const stmt = this.db.prepare(`
+      SELECT
+        caller.id as callerId,
+        caller.name as callerName,
+        mm.module_id as callerModuleId,
+        COUNT(*) as weight
+      FROM definitions caller
+      JOIN files f ON caller.file_id = f.id
+      JOIN symbols s ON s.file_id = f.id AND s.definition_id = ?
+      JOIN usages u ON u.symbol_id = s.id
+      LEFT JOIN module_members mm ON mm.definition_id = caller.id
+      WHERE u.context IN ('call_expression', 'new_expression')
+        AND caller.line <= u.line AND u.line <= caller.end_line
+        AND caller.id != ?
+      GROUP BY caller.id, mm.module_id
+      UNION ALL
+      SELECT
+        caller.id as callerId,
+        caller.name as callerName,
+        mm.module_id as callerModuleId,
+        COUNT(*) as weight
+      FROM definitions caller
+      JOIN files f ON caller.file_id = f.id
+      JOIN imports i ON i.from_file_id = f.id
+      JOIN symbols s ON s.reference_id = i.id AND s.definition_id = ?
+      JOIN usages u ON u.symbol_id = s.id
+      LEFT JOIN module_members mm ON mm.definition_id = caller.id
+      WHERE u.context IN ('call_expression', 'new_expression')
+        AND caller.line <= u.line AND u.line <= caller.end_line
+        AND caller.id != ?
+      GROUP BY caller.id, mm.module_id
+    `);
+
+    const rows = stmt.all(definitionId, definitionId, definitionId, definitionId) as Array<{
+      callerId: number;
+      callerName: string;
+      callerModuleId: number | null;
+      weight: number;
+    }>;
+
+    // Aggregate duplicate callers (from the UNION)
+    const callerMap = new Map<number, {
+      callerId: number;
+      callerName: string;
+      callerModuleId: number | null;
+      weight: number;
+    }>();
+
+    for (const row of rows) {
+      const existing = callerMap.get(row.callerId);
+      if (existing) {
+        existing.weight += row.weight;
+      } else {
+        callerMap.set(row.callerId, { ...row });
+      }
+    }
+
+    return Array.from(callerMap.values());
+  }
+
+  /**
+   * Get root definitions (structural entry points).
+   * These are exported definitions that are not called by anything internal.
+   * They represent entry points to the codebase from external callers.
+   */
+  getRootDefinitions(): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    line: number;
+  }> {
+    // Get all definition IDs that are called by something
+    const calledIds = new Set<number>();
+    const edges = this.getCallGraph();
+    for (const edge of edges) {
+      calledIds.add(edge.toId);
+    }
+
+    // Get all exported definitions that are not in calledIds
+    const stmt = this.db.prepare(`
+      SELECT
+        d.id,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        d.line
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      WHERE d.is_exported = 1
+      ORDER BY f.path, d.name
+    `);
+
+    const rows = stmt.all() as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      line: number;
+    }>;
+
+    return rows.filter(row => !calledIds.has(row.id));
+  }
+
   // ============================================
   // Flow detection methods
   // ============================================
@@ -3128,32 +3320,41 @@ export class IndexDatabase implements IIndexWriter {
     this.ensureFlowsTables();
     this.ensureModulesTables();
 
-    // Build call graph adjacency list
+    // Build call graph adjacency list with usage line info
     const edges = this.getCallGraph();
-    const adjacency = new Map<number, number[]>();
+    const adjacency = new Map<number, Array<{ toId: number; minUsageLine: number }>>();
     for (const edge of edges) {
       if (!adjacency.has(edge.fromId)) {
         adjacency.set(edge.fromId, []);
       }
-      adjacency.get(edge.fromId)!.push(edge.toId);
+      adjacency.get(edge.fromId)!.push({
+        toId: edge.toId,
+        minUsageLine: edge.minUsageLine,
+      });
     }
 
-    // BFS traversal
-    const visited = new Map<number, number>(); // definitionId -> depth
-    const queue: Array<{ id: number; depth: number }> = [{ id: entryId, depth: 0 }];
+    // BFS traversal tracking usage line for ordering
+    const visited = new Map<number, { depth: number; usageLine: number }>();
+    const queue: Array<{ id: number; depth: number; usageLine: number }> = [
+      { id: entryId, depth: 0, usageLine: 0 },
+    ];
 
     while (queue.length > 0) {
-      const { id, depth } = queue.shift()!;
+      const { id, depth, usageLine } = queue.shift()!;
 
       if (visited.has(id)) continue;
       if (depth > maxDepth) continue;
 
-      visited.set(id, depth);
+      visited.set(id, { depth, usageLine });
 
       const neighbors = adjacency.get(id) ?? [];
       for (const neighbor of neighbors) {
-        if (!visited.has(neighbor)) {
-          queue.push({ id: neighbor, depth: depth + 1 });
+        if (!visited.has(neighbor.toId)) {
+          queue.push({
+            id: neighbor.toId,
+            depth: depth + 1,
+            usageLine: neighbor.minUsageLine,
+          });
         }
       }
     }
@@ -3162,23 +3363,28 @@ export class IndexDatabase implements IIndexWriter {
     const result: Array<{
       definitionId: number;
       depth: number;
+      usageLine: number;
       moduleId: number | null;
       layer: string | null;
     }> = [];
 
-    for (const [definitionId, depth] of visited) {
+    for (const [definitionId, info] of visited) {
       // Get module membership
       const moduleInfo = this.getDefinitionModule(definitionId);
       result.push({
         definitionId,
-        depth,
+        depth: info.depth,
+        usageLine: info.usageLine,
         moduleId: moduleInfo?.module.id ?? null,
         layer: moduleInfo?.module.layer ?? null,
       });
     }
 
-    // Sort by depth
-    result.sort((a, b) => a.depth - b.depth);
+    // Sort by depth first, then by usage line (source code order within same depth)
+    result.sort((a, b) => {
+      if (a.depth !== b.depth) return a.depth - b.depth;
+      return a.usageLine - b.usageLine;
+    });
 
     return result;
   }
@@ -3361,6 +3567,46 @@ export class IndexDatabase implements IIndexWriter {
   }
 
   /**
+   * Get a flow as a DAG with nodes and edges for visualization.
+   * Nodes are the flow steps, edges are call graph relationships between steps.
+   */
+  getFlowDAG(flowId: number): FlowDAG | null {
+    const flow = this.getFlowWithSteps(flowId);
+    if (!flow) return null;
+
+    // Build set of definition IDs in this flow
+    const stepDefIds = new Set(flow.steps.map(s => s.definitionId));
+    stepDefIds.add(flow.entryPointId);
+
+    // Get call graph edges filtered to only those between flow steps
+    const allEdges = this.getCallGraph();
+    const flowEdges = allEdges.filter(
+      e => stepDefIds.has(e.fromId) && stepDefIds.has(e.toId)
+    );
+
+    // Build nodes from flow steps
+    const nodes = flow.steps.map(step => ({
+      id: step.definitionId,
+      name: step.name,
+      kind: step.kind,
+      filePath: step.filePath,
+      stepOrder: step.stepOrder,
+      layer: step.layer,
+      moduleName: step.moduleName,
+      isEntryPoint: step.definitionId === flow.entryPointId,
+    }));
+
+    // Build edges
+    const edges = flowEdges.map(e => ({
+      source: e.fromId,
+      target: e.toId,
+      weight: e.weight,
+    }));
+
+    return { flow, nodes, edges };
+  }
+
+  /**
    * Update a flow's metadata.
    */
   updateFlow(
@@ -3395,6 +3641,69 @@ export class IndexDatabase implements IIndexWriter {
     const stmt = this.db.prepare(`UPDATE flows SET ${sets.join(', ')} WHERE id = ?`);
     const result = stmt.run(...params);
     return result.changes > 0;
+  }
+
+  /**
+   * Find strongly connected components (cycles) among unannotated symbols.
+   * Uses Tarjan's algorithm to detect groups of mutually dependent symbols.
+   * Returns groups of symbol IDs that form cycles (size > 1).
+   */
+  findCycles(aspect: string): number[][] {
+    // Get all unannotated symbols
+    const { symbols: unannotated } = this.getAllUnannotatedSymbols(aspect, { limit: 100000 });
+    const ids = new Set(unannotated.map(s => s.id));
+
+    if (ids.size === 0) return [];
+
+    // Build adjacency list (only edges between unannotated symbols)
+    const adj = new Map<number, number[]>();
+    for (const sym of unannotated) {
+      const deps = this.getUnmetDependencies(sym.id, aspect);
+      adj.set(sym.id, deps.map(d => d.dependencyId).filter(id => ids.has(id)));
+    }
+
+    // Tarjan's algorithm state
+    let index = 0;
+    const stack: number[] = [];
+    const onStack = new Set<number>();
+    const indices = new Map<number, number>();
+    const lowlinks = new Map<number, number>();
+    const sccs: number[][] = [];
+
+    const strongconnect = (v: number): void => {
+      indices.set(v, index);
+      lowlinks.set(v, index);
+      index++;
+      stack.push(v);
+      onStack.add(v);
+
+      for (const w of adj.get(v) ?? []) {
+        if (!indices.has(w)) {
+          strongconnect(w);
+          lowlinks.set(v, Math.min(lowlinks.get(v)!, lowlinks.get(w)!));
+        } else if (onStack.has(w)) {
+          lowlinks.set(v, Math.min(lowlinks.get(v)!, indices.get(w)!));
+        }
+      }
+
+      if (lowlinks.get(v) === indices.get(v)) {
+        const scc: number[] = [];
+        let w: number;
+        do {
+          w = stack.pop()!;
+          onStack.delete(w);
+          scc.push(w);
+        } while (w !== v);
+        // Only return actual cycles (size > 1)
+        if (scc.length > 1) sccs.push(scc);
+      }
+    };
+
+    for (const v of ids) {
+      if (!indices.has(v)) strongconnect(v);
+    }
+
+    return sccs;
   }
 
   close(): void {

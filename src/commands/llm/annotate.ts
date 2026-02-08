@@ -262,12 +262,165 @@ export default class Annotate extends Command {
             if (!isJson) {
               this.log(chalk.green(`All symbols have '${primaryAspect}' annotated!`));
             }
-          } else if (blockedCount > 0) {
-            if (!isJson) {
-              this.log(chalk.yellow(`No symbols ready for annotation.`));
-              this.log(chalk.gray(`${blockedCount} symbols have unmet dependencies.`));
-              this.log(chalk.gray(`Use --force to annotate them anyway.`));
+            break;
+          } else if (blockedCount > 0 && !forceMode) {
+            // Check for circular dependencies
+            const cycles = db.findCycles(primaryAspect);
+
+            if (cycles.length === 0) {
+              // No cycles found - truly blocked
+              if (!isJson) {
+                this.log(chalk.yellow(`No symbols ready for annotation.`));
+                this.log(chalk.gray(`${blockedCount} symbols have unmet dependencies.`));
+                this.log(chalk.gray(`Use --force to annotate them anyway.`));
+              }
+              break;
             }
+
+            // Process circular dependency groups
+            if (!isJson) {
+              this.log('');
+              this.log(chalk.bold(`Found ${cycles.length} circular dependency group(s). Processing as batches...`));
+            }
+
+            for (const cycle of cycles) {
+              // Get full symbol info for cycle members
+              const cycleSymbols: ReadySymbolInfo[] = cycle
+                .map(id => db.getDefinitionById(id))
+                .filter((def): def is NonNullable<typeof def> => def !== null)
+                .map(def => ({
+                  id: def.id,
+                  name: def.name,
+                  kind: def.kind,
+                  filePath: def.filePath,
+                  line: def.line,
+                  endLine: def.endLine,
+                  dependencyCount: 0,
+                }));
+
+              if (cycleSymbols.length === 0) continue;
+
+              const cycleNames = cycleSymbols.map(s => s.name).join(', ');
+              if (!isJson) {
+                this.log(chalk.gray(`  Processing cycle: ${cycleNames} (${cycleSymbols.length} symbols)`));
+              }
+
+              // Enhance symbols with source code
+              const enhancedCycleSymbols = await this.enhanceSymbols(db, cycleSymbols, aspects, relationshipLimit);
+
+              // Get current coverage for the prompt
+              const cycleCoverage = db.getAspectCoverage({
+                kind: flags.kind,
+                filePattern: flags.file,
+              });
+              const cycleTotalSymbols = db.getFilteredDefinitionCount({
+                kind: flags.kind,
+                filePattern: flags.file,
+              });
+              const coverage = filterCoverageForAspects(cycleCoverage, aspects, cycleTotalSymbols);
+
+              // Build prompt with cycle context
+              const symbolContexts: SymbolContextEnhanced[] = enhancedCycleSymbols.map(s => ({
+                id: s.id,
+                name: s.name,
+                kind: s.kind,
+                filePath: s.filePath,
+                line: s.line,
+                endLine: s.endLine,
+                sourceCode: s.sourceCode,
+                isExported: s.isExported,
+                dependencies: s.dependencies,
+                relationshipsToAnnotate: s.relationshipsToAnnotate,
+                incomingDependencies: s.incomingDependencies,
+                incomingDependencyCount: s.incomingDependencyCount,
+              }));
+
+              // Build user prompt with cycle note
+              const basePrompt = buildUserPromptEnhanced(symbolContexts, aspects, coverage);
+              const cycleNote = `\nNote: These symbols have circular dependencies - they reference each other. Annotate them based on their collective purpose and individual contributions.\n`;
+              const userPrompt = cycleNote + basePrompt;
+
+              // Call LLM
+              let response: string;
+              try {
+                response = await LLMist.complete(userPrompt, {
+                  model: flags.model,
+                  systemPrompt,
+                  temperature: 0,
+                });
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                if (!isJson) {
+                  this.log(chalk.red(`    LLM error for cycle: ${message}`));
+                }
+                totalErrors++;
+                continue;
+              }
+
+              // Parse and persist results
+              const parseResult = parseCombinedCsv(response);
+              const validSymbolIds = new Set(enhancedCycleSymbols.map(s => s.id));
+
+              // Build valid relationship map for cycle symbols
+              const cycleValidRelationships = new Map<number, Set<number>>();
+              for (const s of enhancedCycleSymbols) {
+                const toIds = new Set<number>();
+                for (const rel of s.relationshipsToAnnotate) {
+                  toIds.add(rel.toId);
+                }
+                cycleValidRelationships.set(s.id, toIds);
+              }
+
+              let cycleAnnotations = 0;
+              let cycleRelAnnotations = 0;
+
+              // Process symbol annotations
+              for (const row of parseResult.symbols) {
+                if (!validSymbolIds.has(row.symbolId)) continue;
+                if (!aspects.includes(row.aspect)) continue;
+
+                const validationError = this.validateValue(row.aspect, row.value);
+                if (validationError) {
+                  totalErrors++;
+                  continue;
+                }
+
+                if (!dryRun) {
+                  db.setDefinitionMetadata(row.symbolId, row.aspect, row.value);
+                }
+                cycleAnnotations++;
+                totalAnnotations++;
+              }
+
+              // Process relationship annotations
+              for (const row of parseResult.relationships) {
+                const fromId = row.fromId;
+                const toId = row.toId;
+
+                if (!validSymbolIds.has(fromId)) continue;
+
+                const toIds = cycleValidRelationships.get(fromId);
+                if (!toIds || !toIds.has(toId)) continue;
+
+                if (!row.value || row.value.length < 5) {
+                  totalErrors++;
+                  continue;
+                }
+
+                if (!dryRun) {
+                  db.setRelationshipAnnotation(fromId, toId, row.value);
+                }
+                cycleRelAnnotations++;
+                totalRelationshipAnnotations++;
+              }
+
+              if (!isJson) {
+                this.log(chalk.green(`    ✓ Annotated ${cycleAnnotations} symbols, ${cycleRelAnnotations} relationships`));
+              }
+            }
+
+            // Continue the loop to process any newly unblocked symbols
+            continue;
           }
           break;
         }

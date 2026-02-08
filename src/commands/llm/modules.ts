@@ -339,6 +339,83 @@ function parseModuleAnnotations(response: string): ParsedModuleAnnotation[] {
   return annotations;
 }
 
+/**
+ * Assign orphaned types/interfaces to modules based on file proximity.
+ * If a type is defined in the same file as a module member, assign it to that module.
+ */
+function assignOrphanedTypes(
+  db: { getUnassignedDefinitions: (kinds?: string[]) => Array<{ id: number; fileId: number; name: string; kind: string }>; getFileDefinitions: (fileId: number) => Array<{ id: number; name: string; kind: string }> },
+  memberToModule: Map<number, number>,
+): Map<number, number> {
+  const assignments = new Map<number, number>();
+
+  // Get unassigned types, interfaces, and enums
+  const orphanedTypes = db.getUnassignedDefinitions(['interface', 'type', 'type_alias', 'enum']);
+
+  for (const typeDef of orphanedTypes) {
+    // Find siblings in the same file that are already in a module
+    const fileDefs = db.getFileDefinitions(typeDef.fileId);
+
+    for (const sibling of fileDefs) {
+      if (sibling.id !== typeDef.id && memberToModule.has(sibling.id)) {
+        // Found a sibling in a module - assign the type to the same module
+        assignments.set(typeDef.id, memberToModule.get(sibling.id)!);
+        break;
+      }
+    }
+  }
+
+  return assignments;
+}
+
+/**
+ * Assign isolated nodes (configs, constants, utilities) to modules based on incoming edges.
+ * If a definition is called mostly by members of one module, assign it to that module.
+ */
+function assignIsolatedNodes(
+  db: { getUnassignedDefinitions: (kinds?: string[]) => Array<{ id: number; name: string; kind: string }>; getIncomingEdgesFor: (id: number) => Array<{ callerId: number; callerModuleId: number | null; weight: number }> },
+  memberToModule: Map<number, number>,
+): Map<number, number> {
+  const assignments = new Map<number, number>();
+
+  // Get all unassigned definitions
+  const isolated = db.getUnassignedDefinitions();
+
+  for (const def of isolated) {
+    const incomingEdges = db.getIncomingEdgesFor(def.id);
+
+    if (incomingEdges.length === 0) continue;
+
+    // Count weighted votes by module
+    const moduleVotes = new Map<number, number>();
+    for (const edge of incomingEdges) {
+      // Prefer module ID from the edge if present, otherwise look up from memberToModule
+      const moduleId = edge.callerModuleId ?? memberToModule.get(edge.callerId);
+      if (moduleId !== undefined) {
+        moduleVotes.set(moduleId, (moduleVotes.get(moduleId) ?? 0) + edge.weight);
+      }
+    }
+
+    if (moduleVotes.size === 0) continue;
+
+    // Find the module with the most votes
+    let topModuleId = -1;
+    let topVotes = 0;
+    for (const [moduleId, votes] of moduleVotes) {
+      if (votes > topVotes) {
+        topVotes = votes;
+        topModuleId = moduleId;
+      }
+    }
+
+    if (topModuleId >= 0) {
+      assignments.set(def.id, topModuleId);
+    }
+  }
+
+  return assignments;
+}
+
 export default class Modules extends Command {
   static override description = 'Detect module boundaries using community detection on the call graph';
 
@@ -375,6 +452,22 @@ export default class Modules extends Command {
     'skip-llm': Flags.boolean({
       description: 'Skip LLM naming pass (just do community detection)',
       default: false,
+    }),
+    'max-iterations': Flags.integer({
+      description: 'Maximum LLM naming iterations (batches of 10 modules)',
+      default: 100,
+    }),
+    'batch-size': Flags.integer({
+      description: 'Modules per LLM naming batch',
+      default: 10,
+    }),
+    'include-types': Flags.boolean({
+      description: 'Include types/interfaces via file proximity',
+      default: true,
+    }),
+    'include-isolated': Flags.boolean({
+      description: 'Include isolated nodes via incoming edges',
+      default: true,
     }),
     json: SharedFlags.json,
   };
@@ -562,8 +655,71 @@ export default class Modules extends Command {
       // Sort by size descending
       candidates.sort((a, b) => b.members.length - a.members.length);
 
+      // Step 3.5: Secondary assignments for orphaned definitions
+      const includeTypes = flags['include-types'];
+      const includeIsolated = flags['include-isolated'];
+
+      if (includeTypes || includeIsolated) {
+        // Build a map from member definition ID to candidate index
+        const memberToCandidate = new Map<number, number>();
+        for (let i = 0; i < candidates.length; i++) {
+          for (const m of candidates[i].members) {
+            memberToCandidate.set(m.id, i);
+          }
+        }
+
+        // Helper to add a definition to a candidate
+        const addToCandidate = (defId: number, candidateIdx: number) => {
+          const def = db.getDefinitionById(defId);
+          if (!def) return;
+
+          const metadata = db.getDefinitionMetadata(defId);
+          let domains: string[] = [];
+          try {
+            if (metadata['domain']) {
+              domains = JSON.parse(metadata['domain']) as string[];
+            }
+          } catch { /* ignore */ }
+
+          candidates[candidateIdx].members.push({
+            id: defId,
+            name: def.name,
+            kind: def.kind,
+            filePath: def.filePath,
+            domains,
+            role: metadata['role'] ?? null,
+          });
+
+          memberToCandidate.set(defId, candidateIdx);
+        };
+
+        // Assign orphaned types by file proximity
+        if (includeTypes) {
+          const typeAssignments = assignOrphanedTypes(db, memberToCandidate);
+          if (!isJson && typeAssignments.size > 0) {
+            this.log(chalk.gray(`  Assigned ${typeAssignments.size} types by file proximity`));
+          }
+          for (const [defId, candidateIdx] of typeAssignments) {
+            addToCandidate(defId, candidateIdx);
+          }
+        }
+
+        // Assign isolated nodes by incoming edges
+        if (includeIsolated) {
+          const isolatedAssignments = assignIsolatedNodes(db, memberToCandidate);
+          if (!isJson && isolatedAssignments.size > 0) {
+            this.log(chalk.gray(`  Assigned ${isolatedAssignments.size} isolated nodes by callers`));
+          }
+          for (const [defId, candidateIdx] of isolatedAssignments) {
+            addToCandidate(defId, candidateIdx);
+          }
+        }
+      }
+
       // Step 4: LLM naming pass (if not skipped)
       let annotations: ParsedModuleAnnotation[] = [];
+      const maxIterations = flags['max-iterations'];
+      const batchSize = flags['batch-size'];
 
       if (!skipLlm) {
         if (!isJson) {
@@ -571,26 +727,37 @@ export default class Modules extends Command {
         }
 
         const systemPrompt = buildModuleSystemPrompt();
-        const userPrompt = buildModuleUserPrompt(candidates);
 
-        try {
-          const response = await LLMist.complete(userPrompt, {
-            model: flags.model,
-            systemPrompt,
-            temperature: 0,
-          });
+        // Process in batches
+        let iteration = 0;
+        for (let i = 0; i < candidates.length && iteration < maxIterations; i += batchSize) {
+          iteration++;
+          const batch = candidates.slice(i, i + batchSize);
+          const userPrompt = buildModuleUserPrompt(batch);
 
-          annotations = parseModuleAnnotations(response);
+          try {
+            const response = await LLMist.complete(userPrompt, {
+              model: flags.model,
+              systemPrompt,
+              temperature: 0,
+            });
 
-          if (!isJson && annotations.length > 0) {
-            this.log(chalk.gray(`  Named ${annotations.length} modules`));
+            const batchAnnotations = parseModuleAnnotations(response);
+            annotations.push(...batchAnnotations);
+
+            if (!isJson && batchAnnotations.length > 0) {
+              this.log(chalk.gray(`  Batch ${iteration}: Named ${batchAnnotations.length} modules`));
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!isJson) {
+              this.log(chalk.yellow(`  Batch ${iteration} failed: ${message}`));
+            }
           }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (!isJson) {
-            this.log(chalk.yellow(`  LLM naming failed: ${message}`));
-            this.log(chalk.gray('  Using auto-generated names'));
-          }
+        }
+
+        if (!isJson && annotations.length > 0) {
+          this.log(chalk.gray(`  Total: ${annotations.length} modules named`));
         }
       }
 

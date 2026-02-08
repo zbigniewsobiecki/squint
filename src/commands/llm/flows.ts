@@ -92,6 +92,14 @@ export default class Flows extends Command {
       description: 'Skip LLM naming pass (use auto-generated names)',
       default: false,
     }),
+    'max-iterations': Flags.integer({
+      description: 'Maximum LLM naming iterations (batches of 10 flows)',
+      default: 100,
+    }),
+    'batch-size': Flags.integer({
+      description: 'Flows per LLM naming batch',
+      default: 10,
+    }),
     json: SharedFlags.json,
   };
 
@@ -282,6 +290,8 @@ export default class Flows extends Command {
 
       // Step 3: LLM naming pass (if not skipped)
       let annotations: ParsedFlowAnnotation[] = [];
+      const maxIterations = flags['max-iterations'];
+      const batchSize = flags['batch-size'];
 
       if (!skipLlm) {
         if (!isJson) {
@@ -289,26 +299,37 @@ export default class Flows extends Command {
         }
 
         const systemPrompt = buildFlowSystemPrompt();
-        const userPrompt = buildFlowUserPrompt(candidates);
 
-        try {
-          const response = await LLMist.complete(userPrompt, {
-            model: flags.model,
-            systemPrompt,
-            temperature: 0,
-          });
+        // Process in batches
+        let iteration = 0;
+        for (let i = 0; i < candidates.length && iteration < maxIterations; i += batchSize) {
+          iteration++;
+          const batch = candidates.slice(i, i + batchSize);
+          const userPrompt = buildFlowUserPrompt(batch);
 
-          annotations = parseFlowAnnotations(response);
+          try {
+            const response = await LLMist.complete(userPrompt, {
+              model: flags.model,
+              systemPrompt,
+              temperature: 0,
+            });
 
-          if (!isJson && annotations.length > 0) {
-            this.log(chalk.gray(`  Named ${annotations.length} flows`));
+            const batchAnnotations = parseFlowAnnotations(response);
+            annotations.push(...batchAnnotations);
+
+            if (!isJson && batchAnnotations.length > 0) {
+              this.log(chalk.gray(`  Batch ${iteration}: Named ${batchAnnotations.length} flows`));
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!isJson) {
+              this.log(chalk.yellow(`  Batch ${iteration} failed: ${message}`));
+            }
           }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (!isJson) {
-            this.log(chalk.yellow(`  LLM naming failed: ${message}`));
-            this.log(chalk.gray('  Using auto-generated names'));
-          }
+        }
+
+        if (!isJson && annotations.length > 0) {
+          this.log(chalk.gray(`  Total: ${annotations.length} flows named`));
         }
       }
 

@@ -1676,4 +1676,650 @@ describe('IndexDatabase', () => {
       expect(implsB[0].name).toBe('ComplexClass');
     });
   });
+
+  describe('findCycles', () => {
+    it('returns empty array when no cycles exist', () => {
+      const fileId = db.insertFile({
+        path: '/project/nocycles.ts',
+        language: 'typescript',
+        contentHash: computeHash('nocycles'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      // Create a linear chain: A -> B -> C (no cycle)
+      const defA = db.insertDefinition(fileId, {
+        name: 'funcA',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const defB = db.insertDefinition(fileId, {
+        name: 'funcB',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 11, column: 1 },
+      });
+
+      const defC = db.insertDefinition(fileId, {
+        name: 'funcC',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 12, column: 0 },
+        endPosition: { row: 17, column: 1 },
+      });
+
+      // Create symbols for internal references
+      const symB = db.insertSymbol(null, defB, {
+        name: 'funcB',
+        localName: 'funcB',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      const symC = db.insertSymbol(null, defC, {
+        name: 'funcC',
+        localName: 'funcC',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      // A calls B
+      db.insertUsage(symB, {
+        position: { row: 2, column: 10 },
+        context: 'call_expression',
+      });
+
+      // B calls C
+      db.insertUsage(symC, {
+        position: { row: 8, column: 10 },
+        context: 'call_expression',
+      });
+
+      const cycles = db.findCycles('purpose');
+      expect(cycles).toEqual([]);
+    });
+
+    it('detects simple A↔B cycle', () => {
+      const fileId = db.insertFile({
+        path: '/project/cycle.ts',
+        language: 'typescript',
+        contentHash: computeHash('cycle'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defA = db.insertDefinition(fileId, {
+        name: 'funcA',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const defB = db.insertDefinition(fileId, {
+        name: 'funcB',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 11, column: 1 },
+      });
+
+      // Create symbols
+      const symA = db.insertSymbol(null, defA, {
+        name: 'funcA',
+        localName: 'funcA',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      const symB = db.insertSymbol(null, defB, {
+        name: 'funcB',
+        localName: 'funcB',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      // A calls B
+      db.insertUsage(symB, {
+        position: { row: 2, column: 10 },
+        context: 'call_expression',
+      });
+
+      // B calls A (creating cycle)
+      db.insertUsage(symA, {
+        position: { row: 8, column: 10 },
+        context: 'call_expression',
+      });
+
+      const cycles = db.findCycles('purpose');
+      expect(cycles).toHaveLength(1);
+      expect(cycles[0]).toHaveLength(2);
+      expect(cycles[0].sort()).toEqual([defA, defB].sort());
+    });
+
+    it('detects larger cycle A→B→C→A', () => {
+      const fileId = db.insertFile({
+        path: '/project/largecycle.ts',
+        language: 'typescript',
+        contentHash: computeHash('largecycle'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defA = db.insertDefinition(fileId, {
+        name: 'funcA',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const defB = db.insertDefinition(fileId, {
+        name: 'funcB',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 11, column: 1 },
+      });
+
+      const defC = db.insertDefinition(fileId, {
+        name: 'funcC',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 12, column: 0 },
+        endPosition: { row: 17, column: 1 },
+      });
+
+      // Create symbols
+      const symA = db.insertSymbol(null, defA, {
+        name: 'funcA',
+        localName: 'funcA',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      const symB = db.insertSymbol(null, defB, {
+        name: 'funcB',
+        localName: 'funcB',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      const symC = db.insertSymbol(null, defC, {
+        name: 'funcC',
+        localName: 'funcC',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      // A calls B
+      db.insertUsage(symB, {
+        position: { row: 2, column: 10 },
+        context: 'call_expression',
+      });
+
+      // B calls C
+      db.insertUsage(symC, {
+        position: { row: 8, column: 10 },
+        context: 'call_expression',
+      });
+
+      // C calls A (completing the cycle)
+      db.insertUsage(symA, {
+        position: { row: 14, column: 10 },
+        context: 'call_expression',
+      });
+
+      const cycles = db.findCycles('purpose');
+      expect(cycles).toHaveLength(1);
+      expect(cycles[0]).toHaveLength(3);
+      expect(cycles[0].sort()).toEqual([defA, defB, defC].sort());
+    });
+
+    it('only includes unannotated symbols in cycles', () => {
+      const fileId = db.insertFile({
+        path: '/project/partial.ts',
+        language: 'typescript',
+        contentHash: computeHash('partial'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defA = db.insertDefinition(fileId, {
+        name: 'funcA',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const defB = db.insertDefinition(fileId, {
+        name: 'funcB',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 11, column: 1 },
+      });
+
+      // Create symbols
+      const symA = db.insertSymbol(null, defA, {
+        name: 'funcA',
+        localName: 'funcA',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      const symB = db.insertSymbol(null, defB, {
+        name: 'funcB',
+        localName: 'funcB',
+        kind: 'named',
+        usages: [],
+      }, fileId);
+
+      // A calls B, B calls A (creating cycle)
+      db.insertUsage(symB, { position: { row: 2, column: 10 }, context: 'call_expression' });
+      db.insertUsage(symA, { position: { row: 8, column: 10 }, context: 'call_expression' });
+
+      // Annotate one symbol
+      db.setDefinitionMetadata(defA, 'purpose', 'Test purpose');
+
+      // Now only defB is unannotated, so no cycle should be detected
+      const cycles = db.findCycles('purpose');
+      expect(cycles).toEqual([]);
+    });
+
+    it('excludes singleton SCCs (no cycle)', () => {
+      const fileId = db.insertFile({
+        path: '/project/singleton.ts',
+        language: 'typescript',
+        contentHash: computeHash('singleton'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      // Create isolated symbols with no dependencies
+      db.insertDefinition(fileId, {
+        name: 'isolated1',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      db.insertDefinition(fileId, {
+        name: 'isolated2',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 11, column: 1 },
+      });
+
+      // No usages = no dependencies = singletons only
+      const cycles = db.findCycles('purpose');
+      expect(cycles).toEqual([]);
+    });
+
+    it('returns empty array when all symbols are annotated', () => {
+      const fileId = db.insertFile({
+        path: '/project/annotated.ts',
+        language: 'typescript',
+        contentHash: computeHash('annotated'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defA = db.insertDefinition(fileId, {
+        name: 'funcA',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const defB = db.insertDefinition(fileId, {
+        name: 'funcB',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 11, column: 1 },
+      });
+
+      // Annotate both symbols
+      db.setDefinitionMetadata(defA, 'purpose', 'Purpose A');
+      db.setDefinitionMetadata(defB, 'purpose', 'Purpose B');
+
+      const cycles = db.findCycles('purpose');
+      expect(cycles).toEqual([]);
+    });
+  });
+
+  describe('getUnassignedDefinitions', () => {
+    it('returns all definitions when no modules exist', () => {
+      const fileId = db.insertFile({
+        path: '/project/types.ts',
+        language: 'typescript',
+        contentHash: computeHash('types'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      db.insertDefinition(fileId, {
+        name: 'User',
+        kind: 'interface',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      db.insertDefinition(fileId, {
+        name: 'createUser',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+
+      const unassigned = db.getUnassignedDefinitions();
+      expect(unassigned).toHaveLength(2);
+    });
+
+    it('filters by kind when specified', () => {
+      const fileId = db.insertFile({
+        path: '/project/mixed.ts',
+        language: 'typescript',
+        contentHash: computeHash('mixed'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      db.insertDefinition(fileId, {
+        name: 'User',
+        kind: 'interface',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      db.insertDefinition(fileId, {
+        name: 'UserType',
+        kind: 'type',
+        isExported: true,
+        isDefault: false,
+        position: { row: 6, column: 0 },
+        endPosition: { row: 6, column: 30 },
+      });
+
+      db.insertDefinition(fileId, {
+        name: 'createUser',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 7, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+
+      const types = db.getUnassignedDefinitions(['interface', 'type']);
+      expect(types).toHaveLength(2);
+      expect(types.map(t => t.name).sort()).toEqual(['User', 'UserType']);
+    });
+
+    it('excludes assigned definitions', () => {
+      const fileId = db.insertFile({
+        path: '/project/service.ts',
+        language: 'typescript',
+        contentHash: computeHash('service'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const def1 = db.insertDefinition(fileId, {
+        name: 'UserService',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 20, column: 1 },
+      });
+
+      const def2 = db.insertDefinition(fileId, {
+        name: 'User',
+        kind: 'interface',
+        isExported: true,
+        isDefault: false,
+        position: { row: 21, column: 0 },
+        endPosition: { row: 25, column: 1 },
+      });
+
+      // Assign def1 to a module
+      const moduleId = db.insertModule('UserModule');
+      db.addModuleMember(moduleId, def1);
+
+      const unassigned = db.getUnassignedDefinitions();
+      expect(unassigned).toHaveLength(1);
+      expect(unassigned[0].name).toBe('User');
+    });
+  });
+
+  describe('getIncomingEdgesFor', () => {
+    it('returns callers of a definition', () => {
+      // Setup: Create files and definitions
+      const serviceFile = db.insertFile({
+        path: '/project/service.ts',
+        language: 'typescript',
+        contentHash: computeHash('service'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const controllerFile = db.insertFile({
+        path: '/project/controller.ts',
+        language: 'typescript',
+        contentHash: computeHash('controller'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      // Create the callee definition
+      const serviceFunc = db.insertDefinition(serviceFile, {
+        name: 'findUser',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      // Create the caller definition
+      const controllerFunc = db.insertDefinition(controllerFile, {
+        name: 'getUser',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+
+      // Create import and symbol in controller to reference service
+      const refId = db.insertReference(controllerFile, serviceFile, {
+        type: 'import',
+        source: './service',
+        isExternal: false,
+        isTypeOnly: false,
+        imports: [],
+        position: { row: 0, column: 0 },
+      });
+
+      const symbolId = db.insertSymbol(refId, serviceFunc, {
+        name: 'findUser',
+        localName: 'findUser',
+        kind: 'named',
+        usages: [],
+      });
+
+      // Create a call usage inside the caller's span
+      db.insertUsage(symbolId, {
+        position: { row: 5, column: 10 },  // Within getUser's span (0-10)
+        context: 'call_expression',
+        callsite: {
+          argumentCount: 1,
+          isMethodCall: false,
+          isConstructorCall: false,
+        },
+      });
+
+      const incomingEdges = db.getIncomingEdgesFor(serviceFunc);
+      expect(incomingEdges).toHaveLength(1);
+      expect(incomingEdges[0].callerId).toBe(controllerFunc);
+      expect(incomingEdges[0].callerName).toBe('getUser');
+      expect(incomingEdges[0].weight).toBe(1);
+    });
+
+    it('returns empty array for definitions with no callers', () => {
+      const fileId = db.insertFile({
+        path: '/project/isolated.ts',
+        language: 'typescript',
+        contentHash: computeHash('isolated'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const defId = db.insertDefinition(fileId, {
+        name: 'isolated',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const incomingEdges = db.getIncomingEdgesFor(defId);
+      expect(incomingEdges).toEqual([]);
+    });
+  });
+
+  describe('getRootDefinitions', () => {
+    it('returns exported definitions not called by anything', () => {
+      const fileId = db.insertFile({
+        path: '/project/entry.ts',
+        language: 'typescript',
+        contentHash: computeHash('entry'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      db.insertDefinition(fileId, {
+        name: 'main',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+
+      db.insertDefinition(fileId, {
+        name: 'internal',
+        kind: 'function',
+        isExported: false,  // Not exported
+        isDefault: false,
+        position: { row: 11, column: 0 },
+        endPosition: { row: 15, column: 1 },
+      });
+
+      const roots = db.getRootDefinitions();
+      expect(roots).toHaveLength(1);
+      expect(roots[0].name).toBe('main');
+    });
+
+    it('excludes definitions that are called by others', () => {
+      // Create two files
+      const utilsFile = db.insertFile({
+        path: '/project/utils.ts',
+        language: 'typescript',
+        contentHash: computeHash('utils'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const mainFile = db.insertFile({
+        path: '/project/main.ts',
+        language: 'typescript',
+        contentHash: computeHash('main'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      // Helper function - will be called
+      const helperDef = db.insertDefinition(utilsFile, {
+        name: 'helper',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      // Main function - entry point, not called by anything
+      const mainDef = db.insertDefinition(mainFile, {
+        name: 'main',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+
+      // main calls helper via import
+      const refId = db.insertReference(mainFile, utilsFile, {
+        type: 'import',
+        source: './utils',
+        isExternal: false,
+        isTypeOnly: false,
+        imports: [],
+        position: { row: 0, column: 0 },
+      });
+
+      const symbolId = db.insertSymbol(refId, helperDef, {
+        name: 'helper',
+        localName: 'helper',
+        kind: 'named',
+        usages: [],
+      });
+
+      db.insertUsage(symbolId, {
+        position: { row: 5, column: 4 },  // Within main's span
+        context: 'call_expression',
+        callsite: {
+          argumentCount: 0,
+          isMethodCall: false,
+          isConstructorCall: false,
+        },
+      });
+
+      const roots = db.getRootDefinitions();
+      // Only main should be a root; helper is called
+      expect(roots.map(r => r.name)).toContain('main');
+      expect(roots.map(r => r.name)).not.toContain('helper');
+    });
+  });
 });

@@ -85,6 +85,14 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
         } else {
           notFound(res, 'Flow not found');
         }
+      } else if (path.match(/^\/api\/flows\/(\d+)\/dag$/)) {
+        const id = parseInt(path.split('/')[3]);
+        const dag = db.getFlowDAG(id);
+        if (dag) {
+          jsonResponse(res, dag);
+        } else {
+          notFound(res, 'Flow not found');
+        }
       } else {
         notFound(res, 'Not found');
       }
@@ -929,6 +937,100 @@ function getEmbeddedHTML(): string {
       color: #8cc4d4;
       border-radius: 3px;
     }
+
+    /* Flow DAG Styles */
+    .card-dag-container {
+      margin-top: 16px;
+      border-top: 1px solid #3c3c3c;
+      padding-top: 12px;
+      display: none;
+    }
+
+    .card.expanded .card-dag-container {
+      display: block;
+    }
+
+    .card-dag-container h4 {
+      font-size: 11px;
+      color: #858585;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .card-dag-svg-container {
+      position: relative;
+      width: 100%;
+      height: 280px;
+      background: #1e1e1e;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .card-dag-svg-container svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .card-dag-loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #858585;
+      font-size: 12px;
+    }
+
+    .dag-link {
+      fill: none;
+      stroke: #4a4a4a;
+      stroke-width: 2;
+      stroke-opacity: 0.8;
+    }
+
+    .dag-link:hover {
+      stroke: #6a6a6a;
+      stroke-width: 3;
+    }
+
+    .dag-node {
+      cursor: pointer;
+    }
+
+    .dag-node rect {
+      rx: 4;
+      ry: 4;
+      stroke-width: 2;
+      transition: stroke-width 0.2s;
+    }
+
+    .dag-node:hover rect {
+      stroke-width: 3;
+    }
+
+    .dag-node text {
+      font-size: 11px;
+      fill: #d4d4d4;
+      pointer-events: none;
+    }
+
+    .dag-node.entry-point rect {
+      stroke: #4fc1ff;
+      stroke-width: 3;
+    }
+
+    .dag-node.entry-point text.entry-badge {
+      fill: #4fc1ff;
+      font-size: 9px;
+      font-weight: 600;
+    }
+
+    /* Layer colors for DAG nodes */
+    .dag-node.layer-controller rect { fill: #3d5a80; stroke: #5a7a9a; }
+    .dag-node.layer-service rect { fill: #5a3d80; stroke: #7a5a9a; }
+    .dag-node.layer-repository rect { fill: #3d8050; stroke: #5a9a6a; }
+    .dag-node.layer-adapter rect { fill: #806a3d; stroke: #9a8a5a; }
+    .dag-node.layer-utility rect { fill: #4a6670; stroke: #6a8690; }
+    .dag-node.layer-default rect { fill: #4a4a4a; stroke: #6a6a6a; }
 
     /* Loading */
     .loading {
@@ -1913,7 +2015,12 @@ function getEmbeddedHTML(): string {
         return;
       }
 
-      // Sort flows by step count
+      renderFlowsCardsView();
+    }
+
+    // Render the cards view for flows
+    function renderFlowsCardsView() {
+      const container = document.getElementById('graph-container');
       const sortedFlows = [...flowsData.flows].sort((a, b) => b.stepCount - a.stepCount);
 
       container.innerHTML = \`
@@ -1967,19 +2074,245 @@ function getEmbeddedHTML(): string {
             <h4>Steps (\${flow.stepCount})</h4>
             <div class="member-list">\${stepsHtml}</div>
           </div>
+          <div class="card-dag-container" id="dag-container-\${flow.id}">
+            <h4>Flow Graph</h4>
+            <div class="card-dag-svg-container">
+              <svg id="dag-svg-\${flow.id}"></svg>
+              <div class="card-dag-loading" id="dag-loading-\${flow.id}">Loading graph...</div>
+            </div>
+          </div>
         \`;
 
-        card.addEventListener('click', () => {
+        card.addEventListener('click', async () => {
           // Toggle expanded state
           const wasExpanded = card.classList.contains('expanded');
           // Collapse all others
           document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
           if (!wasExpanded) {
             card.classList.add('expanded');
+            // Load and render DAG for this flow
+            await renderCardFlowDAG(flow.id);
           }
         });
 
         grid.appendChild(card);
+      }
+    }
+
+    // Render a flow DAG within its card container
+    async function renderCardFlowDAG(flowId) {
+      const container = document.getElementById(\`dag-container-\${flowId}\`);
+      const svgContainer = container?.querySelector('.card-dag-svg-container');
+      const loading = document.getElementById(\`dag-loading-\${flowId}\`);
+      const svg = d3.select(\`#dag-svg-\${flowId}\`);
+
+      if (!container || !svgContainer) return;
+
+      // Clear existing content
+      svg.selectAll('*').remove();
+      if (loading) loading.style.display = 'block';
+
+      try {
+        const dagData = await fetchJSON(\`/api/flows/\${flowId}/dag\`);
+        if (loading) loading.style.display = 'none';
+
+        if (!dagData || dagData.nodes.length === 0) {
+          svgContainer.innerHTML = '<div class="card-dag-loading">No steps in this flow</div>';
+          return;
+        }
+
+        const width = svgContainer.clientWidth || 600;
+        const height = svgContainer.clientHeight || 280;
+
+        // Create node lookup
+        const nodeById = new Map(dagData.nodes.map(n => [n.id, n]));
+
+        // Group nodes by stepOrder for horizontal layout
+        const nodesByStep = new Map();
+        for (const node of dagData.nodes) {
+          const step = node.stepOrder;
+          if (!nodesByStep.has(step)) {
+            nodesByStep.set(step, []);
+          }
+          nodesByStep.get(step).push(node);
+        }
+
+        // Calculate positions: x by stepOrder, y by position within step
+        const stepOrders = [...nodesByStep.keys()].sort((a, b) => a - b);
+        const nodeWidth = 120;
+        const nodeHeight = 32;
+        const horizontalGap = 150;
+        const verticalGap = 45;
+
+        const startX = 30;
+        const centerY = height / 2;
+
+        // Assign positions to nodes
+        const nodePositions = new Map();
+        for (const stepOrder of stepOrders) {
+          const nodesInStep = nodesByStep.get(stepOrder);
+          const stepIndex = stepOrders.indexOf(stepOrder);
+          const x = startX + stepIndex * horizontalGap;
+          const totalHeight = nodesInStep.length * (nodeHeight + verticalGap) - verticalGap;
+          const startY = centerY - totalHeight / 2;
+
+          nodesInStep.forEach((node, idx) => {
+            nodePositions.set(node.id, {
+              x: x,
+              y: startY + idx * (nodeHeight + verticalGap),
+              node: node
+            });
+          });
+        }
+
+        // Define arrow marker with unique ID per flow
+        svg.append('defs').append('marker')
+          .attr('id', \`dag-arrowhead-\${flowId}\`)
+          .attr('viewBox', '-0 -5 10 10')
+          .attr('refX', 8)
+          .attr('refY', 0)
+          .attr('orient', 'auto')
+          .attr('markerWidth', 6)
+          .attr('markerHeight', 6)
+          .append('path')
+          .attr('d', 'M 0,-3 L 6,0 L 0,3')
+          .attr('fill', '#6a6a6a');
+
+        // Create main group with zoom
+        const g = svg.append('g');
+
+        // Set up zoom behavior
+        const zoom = d3.zoom()
+          .scaleExtent([0.3, 2])
+          .on('zoom', (event) => {
+            g.attr('transform', event.transform);
+          });
+
+        svg.call(zoom);
+
+        // Draw edges using curved links
+        const linkGenerator = d3.linkHorizontal()
+          .x(d => d.x)
+          .y(d => d.y);
+
+        const validEdges = dagData.edges.filter(e =>
+          nodePositions.has(e.source) && nodePositions.has(e.target)
+        );
+
+        g.selectAll('.dag-link')
+          .data(validEdges)
+          .enter()
+          .append('path')
+          .attr('class', 'dag-link')
+          .attr('d', d => {
+            const source = nodePositions.get(d.source);
+            const target = nodePositions.get(d.target);
+            return linkGenerator({
+              source: { x: source.x + nodeWidth, y: source.y + nodeHeight / 2 },
+              target: { x: target.x, y: target.y + nodeHeight / 2 }
+            });
+          })
+          .attr('marker-end', \`url(#dag-arrowhead-\${flowId})\`);
+
+        // Draw nodes
+        const node = g.selectAll('.dag-node')
+          .data(dagData.nodes)
+          .enter()
+          .append('g')
+          .attr('class', d => {
+            const layer = d.layer || 'default';
+            const isEntry = d.isEntryPoint ? ' entry-point' : '';
+            return \`dag-node layer-\${layer}\${isEntry}\`;
+          })
+          .attr('transform', d => {
+            const pos = nodePositions.get(d.id);
+            return \`translate(\${pos.x}, \${pos.y})\`;
+          });
+
+        // Node rectangles
+        node.append('rect')
+          .attr('width', nodeWidth)
+          .attr('height', nodeHeight);
+
+        // Node text (name)
+        node.append('text')
+          .attr('x', nodeWidth / 2)
+          .attr('y', nodeHeight / 2 + 3)
+          .attr('text-anchor', 'middle')
+          .style('font-size', '10px')
+          .text(d => {
+            const name = d.name;
+            return name.length > 14 ? name.substring(0, 12) + '...' : name;
+          });
+
+        // Entry point badge
+        node.filter(d => d.isEntryPoint)
+          .append('text')
+          .attr('class', 'entry-badge')
+          .attr('x', nodeWidth / 2)
+          .attr('y', -4)
+          .attr('text-anchor', 'middle')
+          .style('font-size', '8px')
+          .text('ENTRY');
+
+        // Tooltip
+        const tooltip = d3.select('#tooltip');
+
+        node.on('mouseover', (event, d) => {
+          event.stopPropagation();
+          const layerHtml = d.layer ? \`<span class="card-badge layer-\${d.layer}">\${d.layer}</span>\` : '';
+          const moduleHtml = d.moduleName ? \`<div class="module-tag" style="margin-top: 4px;">\${d.moduleName}</div>\` : '';
+
+          tooltip.style('display', 'block')
+            .html(\`
+              <div class="name">\${d.name}</div>
+              <span class="kind kind-\${d.kind}">\${d.kind}</span>
+              \${layerHtml}
+              \${moduleHtml}
+              <div class="location">\${d.filePath.split('/').slice(-2).join('/')}</div>
+            \`);
+        })
+        .on('mousemove', (event) => {
+          event.stopPropagation();
+          tooltip.style('left', (event.pageX + 10) + 'px')
+            .style('top', (event.pageY - 10) + 'px');
+        })
+        .on('mouseout', (event) => {
+          event.stopPropagation();
+          tooltip.style('display', 'none');
+        });
+
+        // Prevent clicks on DAG from closing the card
+        svgContainer.addEventListener('click', (e) => e.stopPropagation());
+
+        // Calculate bounds and center view
+        const allX = [...nodePositions.values()].map(p => p.x);
+        const allY = [...nodePositions.values()].map(p => p.y);
+        const minX = Math.min(...allX);
+        const maxX = Math.max(...allX) + nodeWidth;
+        const minY = Math.min(...allY);
+        const maxY = Math.max(...allY) + nodeHeight;
+
+        const contentWidth = maxX - minX;
+        const contentHeight = maxY - minY;
+
+        // Fit to view with some padding
+        const scale = Math.min(
+          (width - 60) / contentWidth,
+          (height - 40) / contentHeight,
+          1.2
+        );
+        const translateX = (width - contentWidth * scale) / 2 - minX * scale;
+        const translateY = (height - contentHeight * scale) / 2 - minY * scale;
+
+        svg.call(zoom.transform, d3.zoomIdentity
+          .translate(translateX, translateY)
+          .scale(scale));
+
+      } catch (error) {
+        console.error('Failed to load flow DAG:', error);
+        if (loading) loading.style.display = 'none';
+        svgContainer.innerHTML = '<div class="card-dag-loading">Failed to load graph</div>';
       }
     }
 

@@ -141,6 +141,119 @@ describe('Flow Detection', () => {
     });
   });
 
+  describe('getCallGraph', () => {
+    it('returns empty array when no calls exist', () => {
+      const fileId = createFile('/project/controller.ts');
+      createDefinition(fileId, 'SimpleFunction', 'function', 0, 10);
+
+      const edges = db.getCallGraph();
+      expect(edges).toEqual([]);
+    });
+
+    it('returns edges with weight and minUsageLine', () => {
+      const callerFile = createFile('/project/caller.ts');
+      const calleeFile = createFile('/project/callee.ts');
+
+      const callerDef = createDefinition(callerFile, 'caller', 'function', 5, 20);
+      const calleeDef = createDefinition(calleeFile, 'callee', 'function', 0, 10);
+
+      // Row 10 becomes line 11 (1-indexed)
+      createCallRelationship(callerFile, calleeFile, callerDef, calleeDef, 'callee', 10);
+
+      const edges = db.getCallGraph();
+      expect(edges).toHaveLength(1);
+      expect(edges[0]).toEqual({
+        fromId: callerDef,
+        toId: calleeDef,
+        weight: 1,
+        minUsageLine: 11, // row 10 + 1 = line 11
+      });
+    });
+
+    it('captures minimum usage line when multiple calls exist', () => {
+      const callerFile = createFile('/project/caller.ts');
+      const calleeFile = createFile('/project/callee.ts');
+
+      const callerDef = createDefinition(callerFile, 'caller', 'function', 5, 30);
+      const calleeDef = createDefinition(calleeFile, 'callee', 'function', 0, 10);
+
+      // First call at line 10
+      const refId1 = db.insertReference(callerFile, calleeFile, {
+        type: 'import',
+        source: './callee',
+        isExternal: false,
+        isTypeOnly: false,
+        imports: [],
+        position: { row: 0, column: 0 },
+      });
+      const symbolId1 = db.insertSymbol(refId1, calleeDef, {
+        name: 'callee',
+        localName: 'callee',
+        kind: 'named',
+        usages: [],
+      });
+      db.insertUsage(symbolId1, {
+        position: { row: 10, column: 5 },
+        context: 'call_expression',
+      });
+
+      // Second call at line 20 (later)
+      db.insertUsage(symbolId1, {
+        position: { row: 20, column: 5 },
+        context: 'call_expression',
+      });
+
+      const edges = db.getCallGraph();
+      expect(edges).toHaveLength(1);
+      expect(edges[0].weight).toBe(2);
+      expect(edges[0].minUsageLine).toBe(11); // row 10 + 1 = line 11 (minimum)
+    });
+
+    it('aggregates edges from both internal and imported symbols', () => {
+      const file = createFile('/project/file.ts');
+
+      const callerDef = createDefinition(file, 'caller', 'function', 5, 30);
+      const calleeDef = createDefinition(file, 'callee', 'function', 35, 45);
+
+      // Internal call (same file) at line 15
+      const internalSymbolId = db.insertSymbol(null, calleeDef, {
+        name: 'callee',
+        localName: 'callee',
+        kind: 'named',
+        usages: [],
+      }, file);
+      db.insertUsage(internalSymbolId, {
+        position: { row: 15, column: 5 },
+        context: 'call_expression',
+      });
+
+      // Imported call at line 10 (earlier)
+      const refId = db.insertReference(file, file, {
+        type: 'import',
+        source: './self',
+        isExternal: false,
+        isTypeOnly: false,
+        imports: [],
+        position: { row: 0, column: 0 },
+      });
+      const importedSymbolId = db.insertSymbol(refId, calleeDef, {
+        name: 'callee',
+        localName: 'callee',
+        kind: 'named',
+        usages: [],
+      });
+      db.insertUsage(importedSymbolId, {
+        position: { row: 10, column: 5 },
+        context: 'call_expression',
+      });
+
+      const edges = db.getCallGraph();
+      expect(edges).toHaveLength(1);
+      expect(edges[0].weight).toBe(2); // Aggregated from both
+      expect(edges[0].minUsageLine).toBe(11); // row 10 + 1 = line 11 (minimum from both)
+    });
+  });
+
   describe('traceFlowFromEntry', () => {
     it('returns only entry point when no calls exist', () => {
       const fileId = createFile('/project/controller.ts');
@@ -248,6 +361,82 @@ describe('Flow Detection', () => {
       expect(trace).toHaveLength(1);
       expect(trace[0].moduleId).toBe(moduleId);
       expect(trace[0].layer).toBe('controller');
+    });
+
+    it('sorts steps at same depth by usage line order', () => {
+      const callerFile = createFile('/project/caller.ts');
+      const calleeFileA = createFile('/project/calleeA.ts');
+      const calleeFileB = createFile('/project/calleeB.ts');
+      const calleeFileC = createFile('/project/calleeC.ts');
+
+      // Caller function spans lines 5-50
+      const callerDef = createDefinition(callerFile, 'caller', 'function', 5, 50);
+      // Three callees
+      const calleeDefA = createDefinition(calleeFileA, 'calleeA', 'function', 0, 10);
+      const calleeDefB = createDefinition(calleeFileB, 'calleeB', 'function', 0, 10);
+      const calleeDefC = createDefinition(calleeFileC, 'calleeC', 'function', 0, 10);
+
+      // Create calls in source order: B at line 10, C at line 20, A at line 30
+      // (intentionally not alphabetical to verify sorting)
+      createCallRelationship(callerFile, calleeFileB, callerDef, calleeDefB, 'calleeB', 10);
+      createCallRelationship(callerFile, calleeFileC, callerDef, calleeDefC, 'calleeC', 20);
+      createCallRelationship(callerFile, calleeFileA, callerDef, calleeDefA, 'calleeA', 30);
+
+      const trace = db.traceFlowFromEntry(callerDef);
+
+      // Should have 4 items: caller + 3 callees
+      expect(trace).toHaveLength(4);
+
+      // First should be caller at depth 0
+      expect(trace[0].definitionId).toBe(callerDef);
+      expect(trace[0].depth).toBe(0);
+
+      // Remaining should be callees at depth 1, sorted by usage line
+      const depth1Items = trace.filter(t => t.depth === 1);
+      expect(depth1Items).toHaveLength(3);
+
+      // Order should be: B (line 10), C (line 20), A (line 30)
+      expect(depth1Items[0].definitionId).toBe(calleeDefB);
+      expect(depth1Items[1].definitionId).toBe(calleeDefC);
+      expect(depth1Items[2].definitionId).toBe(calleeDefA);
+    });
+
+    it('sorts by depth first, then by usage line within same depth', () => {
+      const file1 = createFile('/project/a.ts');
+      const file2 = createFile('/project/b.ts');
+      const file3 = createFile('/project/c.ts');
+      const file4 = createFile('/project/d.ts');
+
+      // Entry point
+      const entryDef = createDefinition(file1, 'entry', 'function', 5, 50);
+      // Depth 1 callees (called at different lines)
+      const dep1Early = createDefinition(file2, 'dep1Early', 'function', 0, 10);
+      const dep1Late = createDefinition(file3, 'dep1Late', 'function', 0, 10);
+      // Depth 2 callee
+      const dep2 = createDefinition(file4, 'dep2', 'function', 0, 10);
+
+      // entry calls dep1Late at line 30, dep1Early at line 10
+      createCallRelationship(file1, file3, entryDef, dep1Late, 'dep1Late', 30);
+      createCallRelationship(file1, file2, entryDef, dep1Early, 'dep1Early', 10);
+      // dep1Early calls dep2 (this should appear after both depth-1 items)
+      createCallRelationship(file2, file4, dep1Early, dep2, 'dep2', 5);
+
+      const trace = db.traceFlowFromEntry(entryDef);
+
+      expect(trace).toHaveLength(4);
+
+      // Order should be: entry (depth 0), dep1Early (depth 1, line 10), dep1Late (depth 1, line 30), dep2 (depth 2)
+      expect(trace[0].definitionId).toBe(entryDef);
+      expect(trace[0].depth).toBe(0);
+
+      expect(trace[1].definitionId).toBe(dep1Early);
+      expect(trace[1].depth).toBe(1);
+
+      expect(trace[2].definitionId).toBe(dep1Late);
+      expect(trace[2].depth).toBe(1);
+
+      expect(trace[3].definitionId).toBe(dep2);
+      expect(trace[3].depth).toBe(2);
     });
   });
 

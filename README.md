@@ -13,6 +13,16 @@ pnpm run build
 
 ## Quick Start
 
+**Full automated pipeline:**
+```bash
+# Index, annotate, detect modules and flows in one go
+ats parse ./src -o index.db && \
+ats llm annotate -a purpose -a domain -a role && \
+ats llm modules && \
+ats llm flows
+```
+
+**Manual workflow:**
 ```bash
 # 1. Index your codebase
 ats parse ./src
@@ -364,6 +374,54 @@ ats relationships set "persists user data to PostgreSQL" --from-id 42 --to-id 15
 ```bash
 ats relationships unset --from <source> --to <target>
 ```
+
+---
+
+### `ats llm annotate` - Bulk Annotate Symbols with LLM
+
+Uses an LLM to automatically annotate symbols with metadata like purpose, domain, and role. Processes symbols in batches, respecting the dependency order (leaves first).
+
+```bash
+ats llm annotate -a <aspect> [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-a, --aspect` | **(required)** Metadata key to annotate (can repeat: `-a purpose -a domain`) |
+| `-d, --database` | Path to database (default: `index.db`) |
+| `-m, --model` | LLM model alias (default: `sonnet`) |
+| `-b, --batch-size` | Symbols per LLM call (default: 5) |
+| `--max-iterations` | Maximum iterations, 0 = unlimited (default: 0) |
+| `-k, --kind` | Filter by symbol kind |
+| `-f, --file` | Filter by file path pattern |
+| `-x, --exclude` | Glob pattern to exclude (e.g., `**/*.test.ts`) |
+| `--force` | Annotate even if dependencies aren't annotated |
+| `--dry-run` | Parse LLM output but don't persist |
+| `--json` | Output as JSON |
+
+**Examples:**
+```bash
+# Annotate all symbols with purpose
+ats llm annotate --aspect purpose
+
+# Annotate multiple aspects at once
+ats llm annotate --aspect purpose --aspect domain --aspect role
+
+# Use a different model with larger batches
+ats llm annotate --aspect purpose --model gpt4o --batch-size 10
+
+# Only annotate functions, exclude tests
+ats llm annotate --aspect purpose --kind function --exclude "**/*.test.ts"
+
+# Preview without saving
+ats llm annotate --aspect purpose --dry-run
+
+# Limit iterations for incremental annotation
+ats llm annotate --aspect purpose --max-iterations 5
+```
+
+**Workflow:**
+The command processes symbols bottom-up (dependencies first), so annotations build on already-understood code. Use `--force` to skip dependency checking.
 
 ---
 
@@ -755,6 +813,16 @@ ats symbols understood
 
 The tool enforces a bottom-up approach: you can only annotate a symbol once all its dependencies are annotated. This ensures you build understanding from foundational code upward.
 
+**Option A: Automatic LLM annotation**
+```bash
+# Annotate all symbols with LLM (recommended for initial pass)
+ats llm annotate --aspect purpose --aspect domain --aspect role
+
+# Check coverage
+ats symbols understood
+```
+
+**Option B: Manual annotation**
 ```bash
 # Find symbols ready to annotate (leaves first)
 ats symbols ready --aspect purpose
