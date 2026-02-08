@@ -357,10 +357,19 @@ function getInteractionsData(database: IndexDatabase): {
     utilityCount: number;
     biDirectionalCount: number;
   };
+  relationshipCoverage: {
+    totalRelationships: number;
+    crossModuleRelationships: number;
+    relationshipsContributingToInteractions: number;
+    sameModuleCount: number;
+    orphanedCount: number;
+    coveragePercent: number;
+  };
 } {
   try {
     const interactions = database.getAllInteractions();
     const stats = database.getInteractionStats();
+    const relationshipCoverage = database.getRelationshipCoverage();
 
     return {
       interactions: interactions.map(i => ({
@@ -376,6 +385,7 @@ function getInteractionsData(database: IndexDatabase): {
         semantic: i.semantic,
       })),
       stats,
+      relationshipCoverage,
     };
   } catch {
     return {
@@ -385,6 +395,14 @@ function getInteractionsData(database: IndexDatabase): {
         businessCount: 0,
         utilityCount: 0,
         biDirectionalCount: 0,
+      },
+      relationshipCoverage: {
+        totalRelationships: 0,
+        crossModuleRelationships: 0,
+        relationshipsContributingToInteractions: 0,
+        sameModuleCount: 0,
+        orphanedCount: 0,
+        coveragePercent: 0,
       },
     };
   }
@@ -2782,10 +2800,17 @@ function getEmbeddedHTML(): string {
         simulation = null;
       }
 
-      // Fetch flows DAG data
+      // Fetch flows DAG data and coverage data
       if (!flowsDagData) {
         try {
-          flowsDagData = await fetchJSON('/api/flows/dag');
+          const [dagData, coverageData, interactionsData] = await Promise.all([
+            fetchJSON('/api/flows/dag'),
+            fetchJSON('/api/flows/coverage'),
+            fetchJSON('/api/interactions')
+          ]);
+          flowsDagData = dagData;
+          flowsDagData.coverage = coverageData;
+          flowsDagData.relationshipCoverage = interactionsData.relationshipCoverage;
         } catch (error) {
           console.error('Failed to load flows DAG:', error);
           container.innerHTML = '<div class="empty-state"><h2>Failed to load flows</h2></div>';
@@ -2794,10 +2819,11 @@ function getEmbeddedHTML(): string {
       }
 
       // Update stats header
-      const totalSteps = flowsDagData.rootFlows.reduce((sum, f) => sum + f.stepCount, 0);
-      document.getElementById('stat-symbols').textContent = totalSteps + ' steps';
-      document.getElementById('stat-annotated').textContent = flowsDagData.rootFlows.length + ' flows';
-      document.getElementById('stat-relationships').textContent = flowsDagData.modules.length + ' modules';
+      const coverage = flowsDagData.coverage || { percentage: 0 };
+      const relCoverage = flowsDagData.relationshipCoverage || { coveragePercent: 0 };
+      document.getElementById('stat-symbols').textContent = flowsDagData.flows.length + ' flows';
+      document.getElementById('stat-annotated').textContent = coverage.percentage.toFixed(0) + '% interaction coverage';
+      document.getElementById('stat-relationships').textContent = relCoverage.coveragePercent.toFixed(0) + '% relationship coverage';
 
       if (flowsDagData.modules.length === 0) {
         container.innerHTML = \`
@@ -2818,7 +2844,7 @@ function getEmbeddedHTML(): string {
 
       // Group flows by domain
       const flowsByDomain = new Map();
-      for (const flow of flowsDagData.rootFlows) {
+      for (const flow of flowsDagData.flows) {
         const domain = flow.domain || 'Uncategorized';
         if (!flowsByDomain.has(domain)) {
           flowsByDomain.set(domain, []);
@@ -3162,11 +3188,11 @@ function getEmbeddedHTML(): string {
       }
 
       // Find the flow
-      const flow = flowsDagData.rootFlows.find(f => f.id === flowId);
+      const flow = flowsDagData.flows.find(f => f.id === flowId);
       if (!flow) return;
 
       // Build steps HTML
-      const stepsHtml = flow.leafFlows.map((leaf, idx) => {
+      const stepsHtml = (flow.steps || []).map((leaf, idx) => {
         const fromModule = modulePositions.get(leaf.fromModuleId)?.node;
         const toModule = modulePositions.get(leaf.toModuleId)?.node;
         const modulesText = fromModule && toModule
@@ -3177,7 +3203,7 @@ function getEmbeddedHTML(): string {
           <div class="step-item" data-step-idx="\${idx}" data-from-module="\${leaf.fromModuleId}" data-to-module="\${leaf.toModuleId}">
             <span class="step-number">\${idx + 1}</span>
             <div class="step-content">
-              <div class="step-name">\${leaf.name}</div>
+              <div class="step-name">\${leaf.semantic || modulesText || 'Step ' + (idx + 1)}</div>
               \${modulesText ? \`<div class="step-modules">\${modulesText}</div>\` : ''}
             </div>
           </div>
@@ -3282,7 +3308,7 @@ function getEmbeddedHTML(): string {
 
       // First pass: assign colors to flows (based on their order in sidebar)
       let idx = 0;
-      for (const flow of flowsDagData.rootFlows) {
+      for (const flow of flowsDagData.flows) {
         if (selectedFlows.has(flow.id)) {
           flowColorMap.set(flow.id, flowColors[idx % flowColors.length]);
         }
@@ -3290,14 +3316,14 @@ function getEmbeddedHTML(): string {
       }
 
       // Draw arrows for each selected flow
-      for (const flow of flowsDagData.rootFlows) {
+      for (const flow of flowsDagData.flows) {
         if (!selectedFlows.has(flow.id)) continue;
 
         const color = flowColorMap.get(flow.id);
         const colorIdx = flowColors.indexOf(color);
 
         // Draw each leaf flow as an arrow
-        flow.leafFlows.forEach((leaf, stepIdx) => {
+        (flow.steps || []).forEach((leaf, stepIdx) => {
           if (!leaf.fromModuleId || !leaf.toModuleId) return;
           if (!modulePositions.has(leaf.fromModuleId) || !modulePositions.has(leaf.toModuleId)) return;
 
@@ -3377,9 +3403,9 @@ function getEmbeddedHTML(): string {
       const activeModuleIds = new Set();
 
       if (selectedFlows.size > 0) {
-        flowsDagData.rootFlows.forEach(rootFlow => {
+        flowsDagData.flows.forEach(rootFlow => {
           if (selectedFlows.has(rootFlow.id)) {
-            rootFlow.leafFlows.forEach(leaf => {
+            (rootFlow.steps || []).forEach(leaf => {
               activeModuleIds.add(leaf.fromModuleId);
               activeModuleIds.add(leaf.toModuleId);
             });

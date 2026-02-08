@@ -159,7 +159,17 @@ export default class Interactions extends Command {
             }
           }
         }
+
+        // Create inheritance-based interactions (extends/implements)
+        // These don't generate call edges but ARE significant architectural dependencies
+        const inheritanceResult = db.syncInheritanceInteractions();
+        if (!isJson && verbose && inheritanceResult.created > 0) {
+          this.log(chalk.gray(`  Inheritance edges: ${inheritanceResult.created}`));
+        }
       }
+
+      // Get relationship coverage
+      const relCoverage = db.getRelationshipCoverage();
 
       // Output results
       const result = {
@@ -167,6 +177,7 @@ export default class Interactions extends Command {
         interactions: interactions.length,
         businessCount,
         utilityCount,
+        relationshipCoverage: relCoverage,
       };
 
       if (isJson) {
@@ -178,6 +189,17 @@ export default class Interactions extends Command {
         this.log(`Interactions created: ${result.interactions}`);
         this.log(`  Business: ${businessCount}`);
         this.log(`  Utility: ${utilityCount}`);
+
+        // Display relationship coverage
+        this.log('');
+        this.log(chalk.bold('Relationship → Interaction Coverage'));
+        this.log(`  Total relationships: ${relCoverage.totalRelationships}`);
+        this.log(`  Cross-module: ${relCoverage.crossModuleRelationships}`);
+        this.log(`  Same-module (internal cohesion): ${relCoverage.sameModuleCount}`);
+        this.log(`  Contributing to interactions: ${relCoverage.relationshipsContributingToInteractions}/${relCoverage.crossModuleRelationships} (${relCoverage.coveragePercent.toFixed(1)}%)`);
+        if (relCoverage.orphanedCount > 0) {
+          this.log(chalk.yellow(`  Orphaned (missing module): ${relCoverage.orphanedCount}`));
+        }
 
         if (dryRun) {
           this.log('');

@@ -6,6 +6,8 @@ import type {
   EnrichedModuleCallEdge,
   CalledSymbolInfo,
   CallGraphEdge,
+  RelationshipInteractionCoverage,
+  RelationshipCoverageBreakdown,
 } from '../schema.js';
 import { ensureInteractionsTables, ensureModulesTables } from '../schema-manager.js';
 
@@ -606,6 +608,192 @@ export class InteractionRepository {
     }
 
     return { created, updated };
+  }
+
+  /**
+   * Get relationship-to-interaction coverage statistics.
+   * Tracks how well symbol-level relationships are represented in module-level interactions.
+   * Same-module relationships are excluded from the coverage denominator since they
+   * represent internal module cohesion, not cross-module interactions.
+   */
+  getRelationshipCoverage(): RelationshipInteractionCoverage {
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+
+    // Count total relationship annotations
+    const totalStmt = this.db.prepare(
+      'SELECT COUNT(*) as count FROM relationship_annotations'
+    );
+    const totalRelationships = (totalStmt.get() as { count: number }).count;
+
+    // Count cross-module relationships (both symbols in different modules)
+    const crossModuleStmt = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM relationship_annotations ra
+      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
+      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
+      WHERE mm1.module_id != mm2.module_id
+    `);
+    const crossModuleRelationships = (crossModuleStmt.get() as { count: number }).count;
+
+    // Count same-module relationships
+    const sameModuleStmt = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM relationship_annotations ra
+      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
+      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
+      WHERE mm1.module_id = mm2.module_id
+    `);
+    const sameModuleCount = (sameModuleStmt.get() as { count: number }).count;
+
+    // Count relationships where both symbols have module assignments
+    const withModulesStmt = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM relationship_annotations ra
+      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
+      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
+    `);
+    const relationshipsWithModules = (withModulesStmt.get() as { count: number }).count;
+
+    // Count cross-module relationships that contribute to an interaction
+    const contributingStmt = this.db.prepare(`
+      SELECT COUNT(DISTINCT ra.id) as count
+      FROM relationship_annotations ra
+      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
+      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
+      JOIN interactions i ON i.from_module_id = mm1.module_id
+                         AND i.to_module_id = mm2.module_id
+      WHERE mm1.module_id != mm2.module_id
+    `);
+    const contributing = (contributingStmt.get() as { count: number }).count;
+
+    return {
+      totalRelationships,
+      crossModuleRelationships,
+      relationshipsContributingToInteractions: contributing,
+      sameModuleCount,
+      orphanedCount: totalRelationships - relationshipsWithModules,
+      // Coverage is now based on cross-module relationships only
+      coveragePercent: crossModuleRelationships > 0
+        ? (contributing / crossModuleRelationships) * 100
+        : 100,
+    };
+  }
+
+  /**
+   * Get detailed breakdown of relationship coverage for diagnostics.
+   * Categorizes each relationship into: covered, same-module, no-call-edge, or orphaned.
+   */
+  getRelationshipCoverageBreakdown(): RelationshipCoverageBreakdown {
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+
+    const stmt = this.db.prepare(`
+      SELECT
+        ra.relationship_type,
+        CASE
+          WHEN mm1.module_id IS NULL OR mm2.module_id IS NULL THEN 'orphaned'
+          WHEN mm1.module_id = mm2.module_id THEN 'same_module'
+          WHEN EXISTS (
+            SELECT 1 FROM interactions i
+            WHERE i.from_module_id = mm1.module_id
+              AND i.to_module_id = mm2.module_id
+          ) THEN 'covered'
+          ELSE 'no_call_edge'
+        END as reason,
+        COUNT(*) as count
+      FROM relationship_annotations ra
+      LEFT JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
+      LEFT JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
+      GROUP BY ra.relationship_type, reason
+    `);
+
+    const rows = stmt.all() as Array<{
+      relationship_type: string;
+      reason: string;
+      count: number;
+    }>;
+
+    // Aggregate results
+    const result: RelationshipCoverageBreakdown = {
+      covered: 0,
+      sameModule: 0,
+      noCallEdge: 0,
+      orphaned: 0,
+      byType: {
+        uses: 0,
+        extends: 0,
+        implements: 0,
+      },
+    };
+
+    for (const row of rows) {
+      // Aggregate by reason
+      switch (row.reason) {
+        case 'covered':
+          result.covered += row.count;
+          break;
+        case 'same_module':
+          result.sameModule += row.count;
+          break;
+        case 'no_call_edge':
+          result.noCallEdge += row.count;
+          break;
+        case 'orphaned':
+          result.orphaned += row.count;
+          break;
+      }
+
+      // Aggregate by type (only for non-orphaned relationships)
+      if (row.reason !== 'orphaned') {
+        switch (row.relationship_type) {
+          case 'uses':
+            result.byType.uses += row.count;
+            break;
+          case 'extends':
+            result.byType.extends += row.count;
+            break;
+          case 'implements':
+            result.byType.implements += row.count;
+            break;
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Create interaction edges for inheritance relationships (extends/implements).
+   * These relationships don't generate call edges in the call graph, but they ARE
+   * significant architectural dependencies between modules.
+   */
+  syncInheritanceInteractions(): { created: number } {
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+
+    const stmt = this.db.prepare(`
+      INSERT OR IGNORE INTO interactions (from_module_id, to_module_id, direction, weight, pattern)
+      SELECT DISTINCT
+        mm1.module_id,
+        mm2.module_id,
+        'uni',
+        1,
+        'inheritance'
+      FROM relationship_annotations ra
+      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
+      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
+      WHERE ra.relationship_type IN ('extends', 'implements')
+        AND mm1.module_id != mm2.module_id
+        AND NOT EXISTS (
+          SELECT 1 FROM interactions i
+          WHERE i.from_module_id = mm1.module_id
+            AND i.to_module_id = mm2.module_id
+        )
+    `);
+
+    const result = stmt.run();
+    return { created: result.changes };
   }
 
   // Private helpers

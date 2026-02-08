@@ -25,6 +25,8 @@ import {
   ModuleCallEdge,
   EnrichedModuleCallEdge,
   FlowCoverageStats,
+  RelationshipInteractionCoverage,
+  RelationshipCoverageBreakdown,
   ExpandedFlow,
   AnnotatedSymbolInfo,
   AnnotatedEdgeInfo,
@@ -572,6 +574,18 @@ export class IndexDatabase implements IIndexWriter {
 
   syncInteractionsFromCallGraph(): { created: number; updated: number } {
     return this.interactions.syncFromCallGraph();
+  }
+
+  getRelationshipCoverage(): RelationshipInteractionCoverage {
+    return this.interactions.getRelationshipCoverage();
+  }
+
+  getRelationshipCoverageBreakdown(): RelationshipCoverageBreakdown {
+    return this.interactions.getRelationshipCoverageBreakdown();
+  }
+
+  syncInheritanceInteractions(): { created: number } {
+    return this.interactions.syncInheritanceInteractions();
   }
 
   // ============================================================

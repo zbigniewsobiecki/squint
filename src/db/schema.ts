@@ -268,6 +268,33 @@ export interface FlowCoverageStats {
   percentage: number;
 }
 
+/**
+ * Relationship to interaction coverage statistics
+ */
+export interface RelationshipInteractionCoverage {
+  totalRelationships: number;
+  crossModuleRelationships: number;  // Both symbols assigned to different modules
+  relationshipsContributingToInteractions: number;
+  sameModuleCount: number;  // Relationships within the same module (excluded from coverage)
+  orphanedCount: number;
+  coveragePercent: number;  // Now based on cross-module only
+}
+
+/**
+ * Detailed breakdown of relationship coverage for diagnostics
+ */
+export interface RelationshipCoverageBreakdown {
+  covered: number;        // Cross-module with matching interaction edge
+  sameModule: number;     // Both symbols in the same module (internal cohesion)
+  noCallEdge: number;     // Cross-module but no matching interaction edge
+  orphaned: number;       // Missing module assignment for one or both symbols
+  byType: {
+    uses: number;
+    extends: number;
+    implements: number;
+  };
+}
+
 // ============================================================
 // Legacy Types (for backward compatibility during migration)
 // ============================================================
