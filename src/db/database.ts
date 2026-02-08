@@ -27,6 +27,16 @@ export {
   type FlowDAG,
   type FlowDAGNode,
   type FlowDAGEdge,
+  type FlowComposition,
+  type FlowCompositionWithDetails,
+  type FlowCompositionRelationship,
+  type FlowMetadata,
+  type FlowHierarchyNode,
+  type ExpandedFlow,
+  type ExpandedFlowStep,
+  type FlowCoverageStats,
+  type AnnotatedSymbolInfo,
+  type AnnotatedEdgeInfo,
   type IIndexWriter,
   SCHEMA,
   computeHash,
@@ -52,6 +62,14 @@ import {
   type Flow,
   type FlowWithSteps,
   type FlowDAG,
+  type FlowCompositionWithDetails,
+  type FlowCompositionRelationship,
+  type FlowHierarchyNode,
+  type ExpandedFlow,
+  type ExpandedFlowStep,
+  type FlowCoverageStats,
+  type AnnotatedSymbolInfo,
+  type AnnotatedEdgeInfo,
   type IIndexWriter,
   SCHEMA,
 } from './schema.js';
@@ -1066,6 +1084,18 @@ export class IndexDatabase implements IIndexWriter {
       result[row.key] = row.value;
     }
     return result;
+  }
+
+  /**
+   * Get a single metadata value for a definition
+   */
+  getDefinitionMetadataValue(definitionId: number, key: string): string | null {
+    const stmt = this.db.prepare(`
+      SELECT value FROM definition_metadata
+      WHERE definition_id = ? AND key = ?
+    `);
+    const row = stmt.get(definitionId, key) as { value: string } | undefined;
+    return row?.value ?? null;
   }
 
   /**
@@ -3227,6 +3257,48 @@ export class IndexDatabase implements IIndexWriter {
         CREATE INDEX idx_flows_entry ON flows(entry_point_id);
       `);
     }
+
+    // Ensure composition tables exist (for hierarchical flows)
+    const compositionsExists = this.db.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='flow_compositions'
+    `).get();
+
+    if (!compositionsExists) {
+      this.db.exec(`
+        CREATE TABLE flow_compositions (
+          id INTEGER PRIMARY KEY,
+          parent_flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+          child_flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+          step_order INTEGER NOT NULL,
+          relationship_type TEXT NOT NULL,
+          semantic TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(parent_flow_id, step_order)
+        );
+
+        CREATE INDEX idx_flow_compositions_parent ON flow_compositions(parent_flow_id);
+        CREATE INDEX idx_flow_compositions_child ON flow_compositions(child_flow_id);
+      `);
+    }
+
+    // Ensure metadata table exists
+    const metadataExists = this.db.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='flow_metadata'
+    `).get();
+
+    if (!metadataExists) {
+      this.db.exec(`
+        CREATE TABLE flow_metadata (
+          id INTEGER PRIMARY KEY,
+          flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          UNIQUE(flow_id, key)
+        );
+
+        CREATE INDEX idx_flow_metadata_flow ON flow_metadata(flow_id);
+      `);
+    }
   }
 
   /**
@@ -3704,6 +3776,718 @@ export class IndexDatabase implements IIndexWriter {
     }
 
     return sccs;
+  }
+
+  // ============================================
+  // Flow Composition Methods (Hierarchical Flows)
+  // ============================================
+
+  /**
+   * Insert a flow composition (sub-flow reference).
+   */
+  insertFlowComposition(
+    parentId: number,
+    childId: number,
+    stepOrder: number,
+    relationshipType: FlowCompositionRelationship,
+    semantic?: string
+  ): number {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      INSERT INTO flow_compositions (parent_flow_id, child_flow_id, step_order, relationship_type, semantic)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    const result = stmt.run(parentId, childId, stepOrder, relationshipType, semantic ?? null);
+    return result.lastInsertRowid as number;
+  }
+
+  /**
+   * Get all compositions for a flow (sub-flows it includes).
+   */
+  getFlowCompositions(flowId: number): FlowCompositionWithDetails[] {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        fc.id,
+        fc.parent_flow_id as parentFlowId,
+        fc.child_flow_id as childFlowId,
+        fc.step_order as stepOrder,
+        fc.relationship_type as relationshipType,
+        fc.semantic,
+        fc.created_at as createdAt,
+        f.name as childFlowName,
+        f.description as childFlowDescription,
+        f.entry_point_id as childFlowEntryPointId
+      FROM flow_compositions fc
+      JOIN flows f ON fc.child_flow_id = f.id
+      WHERE fc.parent_flow_id = ?
+      ORDER BY fc.step_order
+    `);
+    return stmt.all(flowId) as FlowCompositionWithDetails[];
+  }
+
+  /**
+   * Get all flows that use a given sub-flow.
+   */
+  getFlowsUsingSubflow(subflowId: number): Flow[] {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT
+        f.id,
+        f.name,
+        f.description,
+        f.entry_point_id as entryPointId,
+        f.domain,
+        f.created_at as createdAt
+      FROM flows f
+      JOIN flow_compositions fc ON fc.parent_flow_id = f.id
+      WHERE fc.child_flow_id = ?
+      ORDER BY f.name
+    `);
+    return stmt.all(subflowId) as Flow[];
+  }
+
+  /**
+   * Check if adding a composition would create a circular reference.
+   */
+  isCircularReference(parentId: number, childId: number): boolean {
+    this.ensureFlowsTables();
+
+    // If child is the same as parent, it's circular
+    if (parentId === childId) return true;
+
+    // BFS to check if parent is reachable from child
+    const visited = new Set<number>();
+    const queue = [childId];
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current === parentId) return true;
+      if (visited.has(current)) continue;
+      visited.add(current);
+
+      // Get all flows that this flow includes
+      const compositions = this.getFlowCompositions(current);
+      for (const comp of compositions) {
+        queue.push(comp.childFlowId);
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Get the composition depth for a flow.
+   */
+  getFlowCompositionDepth(flowId: number): number {
+    this.ensureFlowsTables();
+
+    const compositions = this.getFlowCompositions(flowId);
+    if (compositions.length === 0) return 0;
+
+    let maxChildDepth = 0;
+    for (const comp of compositions) {
+      const childDepth = this.getFlowCompositionDepth(comp.childFlowId);
+      maxChildDepth = Math.max(maxChildDepth, childDepth);
+    }
+
+    return 1 + maxChildDepth;
+  }
+
+  /**
+   * Get the flow hierarchy as a tree structure.
+   */
+  getFlowHierarchy(flowId: number): FlowHierarchyNode | null {
+    this.ensureFlowsTables();
+
+    const flow = this.getFlowById(flowId);
+    if (!flow) return null;
+
+    const compositions = this.getFlowCompositions(flowId);
+    const children: FlowHierarchyNode['children'] = [];
+
+    for (const comp of compositions) {
+      const childNode = this.getFlowHierarchy(comp.childFlowId);
+      if (childNode) {
+        children.push({
+          composition: comp,
+          node: childNode,
+        });
+      }
+    }
+
+    return { flow, children };
+  }
+
+  /**
+   * Get a flow by ID.
+   */
+  getFlowById(flowId: number): Flow | null {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        name,
+        description,
+        entry_point_id as entryPointId,
+        domain,
+        created_at as createdAt
+      FROM flows
+      WHERE id = ?
+    `);
+    return (stmt.get(flowId) as Flow) || null;
+  }
+
+  /**
+   * Get all top-level flows (flows that are not sub-flows of any other flow).
+   */
+  getTopLevelFlows(): Flow[] {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        f.id,
+        f.name,
+        f.description,
+        f.entry_point_id as entryPointId,
+        f.domain,
+        f.created_at as createdAt
+      FROM flows f
+      WHERE NOT EXISTS (
+        SELECT 1 FROM flow_compositions fc
+        WHERE fc.child_flow_id = f.id
+      )
+      ORDER BY f.name
+    `);
+    return stmt.all() as Flow[];
+  }
+
+  /**
+   * Get all sub-flows (flows that are referenced by other flows).
+   */
+  getSubFlows(): Flow[] {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT
+        f.id,
+        f.name,
+        f.description,
+        f.entry_point_id as entryPointId,
+        f.domain,
+        f.created_at as createdAt
+      FROM flows f
+      JOIN flow_compositions fc ON fc.child_flow_id = f.id
+      ORDER BY f.name
+    `);
+    return stmt.all() as Flow[];
+  }
+
+  /**
+   * Get orphaned sub-flows (flows marked as sub-flows but not used by any parent).
+   */
+  getOrphanedSubflows(): Flow[] {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        f.id,
+        f.name,
+        f.description,
+        f.entry_point_id as entryPointId,
+        f.domain,
+        f.created_at as createdAt
+      FROM flows f
+      JOIN flow_metadata fm ON fm.flow_id = f.id AND fm.key = 'is_subflow' AND fm.value = 'true'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM flow_compositions fc
+        WHERE fc.child_flow_id = f.id
+      )
+      ORDER BY f.name
+    `);
+    return stmt.all() as Flow[];
+  }
+
+  /**
+   * Expand a composite flow to all definition steps (flattening sub-flows).
+   */
+  expandCompositeFlow(flowId: number): ExpandedFlow | null {
+    const flow = this.getFlowById(flowId);
+    if (!flow) return null;
+
+    const expandedSteps: ExpandedFlowStep[] = [];
+    const flowWithSteps = this.getFlowWithSteps(flowId);
+    if (!flowWithSteps) return null;
+
+    const compositions = this.getFlowCompositions(flowId);
+    const compositionsByStep = new Map(compositions.map(c => [c.stepOrder, c]));
+
+    let stepOrder = 1;
+    for (const step of flowWithSteps.steps) {
+      const composition = compositionsByStep.get(step.stepOrder);
+      if (composition) {
+        // Expand the sub-flow
+        const subflow = this.expandCompositeFlow(composition.childFlowId);
+        if (subflow) {
+          for (const subStep of subflow.steps) {
+            expandedSteps.push({
+              ...subStep,
+              stepOrder: stepOrder++,
+              fromSubflowId: composition.childFlowId,
+            });
+          }
+        }
+      } else {
+        // Direct step
+        expandedSteps.push({
+          stepOrder: stepOrder++,
+          definitionId: step.definitionId,
+          name: step.name,
+          kind: step.kind,
+          filePath: step.filePath,
+          moduleId: step.moduleId,
+          moduleName: step.moduleName,
+          layer: step.layer,
+          fromSubflowId: null,
+        });
+      }
+    }
+
+    return {
+      ...flow,
+      steps: expandedSteps,
+      compositionDepth: this.getFlowCompositionDepth(flowId),
+    };
+  }
+
+  // ============================================
+  // Flow Metadata Methods
+  // ============================================
+
+  /**
+   * Set a metadata value for a flow.
+   */
+  setFlowMetadata(flowId: number, key: string, value: string): void {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO flow_metadata (flow_id, key, value)
+      VALUES (?, ?, ?)
+    `);
+    stmt.run(flowId, key, value);
+  }
+
+  /**
+   * Get a metadata value for a flow.
+   */
+  getFlowMetadataValue(flowId: number, key: string): string | null {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT value FROM flow_metadata
+      WHERE flow_id = ? AND key = ?
+    `);
+    const row = stmt.get(flowId, key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  /**
+   * Get all metadata for a flow.
+   */
+  getFlowMetadata(flowId: number): Record<string, string> {
+    this.ensureFlowsTables();
+    const stmt = this.db.prepare(`
+      SELECT key, value FROM flow_metadata
+      WHERE flow_id = ?
+    `);
+    const rows = stmt.all(flowId) as Array<{ key: string; value: string }>;
+    const result: Record<string, string> = {};
+    for (const row of rows) {
+      result[row.key] = row.value;
+    }
+    return result;
+  }
+
+  // ============================================
+  // Neighborhood Extraction for LLM Context
+  // ============================================
+
+  /**
+   * Get call graph neighborhood for a starting definition.
+   * Returns nodes and edges within maxDepth hops, limited to maxNodes.
+   */
+  getCallGraphNeighborhood(
+    startId: number,
+    maxDepth: number,
+    maxNodes: number
+  ): { nodes: AnnotatedSymbolInfo[]; edges: AnnotatedEdgeInfo[] } {
+    this.ensureFlowsTables();
+
+    // BFS to collect nodes
+    const visited = new Set<number>();
+    const queue: Array<{ id: number; depth: number }> = [{ id: startId, depth: 0 }];
+    const nodeIds: number[] = [];
+
+    // Get all edges for the neighborhood
+    const allEdges = this.getCallGraph();
+    const adjacency = new Map<number, Array<{ toId: number; weight: number }>>();
+    const reverseAdjacency = new Map<number, Array<{ fromId: number; weight: number }>>();
+
+    for (const edge of allEdges) {
+      if (!adjacency.has(edge.fromId)) adjacency.set(edge.fromId, []);
+      adjacency.get(edge.fromId)!.push({ toId: edge.toId, weight: edge.weight });
+
+      if (!reverseAdjacency.has(edge.toId)) reverseAdjacency.set(edge.toId, []);
+      reverseAdjacency.get(edge.toId)!.push({ fromId: edge.fromId, weight: edge.weight });
+    }
+
+    // BFS in both directions
+    while (queue.length > 0 && nodeIds.length < maxNodes) {
+      const { id, depth } = queue.shift()!;
+      if (visited.has(id)) continue;
+      if (depth > maxDepth) continue;
+
+      visited.add(id);
+      nodeIds.push(id);
+
+      if (depth < maxDepth) {
+        // Forward edges
+        for (const neighbor of adjacency.get(id) ?? []) {
+          if (!visited.has(neighbor.toId)) {
+            queue.push({ id: neighbor.toId, depth: depth + 1 });
+          }
+        }
+        // Backward edges (incoming)
+        for (const neighbor of reverseAdjacency.get(id) ?? []) {
+          if (!visited.has(neighbor.fromId)) {
+            queue.push({ id: neighbor.fromId, depth: depth + 1 });
+          }
+        }
+      }
+    }
+
+    // Get annotated node info
+    const nodes: AnnotatedSymbolInfo[] = [];
+    for (const id of nodeIds) {
+      const def = this.getDefinitionById(id);
+      if (!def) continue;
+
+      const metadata = this.getDefinitionMetadata(id);
+      let domains: string[] | null = null;
+      if (metadata['domain']) {
+        try {
+          domains = JSON.parse(metadata['domain']);
+        } catch { /* ignore */ }
+      }
+
+      nodes.push({
+        id,
+        name: def.name,
+        kind: def.kind,
+        filePath: def.filePath,
+        line: def.line,
+        endLine: def.endLine,
+        isExported: def.isExported,
+        purpose: metadata['purpose'] ?? null,
+        domain: domains,
+        role: metadata['role'] ?? null,
+      });
+    }
+
+    // Get edges between neighborhood nodes
+    const nodeIdSet = new Set(nodeIds);
+    const edges: AnnotatedEdgeInfo[] = [];
+
+    for (const edge of allEdges) {
+      if (nodeIdSet.has(edge.fromId) && nodeIdSet.has(edge.toId)) {
+        // Get relationship annotation if exists
+        const relationship = this.getRelationshipAnnotation(edge.fromId, edge.toId);
+        edges.push({
+          fromId: edge.fromId,
+          toId: edge.toId,
+          weight: edge.weight,
+          semantic: relationship?.semantic ?? null,
+        });
+      }
+    }
+
+    return { nodes, edges };
+  }
+
+  /**
+   * Get high-connectivity symbols (many incoming/outgoing deps).
+   */
+  getHighConnectivitySymbols(options: {
+    minIncoming?: number;
+    minOutgoing?: number;
+    exported?: boolean;
+    limit?: number;
+  } = {}): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    incomingDeps: number;
+    outgoingDeps: number;
+  }> {
+    const minIncoming = options.minIncoming ?? 0;
+    const minOutgoing = options.minOutgoing ?? 0;
+    const limit = options.limit ?? 100;
+
+    // Get all edges
+    const edges = this.getCallGraph();
+
+    // Count incoming and outgoing
+    const incomingCount = new Map<number, number>();
+    const outgoingCount = new Map<number, number>();
+
+    for (const edge of edges) {
+      incomingCount.set(edge.toId, (incomingCount.get(edge.toId) ?? 0) + 1);
+      outgoingCount.set(edge.fromId, (outgoingCount.get(edge.fromId) ?? 0) + 1);
+    }
+
+    // Get all definition IDs
+    const allIds = new Set<number>();
+    for (const edge of edges) {
+      allIds.add(edge.fromId);
+      allIds.add(edge.toId);
+    }
+
+    // Filter by connectivity
+    const results: Array<{
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      incomingDeps: number;
+      outgoingDeps: number;
+    }> = [];
+
+    for (const id of allIds) {
+      const incoming = incomingCount.get(id) ?? 0;
+      const outgoing = outgoingCount.get(id) ?? 0;
+
+      if (incoming >= minIncoming || outgoing >= minOutgoing) {
+        const def = this.getDefinitionById(id);
+        if (!def) continue;
+
+        if (options.exported !== undefined && def.isExported !== options.exported) {
+          continue;
+        }
+
+        results.push({
+          id,
+          name: def.name,
+          kind: def.kind,
+          filePath: def.filePath,
+          incomingDeps: incoming,
+          outgoingDeps: outgoing,
+        });
+      }
+    }
+
+    // Sort by total connectivity and limit
+    results.sort((a, b) => (b.incomingDeps + b.outgoingDeps) - (a.incomingDeps + a.outgoingDeps));
+    return results.slice(0, limit);
+  }
+
+  // ============================================
+  // Flow Coverage Methods
+  // ============================================
+
+  /**
+   * Get symbols not covered by any flow.
+   */
+  getSymbolsNotInFlows(options: { minDeps?: number } = {}): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    incomingDeps: number;
+    outgoingDeps: number;
+  }> {
+    this.ensureFlowsTables();
+
+    const minDeps = options.minDeps ?? 0;
+
+    // Get all definition IDs in flows
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT definition_id FROM flow_steps
+      UNION
+      SELECT DISTINCT entry_point_id FROM flows
+    `);
+    const coveredIds = new Set(
+      (stmt.all() as Array<{ definition_id: number }>).map(r => r.definition_id)
+    );
+
+    // Get connectivity info
+    const edges = this.getCallGraph();
+    const incomingCount = new Map<number, number>();
+    const outgoingCount = new Map<number, number>();
+
+    for (const edge of edges) {
+      incomingCount.set(edge.toId, (incomingCount.get(edge.toId) ?? 0) + 1);
+      outgoingCount.set(edge.fromId, (outgoingCount.get(edge.fromId) ?? 0) + 1);
+    }
+
+    // Get all definitions not in flows
+    const allDefs = this.db.prepare(`
+      SELECT
+        d.id,
+        d.name,
+        d.kind,
+        f.path as filePath
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+    `).all() as Array<{ id: number; name: string; kind: string; filePath: string }>;
+
+    const results: Array<{
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      incomingDeps: number;
+      outgoingDeps: number;
+    }> = [];
+
+    for (const def of allDefs) {
+      if (coveredIds.has(def.id)) continue;
+
+      const incoming = incomingCount.get(def.id) ?? 0;
+      const outgoing = outgoingCount.get(def.id) ?? 0;
+      const totalDeps = incoming + outgoing;
+
+      if (totalDeps >= minDeps) {
+        results.push({
+          ...def,
+          incomingDeps: incoming,
+          outgoingDeps: outgoing,
+        });
+      }
+    }
+
+    // Sort by total connectivity
+    results.sort((a, b) => (b.incomingDeps + b.outgoingDeps) - (a.incomingDeps + a.outgoingDeps));
+    return results;
+  }
+
+  /**
+   * Get comprehensive flow coverage statistics.
+   */
+  getFlowCoverageStats(): FlowCoverageStats {
+    this.ensureFlowsTables();
+
+    // Total definitions
+    const totalDefs = (this.db.prepare('SELECT COUNT(*) as count FROM definitions').get() as { count: number }).count;
+
+    // Covered by flows
+    const coveredStmt = this.db.prepare(`
+      SELECT COUNT(DISTINCT definition_id) as count FROM (
+        SELECT definition_id FROM flow_steps
+        UNION
+        SELECT entry_point_id as definition_id FROM flows
+      )
+    `);
+    const coveredByFlows = (coveredStmt.get() as { count: number }).count;
+
+    // Coverage percentage
+    const coveragePercentage = totalDefs > 0 ? (coveredByFlows / totalDefs) * 100 : 0;
+
+    // Top-level flows count
+    const topLevelFlows = this.getTopLevelFlows().length;
+
+    // Sub-flows count
+    const subFlows = this.getSubFlows().length;
+
+    // Average composition depth
+    let totalDepth = 0;
+    const allFlows = this.getFlows();
+    for (const flow of allFlows) {
+      totalDepth += this.getFlowCompositionDepth(flow.id);
+    }
+    const avgCompositionDepth = allFlows.length > 0 ? totalDepth / allFlows.length : 0;
+
+    // Uncovered entry points
+    const entryPoints = this.getEntryPoints();
+    const coveredIds = new Set<number>();
+    const entriesStmt = this.db.prepare(`
+      SELECT DISTINCT entry_point_id as id FROM flows
+      UNION
+      SELECT DISTINCT definition_id as id FROM flow_steps
+    `);
+    for (const row of entriesStmt.all() as Array<{ id: number }>) {
+      coveredIds.add(row.id);
+    }
+
+    // Get connectivity for entry points
+    const edges = this.getCallGraph();
+    const incomingCount = new Map<number, number>();
+    const outgoingCount = new Map<number, number>();
+    for (const edge of edges) {
+      incomingCount.set(edge.toId, (incomingCount.get(edge.toId) ?? 0) + 1);
+      outgoingCount.set(edge.fromId, (outgoingCount.get(edge.fromId) ?? 0) + 1);
+    }
+
+    const uncoveredEntryPoints = entryPoints
+      .filter(ep => !coveredIds.has(ep.id))
+      .map(ep => ({
+        id: ep.id,
+        name: ep.name,
+        kind: ep.kind,
+        filePath: ep.filePath,
+        incomingDeps: incomingCount.get(ep.id) ?? 0,
+        outgoingDeps: outgoingCount.get(ep.id) ?? 0,
+      }));
+
+    // Uncovered high-connectivity symbols
+    const uncoveredHighConnectivity = this.getSymbolsNotInFlows({ minDeps: 5 });
+
+    // Orphaned sub-flows
+    const orphanedSubflows = this.getOrphanedSubflows();
+
+    // Coverage by domain
+    const coverageByDomain = new Map<string, { covered: number; total: number }>();
+
+    // Get all definitions with domains
+    const defsWithDomains = this.db.prepare(`
+      SELECT
+        d.id,
+        dm.value as domain
+      FROM definitions d
+      JOIN definition_metadata dm ON dm.definition_id = d.id AND dm.key = 'domain'
+    `).all() as Array<{ id: number; domain: string }>;
+
+    for (const def of defsWithDomains) {
+      try {
+        const domains = JSON.parse(def.domain) as string[];
+        for (const domain of domains) {
+          if (!coverageByDomain.has(domain)) {
+            coverageByDomain.set(domain, { covered: 0, total: 0 });
+          }
+          const stats = coverageByDomain.get(domain)!;
+          stats.total++;
+          if (coveredIds.has(def.id)) {
+            stats.covered++;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    return {
+      totalDefinitions: totalDefs,
+      coveredByFlows,
+      coveragePercentage,
+      topLevelFlows,
+      subFlows,
+      avgCompositionDepth,
+      uncoveredEntryPoints,
+      uncoveredHighConnectivity,
+      orphanedSubflows,
+      coverageByDomain,
+    };
+  }
+
+  /**
+   * Check if an edge exists between two definitions in the call graph.
+   */
+  edgeExists(fromId: number, toId: number): boolean {
+    const edges = this.getCallGraph();
+    return edges.some(e => e.fromId === fromId && e.toId === toId);
   }
 
   close(): void {

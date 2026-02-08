@@ -197,6 +197,115 @@ export interface FlowDAG {
   edges: FlowDAGEdge[];
 }
 
+// ============================================================
+// Flow Composition Types (Hierarchical Flows)
+// ============================================================
+
+export type FlowCompositionRelationship = 'includes' | 'delegates_to' | 'branches_to';
+
+export interface FlowComposition {
+  id: number;
+  parentFlowId: number;
+  childFlowId: number;
+  stepOrder: number;
+  relationshipType: FlowCompositionRelationship;
+  semantic: string | null;
+  createdAt: string;
+}
+
+export interface FlowCompositionWithDetails extends FlowComposition {
+  childFlowName: string;
+  childFlowDescription: string | null;
+  childFlowEntryPointId: number;
+}
+
+export interface FlowMetadata {
+  id: number;
+  flowId: number;
+  key: string;
+  value: string;
+}
+
+export interface FlowHierarchyNode {
+  flow: Flow;
+  children: Array<{
+    composition: FlowComposition;
+    node: FlowHierarchyNode;
+  }>;
+}
+
+export interface ExpandedFlowStep {
+  stepOrder: number;
+  definitionId: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  moduleId: number | null;
+  moduleName: string | null;
+  layer: string | null;
+  fromSubflowId: number | null;  // null if direct step, subflow ID if from composition
+}
+
+export interface ExpandedFlow extends Flow {
+  steps: ExpandedFlowStep[];
+  compositionDepth: number;
+}
+
+// ============================================================
+// Coverage Tracking Types
+// ============================================================
+
+export interface FlowCoverageStats {
+  totalDefinitions: number;
+  coveredByFlows: number;
+  coveragePercentage: number;
+  topLevelFlows: number;
+  subFlows: number;
+  avgCompositionDepth: number;
+  uncoveredEntryPoints: Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    incomingDeps: number;
+    outgoingDeps: number;
+  }>;
+  uncoveredHighConnectivity: Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    incomingDeps: number;
+    outgoingDeps: number;
+  }>;
+  orphanedSubflows: Flow[];
+  coverageByDomain: Map<string, { covered: number; total: number }>;
+}
+
+// ============================================================
+// Annotated Symbol/Edge Types for LLM Context
+// ============================================================
+
+export interface AnnotatedSymbolInfo {
+  id: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  line: number;
+  endLine: number;
+  isExported: boolean;
+  purpose: string | null;
+  domain: string[] | null;
+  role: string | null;
+}
+
+export interface AnnotatedEdgeInfo {
+  fromId: number;
+  toId: number;
+  weight: number;
+  semantic: string | null;
+}
+
 export interface EnhancedRelationshipContext {
   // Base relationship info
   fromDefinitionId: number;
@@ -430,6 +539,32 @@ CREATE TABLE flow_steps (
 
 CREATE INDEX idx_flow_steps_def ON flow_steps(definition_id);
 CREATE INDEX idx_flows_entry ON flows(entry_point_id);
+
+-- Flow compositions for hierarchical flows
+CREATE TABLE flow_compositions (
+  id INTEGER PRIMARY KEY,
+  parent_flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+  child_flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+  step_order INTEGER NOT NULL,
+  relationship_type TEXT NOT NULL,
+  semantic TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(parent_flow_id, step_order)
+);
+
+CREATE INDEX idx_flow_compositions_parent ON flow_compositions(parent_flow_id);
+CREATE INDEX idx_flow_compositions_child ON flow_compositions(child_flow_id);
+
+-- Flow metadata for additional properties
+CREATE TABLE flow_metadata (
+  id INTEGER PRIMARY KEY,
+  flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  UNIQUE(flow_id, key)
+);
+
+CREATE INDEX idx_flow_metadata_flow ON flow_metadata(flow_id);
 `;
 
 // ============================================================
