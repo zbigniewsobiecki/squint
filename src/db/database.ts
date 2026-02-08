@@ -30,6 +30,8 @@ export {
   type Flow,
   type FlowTreeNode,
   type ModuleCallEdge,
+  type EnrichedModuleCallEdge,
+  type CalledSymbolInfo,
   type ExpandedFlow,
   type FlowCoverageStats,
   type AnnotatedSymbolInfo,

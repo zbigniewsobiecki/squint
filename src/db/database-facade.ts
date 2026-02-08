@@ -19,6 +19,7 @@ import {
   Flow,
   FlowTreeNode,
   ModuleCallEdge,
+  EnrichedModuleCallEdge,
   FlowCoverageStats,
   AnnotatedSymbolInfo,
   AnnotatedEdgeInfo,
@@ -579,6 +580,10 @@ export class IndexDatabase implements IIndexWriter {
 
   getModuleCallGraph(): ModuleCallEdge[] {
     return this.flows.getModuleCallGraph();
+  }
+
+  getEnrichedModuleCallGraph(): EnrichedModuleCallEdge[] {
+    return this.flows.getEnrichedModuleCallGraph();
   }
 
   getFlowCoverage(): FlowCoverageStats {

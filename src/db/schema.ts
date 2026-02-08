@@ -198,6 +198,27 @@ export interface ModuleCallEdge {
 }
 
 /**
+ * Symbol detail within a module call edge
+ */
+export interface CalledSymbolInfo {
+  name: string;
+  kind: string;  // 'function', 'class', 'method', 'variable'
+  callCount: number;
+}
+
+/**
+ * Enriched module call edge with symbol-level details for better flow detection
+ */
+export interface EnrichedModuleCallEdge extends ModuleCallEdge {
+  calledSymbols: CalledSymbolInfo[];
+  avgCallsPerSymbol: number;
+  distinctCallers: number;  // Number of unique callers from source module
+  isHighFrequency: boolean;  // > 10 calls = likely utility
+  edgePattern: 'utility' | 'business';  // Classification based on call patterns
+  minUsageLine: number;  // Earliest line where this call occurs (for ordering)
+}
+
+/**
  * Expanded flow showing flattened leaf flows in order
  */
 export interface ExpandedFlow {

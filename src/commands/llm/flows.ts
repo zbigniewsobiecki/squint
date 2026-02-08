@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { LLMist } from 'llmist';
 import { openDatabase, SharedFlags } from '../_shared/index.js';
 import type { IndexDatabase } from '../../db/database.js';
-import type { ModuleCallEdge, Flow } from '../../db/schema.js';
+import type { EnrichedModuleCallEdge, Flow } from '../../db/schema.js';
 
 interface FlowsResult {
   phase: string;
@@ -26,6 +26,9 @@ interface LeafFlowSuggestion {
   name: string;
   slug: string;
   semantic: string;
+  edgePattern: 'utility' | 'business';  // Classification based on call patterns
+  calledSymbols: string[];  // Symbol names for context in grouping phase
+  minUsageLine: number;  // For ordering
 }
 
 interface FlowGrouping {
@@ -190,6 +193,7 @@ export default class Flows extends Command {
    * Phase 1: Create leaf flows from module call graph edges.
    * For each unique module-to-module edge, create a leaf flow.
    * Use LLM to generate semantic descriptions.
+   * Uses enriched edges with symbol details for better classification.
    */
   private async runLeafFlowPhase(
     db: IndexDatabase,
@@ -199,10 +203,10 @@ export default class Flows extends Command {
     verbose: boolean,
     dryRun: boolean
   ): Promise<number> {
-    // Get module call graph
-    const moduleEdges = db.getModuleCallGraph();
+    // Get enriched module call graph with symbol details
+    const enrichedEdges = db.getEnrichedModuleCallGraph();
 
-    if (moduleEdges.length === 0) {
+    if (enrichedEdges.length === 0) {
       if (!isJson) {
         this.log(chalk.yellow('  No module call graph edges found.'));
         this.log(chalk.gray('  Ensure modules are assigned first with `ats llm modules`'));
@@ -210,15 +214,20 @@ export default class Flows extends Command {
       return 0;
     }
 
+    // Count utility vs business edges for reporting
+    const utilityCount = enrichedEdges.filter(e => e.edgePattern === 'utility').length;
+    const businessCount = enrichedEdges.filter(e => e.edgePattern === 'business').length;
+
     if (!isJson && verbose) {
-      this.log(chalk.gray(`  Found ${moduleEdges.length} module-to-module edges`));
+      this.log(chalk.gray(`  Found ${enrichedEdges.length} module-to-module edges`));
+      this.log(chalk.gray(`    Business logic: ${businessCount}, Utility/Infrastructure: ${utilityCount}`));
     }
 
     // Generate semantic descriptions for each edge using LLM
     const leafFlows: LeafFlowSuggestion[] = [];
 
-    for (let i = 0; i < moduleEdges.length; i += batchSize) {
-      const batch = moduleEdges.slice(i, i + batchSize);
+    for (let i = 0; i < enrichedEdges.length; i += batchSize) {
+      const batch = enrichedEdges.slice(i, i + batchSize);
 
       try {
         const suggestions = await this.generateLeafFlowSemantics(batch, model);
@@ -277,9 +286,10 @@ export default class Flows extends Command {
 
   /**
    * Generate semantic descriptions for module edges using LLM.
+   * Now includes symbol-level details for better flow naming.
    */
   private async generateLeafFlowSemantics(
-    edges: ModuleCallEdge[],
+    edges: EnrichedModuleCallEdge[],
     model: string
   ): Promise<LeafFlowSuggestion[]> {
     const systemPrompt = `You are a software architect analyzing module-level call graph edges.
@@ -297,17 +307,27 @@ project.controllers,project.services.auth,"ValidateCredentials","controllers-aut
 \`\`\`
 
 Guidelines:
-- Name should describe the business action (e.g., "ProcessPayment", "ValidateInput")
+- Name should describe the business action based on the SPECIFIC SYMBOLS being called
+- For UTILITY patterns: use generic names like "LoggingAccess", "DatabaseQuery", "ErrorHandling"
+- For BUSINESS patterns: use specific action names based on symbols (e.g., "ProcessPayment", "ValidateCredentials")
 - Slug MUST be unique - prefix with abbreviated module names to avoid collisions
 - Format: {from-module-short}-{to-module-short}-{action} (e.g., "api-db-fetch-user")
 - Semantic should explain WHY this module calls the other module
 - Keep descriptions concise (under 100 chars)`;
 
+    // Build edge descriptions with symbol details
+    const edgeDescriptions = edges.map((e, i) => {
+      const symbolList = e.calledSymbols.slice(0, 5).map(s => s.name).join(', ');
+      const symbolInfo = symbolList ? `calls: ${symbolList}` : '';
+      const patternInfo = `[${e.edgePattern.toUpperCase()}]`;
+      return `${i + 1}. ${patternInfo} ${e.fromModulePath} → ${e.toModulePath} (${e.weight} calls)${symbolInfo ? `\n   ${symbolInfo}` : ''}`;
+    }).join('\n');
+
     const userPrompt = `## Module Transitions to Describe (${edges.length})
 
-${edges.map((e, i) => `${i + 1}. ${e.fromModulePath} → ${e.toModulePath} (${e.weight} calls)`).join('\n')}
+${edgeDescriptions}
 
-Generate flow metadata for each transition in CSV format.`;
+Generate flow metadata for each transition in CSV format. Consider the pattern type (UTILITY vs BUSINESS) when naming.`;
 
     const response = await LLMist.complete(userPrompt, {
       model,
@@ -321,7 +341,7 @@ Generate flow metadata for each transition in CSV format.`;
   /**
    * Parse LLM CSV response into leaf flow suggestions.
    */
-  private parseLeafFlowCSV(response: string, edges: ModuleCallEdge[]): LeafFlowSuggestion[] {
+  private parseLeafFlowCSV(response: string, edges: EnrichedModuleCallEdge[]): LeafFlowSuggestion[] {
     const results: LeafFlowSuggestion[] = [];
 
     // Find CSV block
@@ -354,6 +374,9 @@ Generate flow metadata for each transition in CSV format.`;
           name: name.trim().replace(/"/g, ''),
           slug: slug.trim().replace(/"/g, ''),
           semantic: semantic.trim().replace(/"/g, ''),
+          edgePattern: edge.edgePattern,
+          calledSymbols: edge.calledSymbols.map(s => s.name),
+          minUsageLine: edge.minUsageLine,
         });
       }
     }
@@ -372,7 +395,7 @@ Generate flow metadata for each transition in CSV format.`;
    * Create a default leaf flow from an edge when LLM fails.
    * Uses full module context in slug to prevent collisions.
    */
-  private createDefaultLeafFlow(edge: ModuleCallEdge): LeafFlowSuggestion {
+  private createDefaultLeafFlow(edge: EnrichedModuleCallEdge): LeafFlowSuggestion {
     const fromLast = edge.fromModulePath.split('.').pop() ?? 'source';
     const toLast = edge.toModulePath.split('.').pop() ?? 'target';
     const name = `${this.toPascalCase(fromLast)}To${this.toPascalCase(toLast)}`;
@@ -387,6 +410,9 @@ Generate flow metadata for each transition in CSV format.`;
       name,
       slug,
       semantic: `Calls from ${edge.fromModulePath} to ${edge.toModulePath}`,
+      edgePattern: edge.edgePattern,
+      calledSymbols: edge.calledSymbols.map(s => s.name),
+      minUsageLine: edge.minUsageLine,
     };
   }
 
@@ -394,6 +420,7 @@ Generate flow metadata for each transition in CSV format.`;
    * Phase 2: Group leaf flows into parent flows.
    * LLM analyzes leaf flows and groups them into logical parent flows.
    * Leaf flows are reparented under their assigned parent flows.
+   * Uses enriched edge data to provide symbol details and pattern info.
    */
   private async runGroupingPhase(
     db: IndexDatabase,
@@ -425,8 +452,15 @@ Generate flow metadata for each transition in CSV format.`;
     const modules = db.getAllModules();
     const moduleNameMap = new Map(modules.map(m => [m.id, m.fullPath]));
 
+    // Get enriched edge data for symbol details
+    const enrichedEdges = db.getEnrichedModuleCallGraph();
+    const edgeMap = new Map<string, EnrichedModuleCallEdge>();
+    for (const edge of enrichedEdges) {
+      edgeMap.set(`${edge.fromModuleId}->${edge.toModuleId}`, edge);
+    }
+
     try {
-      const groupings = await this.generateFlowGroupings(leafFlows, moduleNameMap, model);
+      const groupings = await this.generateFlowGroupings(leafFlows, moduleNameMap, edgeMap, model);
 
       if (!dryRun) {
         let reparentedCount = 0;
@@ -483,48 +517,65 @@ Generate flow metadata for each transition in CSV format.`;
   /**
    * Generate flow groupings using LLM.
    * Asks the LLM to group leaf flows by ID for unambiguous matching.
+   * Includes symbol details and pattern classification for better grouping.
    */
   private async generateFlowGroupings(
     leafFlows: Flow[],
     moduleNameMap: Map<number, string>,
+    edgeMap: Map<string, EnrichedModuleCallEdge>,
     model: string
   ): Promise<FlowGrouping[]> {
     const systemPrompt = `You are a software architect grouping related module transitions into higher-level business flows.
 
 Analyze the leaf flows (module-to-module transitions) and group them into logical parent flows that represent:
+- User journeys (e.g., "LoginFlow", "CheckoutFlow") - actions that happen in sequence for ONE user goal
 - Feature flows (e.g., "Authentication", "PaymentProcessing")
 - Domain operations (e.g., "UserManagement", "OrderFulfillment")
-- Technical concerns (e.g., "DataValidation", "ErrorHandling")
+
+CRITICAL: Do NOT group by shared infrastructure! Flows marked [UTILITY] should typically NOT be grouped with [BUSINESS] flows.
 
 Output format - respond with ONLY a CSV table:
 
 \`\`\`csv
 name,slug,description,domain,child_ids
-"Authentication","authentication","User authentication and session management","auth","12,15,18"
-"PaymentProcessing","payment-processing","Payment validation and processing","payments","22,25,28"
+"LoginFlow","login-flow","User login sequence from form submission to session creation","auth","12,15,18"
+"DataFetchFlow","data-fetch-flow","Data retrieval and display sequence","data","22,25,28"
 \`\`\`
 
 IMPORTANT Guidelines:
-- Group flows that work together to accomplish a business goal
-- Name groups with PascalCase describing the feature/domain
+- **DO NOT group flows just because they share a common module** (like Database, Logger, or Utils)
+- Group flows that form a SEQUENTIAL USER JOURNEY - actions that happen in order to accomplish ONE user goal
+- Bad grouping: "All flows touching Database" or "All flows using AuthService"
+- Good grouping: "LoginFlow: form submit → validate → create session → redirect"
+- Name groups with PascalCase describing the USER ACTION, not the infrastructure
 - Include 2-6 related leaf flows per group
 - **Reference flows by their ID numbers** (the number in brackets) for unambiguous matching
-- **List child IDs IN EXECUTION ORDER (first to last)** - the order matters!
-- Leaf flows can appear in multiple groups if they're truly shared
-- Leave ungroupable flows for the next phase`;
+- **List child IDs IN EXECUTION ORDER (first to last)** - the sequence matters!
+- [UTILITY] flows are typically infrastructure and should be grouped separately or left ungrouped
+- [BUSINESS] flows are typically domain-specific and form the core of user journeys`;
 
-    // Build flow list with IDs and module context for better LLM understanding
+    // Build flow list with IDs, module context, symbols, and pattern for better LLM understanding
     const flowList = leafFlows.map(f => {
       const fromModule = f.fromModuleId ? moduleNameMap.get(f.fromModuleId) ?? 'unknown' : 'unknown';
       const toModule = f.toModuleId ? moduleNameMap.get(f.toModuleId) ?? 'unknown' : 'unknown';
-      return `[${f.id}] ${f.slug} (${fromModule} → ${toModule})${f.semantic ? ` - "${f.semantic}"` : ''}`;
+      const edgeKey = `${f.fromModuleId}->${f.toModuleId}`;
+      const edge = edgeMap.get(edgeKey);
+
+      // Build pattern and symbol info
+      const pattern = edge?.edgePattern === 'utility' ? '[UTILITY]' : '[BUSINESS]';
+      const symbols = edge?.calledSymbols.slice(0, 3).map(s => s.name).join(', ') ?? '';
+      const symbolInfo = symbols ? `\n     Symbols: ${symbols}` : '';
+
+      return `[${f.id}] ${pattern} ${f.slug} (${fromModule} → ${toModule})${f.semantic ? `\n     "${f.semantic}"` : ''}${symbolInfo}`;
     }).join('\n');
 
     const userPrompt = `## Leaf Flows to Group (${leafFlows.length})
 
 ${flowList}
 
-Group these into logical parent flows in CSV format. Reference flows by their ID (number in brackets). List child IDs in execution order.`;
+Group these into logical parent flows in CSV format. Reference flows by their ID (number in brackets). List child IDs in execution order.
+
+REMEMBER: Group by USER JOURNEY, not by shared infrastructure. [UTILITY] flows are typically separate from [BUSINESS] flows.`;
 
     const response = await LLMist.complete(userPrompt, {
       model,
@@ -675,44 +726,64 @@ Group these into logical parent flows in CSV format. Reference flows by their ID
   /**
    * Generate root-level flows using LLM.
    * Asks the LLM to combine parent flows into user journeys by ID for unambiguous matching.
+   * Separates infrastructure/utility flows from business logic flows.
    */
   private async generateRootFlows(
     parentFlows: Flow[],
     model: string
   ): Promise<RootFlowSuggestion[]> {
+    // Identify infrastructure-related parent flows by their names/descriptions
+    const infraKeywords = ['utility', 'infrastructure', 'logging', 'error', 'database', 'cache', 'config', 'misc', 'ungrouped'];
+    const isInfraFlow = (f: Flow) => {
+      const nameAndDesc = `${f.name} ${f.description ?? ''} ${f.slug}`.toLowerCase();
+      return infraKeywords.some(kw => nameAndDesc.includes(kw));
+    };
+
+    const infraFlows = parentFlows.filter(f => isInfraFlow(f));
+
     const systemPrompt = `You are a software architect identifying user journeys from feature-level flows.
 
 Analyze the parent flows and identify complete user journeys like:
-- "UserOnboarding": signup → email verification → profile setup
-- "CheckoutProcess": cart review → payment → confirmation
-- "ContentPublishing": draft → review → publish → notify
+- "UserLoginJourney": form submission → validation → session creation → redirect
+- "CheckoutJourney": cart review → payment validation → order confirmation
+- "ContentPublishing": draft creation → review → publish → notification
 
 Output format - respond with ONLY a CSV table:
 
 \`\`\`csv
 name,slug,description,child_ids
-"UserOnboarding","user-onboarding","Complete new user signup journey from registration to active account","12,15,18"
-"CheckoutProcess","checkout-process","Full checkout flow from cart to confirmation","22,25,28"
+"UserLoginJourney","user-login-journey","Complete user login from form submission to authenticated session","12,15,18"
+"CheckoutJourney","checkout-journey","Full checkout from cart review to order confirmation","22,25,28"
 \`\`\`
 
-IMPORTANT Guidelines:
-- Focus on end-to-end user experiences
-- Each journey should tell a complete user story
+CRITICAL Guidelines:
+- Focus on END-TO-END USER EXPERIENCES, not technical groupings
+- Each journey should tell a complete user story from start to finish
+- Name journeys after the USER GOAL (e.g., "LoginJourney", "PurchaseJourney"), not technical terms
+- **DO NOT create journeys that are just "all auth-related" or "all data-related"**
+- A good journey has a clear START (user action) and END (user outcome)
 - **Reference flows by their ID numbers** (the number in brackets) for unambiguous matching
-- **List child IDs IN JOURNEY ORDER (first to last)** - the sequence matters!
+- **List child IDs IN JOURNEY ORDER (first to last)** - the sequence of user actions matters!
 - Include 2-5 parent flows per journey
-- Parent flows can appear in multiple journeys if they're truly shared`;
+- Parent flows can appear in multiple journeys if they're truly shared
+- Infrastructure flows (Logging, ErrorHandling, etc.) should be left ungrouped or in a separate "Infrastructure" journey`;
 
     // Build flow list with IDs for unambiguous LLM matching
-    const flowList = parentFlows.map(f =>
-      `[${f.id}] ${f.slug}: ${f.name}${f.description ? ` - "${f.description}"` : ''}`
-    ).join('\n');
+    // Mark infrastructure flows so LLM knows to handle them separately
+    const flowList = parentFlows.map(f => {
+      const isInfra = isInfraFlow(f);
+      const marker = isInfra ? '[INFRA]' : '[BUSINESS]';
+      return `[${f.id}] ${marker} ${f.slug}: ${f.name}${f.description ? ` - "${f.description}"` : ''}`;
+    }).join('\n');
 
     const userPrompt = `## Parent Flows (${parentFlows.length})
 
 ${flowList}
 
-Identify user journeys combining these flows in CSV format. Reference flows by their ID (number in brackets). List child IDs in journey sequence order.`;
+Identify user journeys combining these flows in CSV format. Reference flows by their ID (number in brackets). List child IDs in journey sequence order.
+
+Note: [INFRA] flows are infrastructure/utility and should typically be left out of user journeys or grouped into a separate "Infrastructure" category.
+Focus on combining [BUSINESS] flows into meaningful user journeys.`;
 
     const response = await LLMist.complete(userPrompt, {
       model,
@@ -745,6 +816,19 @@ Identify user journeys combining these flows in CSV format. Reference flows by t
         slug: slug.trim().replace(/"/g, ''),
         description: description.trim().replace(/"/g, ''),
         orderedParentFlowIds: childIds,
+      });
+    }
+
+    // If there are ungrouped infrastructure flows, create an Infrastructure root
+    const groupedIds = new Set(results.flatMap(r => r.orderedParentFlowIds));
+    const ungroupedInfra = infraFlows.filter(f => !groupedIds.has(f.id));
+
+    if (ungroupedInfra.length > 0) {
+      results.push({
+        name: 'Infrastructure',
+        slug: 'infrastructure',
+        description: 'Infrastructure, utility, and cross-cutting concerns',
+        orderedParentFlowIds: ungroupedInfra.map(f => f.id),
       });
     }
 

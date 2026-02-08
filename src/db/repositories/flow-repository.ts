@@ -4,6 +4,8 @@ import type {
   FlowTreeNode,
   Module,
   ModuleCallEdge,
+  EnrichedModuleCallEdge,
+  CalledSymbolInfo,
   FlowCoverageStats,
   CallGraphEdge,
 } from '../schema.js';
@@ -618,6 +620,166 @@ export class FlowRepository {
     }
 
     return Array.from(edgeMap.values()).sort((a, b) => b.weight - a.weight);
+  }
+
+  /**
+   * Get enriched module-level call graph with symbol details.
+   * Includes information about which specific symbols are called and call patterns
+   * to help distinguish utility/infrastructure modules from business logic.
+   */
+  getEnrichedModuleCallGraph(): EnrichedModuleCallEdge[] {
+    ensureModulesTables(this.db);
+
+    // Query for symbol-level details with module context
+    const symbolEdges = this.db.prepare(`
+      SELECT
+        from_mm.module_id as from_module_id,
+        to_mm.module_id as to_module_id,
+        from_m.full_path as from_module_path,
+        to_m.full_path as to_module_path,
+        to_d.name as symbol_name,
+        to_d.kind as symbol_kind,
+        from_d.id as caller_id,
+        COUNT(*) as call_count,
+        MIN(u.line) as min_usage_line
+      FROM definitions from_d
+      JOIN files f ON from_d.file_id = f.id
+      JOIN module_members from_mm ON from_mm.definition_id = from_d.id
+      JOIN modules from_m ON from_mm.module_id = from_m.id
+      JOIN symbols s ON s.file_id = f.id AND s.definition_id IS NOT NULL
+      JOIN definitions to_d ON s.definition_id = to_d.id
+      JOIN module_members to_mm ON to_mm.definition_id = to_d.id
+      JOIN modules to_m ON to_mm.module_id = to_m.id
+      JOIN usages u ON u.symbol_id = s.id
+      WHERE u.context IN ('call_expression', 'new_expression')
+        AND from_d.line <= u.line AND u.line <= from_d.end_line
+        AND s.definition_id != from_d.id
+        AND from_mm.module_id != to_mm.module_id
+      GROUP BY from_mm.module_id, to_mm.module_id, to_d.id, from_d.id
+      UNION ALL
+      SELECT
+        from_mm.module_id as from_module_id,
+        to_mm.module_id as to_module_id,
+        from_m.full_path as from_module_path,
+        to_m.full_path as to_module_path,
+        to_d.name as symbol_name,
+        to_d.kind as symbol_kind,
+        from_d.id as caller_id,
+        COUNT(*) as call_count,
+        MIN(u.line) as min_usage_line
+      FROM definitions from_d
+      JOIN files f ON from_d.file_id = f.id
+      JOIN module_members from_mm ON from_mm.definition_id = from_d.id
+      JOIN modules from_m ON from_mm.module_id = from_m.id
+      JOIN imports i ON i.from_file_id = f.id
+      JOIN symbols s ON s.reference_id = i.id AND s.definition_id IS NOT NULL
+      JOIN definitions to_d ON s.definition_id = to_d.id
+      JOIN module_members to_mm ON to_mm.definition_id = to_d.id
+      JOIN modules to_m ON to_mm.module_id = to_m.id
+      JOIN usages u ON u.symbol_id = s.id
+      WHERE u.context IN ('call_expression', 'new_expression')
+        AND from_d.line <= u.line AND u.line <= from_d.end_line
+        AND s.definition_id != from_d.id
+        AND from_mm.module_id != to_mm.module_id
+      GROUP BY from_mm.module_id, to_mm.module_id, to_d.id, from_d.id
+    `).all() as Array<{
+      from_module_id: number;
+      to_module_id: number;
+      from_module_path: string;
+      to_module_path: string;
+      symbol_name: string;
+      symbol_kind: string;
+      caller_id: number;
+      call_count: number;
+      min_usage_line: number;
+    }>;
+
+    // Aggregate into enriched edges
+    const edgeMap = new Map<string, {
+      fromModuleId: number;
+      toModuleId: number;
+      fromModulePath: string;
+      toModulePath: string;
+      weight: number;
+      symbols: Map<string, CalledSymbolInfo>;
+      callers: Set<number>;
+      minUsageLine: number;
+    }>();
+
+    for (const row of symbolEdges) {
+      const key = `${row.from_module_id}->${row.to_module_id}`;
+      let edge = edgeMap.get(key);
+
+      if (!edge) {
+        edge = {
+          fromModuleId: row.from_module_id,
+          toModuleId: row.to_module_id,
+          fromModulePath: row.from_module_path,
+          toModulePath: row.to_module_path,
+          weight: 0,
+          symbols: new Map(),
+          callers: new Set(),
+          minUsageLine: row.min_usage_line,
+        };
+        edgeMap.set(key, edge);
+      }
+
+      edge.weight += row.call_count;
+      edge.callers.add(row.caller_id);
+      edge.minUsageLine = Math.min(edge.minUsageLine, row.min_usage_line);
+
+      const symbolKey = row.symbol_name;
+      const existing = edge.symbols.get(symbolKey);
+      if (existing) {
+        existing.callCount += row.call_count;
+      } else {
+        edge.symbols.set(symbolKey, {
+          name: row.symbol_name,
+          kind: row.symbol_kind,
+          callCount: row.call_count,
+        });
+      }
+    }
+
+    // Convert to EnrichedModuleCallEdge with classification
+    const result: EnrichedModuleCallEdge[] = [];
+
+    for (const edge of edgeMap.values()) {
+      const calledSymbols = Array.from(edge.symbols.values())
+        .sort((a, b) => b.callCount - a.callCount);
+
+      const symbolCount = calledSymbols.length;
+      const avgCallsPerSymbol = symbolCount > 0 ? edge.weight / symbolCount : 0;
+      const distinctCallers = edge.callers.size;
+      const isHighFrequency = edge.weight > 10;
+
+      // Classify edge as utility or business logic
+      // Utility: high frequency, few symbols, many callers
+      // Business: specific symbols, lower frequency, domain-specific
+      const hasClassCall = calledSymbols.some(s => s.kind === 'class');
+      const isLikelyUtility = (
+        isHighFrequency &&
+        distinctCallers >= 3 &&
+        avgCallsPerSymbol > 3 &&
+        !hasClassCall
+      );
+
+      result.push({
+        fromModuleId: edge.fromModuleId,
+        toModuleId: edge.toModuleId,
+        fromModulePath: edge.fromModulePath,
+        toModulePath: edge.toModulePath,
+        weight: edge.weight,
+        calledSymbols,
+        avgCallsPerSymbol,
+        distinctCallers,
+        isHighFrequency,
+        edgePattern: isLikelyUtility ? 'utility' : 'business',
+        minUsageLine: edge.minUsageLine,
+      });
+    }
+
+    return result.sort((a, b) => b.weight - a.weight);
   }
 
   /**
