@@ -97,28 +97,19 @@ describe('flows commands', () => {
       endPosition: { row: 30, column: 1 },
     });
 
-    // Create modules
-    const controllerModuleId = db.insertModule('user-controller', {
-      description: 'User API endpoints',
-      layer: 'controller',
-    });
+    // Create module tree
+    const rootId = db.ensureRootModule();
 
-    const serviceModuleId = db.insertModule('user-service', {
-      description: 'User business logic',
-      layer: 'service',
-    });
+    const controllerModuleId = db.insertModule(rootId, 'user-controller', 'User Controller', 'User API endpoints');
+    const serviceModuleId = db.insertModule(rootId, 'user-service', 'User Service', 'User business logic');
+    const repoModuleId = db.insertModule(rootId, 'user-repo', 'User Repository', 'User data access');
 
-    const repoModuleId = db.insertModule('user-repo', {
-      description: 'User data access',
-      layer: 'repository',
-    });
-
-    // Add module members
-    db.addModuleMember(controllerModuleId, controllerDefId);
-    db.addModuleMember(controllerModuleId, loginHandlerId);
-    db.addModuleMember(serviceModuleId, serviceDefId);
-    db.addModuleMember(serviceModuleId, authServiceId);
-    db.addModuleMember(repoModuleId, repoDefId);
+    // Assign symbols to modules
+    db.assignSymbolToModule(controllerDefId, controllerModuleId);
+    db.assignSymbolToModule(loginHandlerId, controllerModuleId);
+    db.assignSymbolToModule(serviceDefId, serviceModuleId);
+    db.assignSymbolToModule(authServiceId, serviceModuleId);
+    db.assignSymbolToModule(repoDefId, repoModuleId);
 
     // Create flows
     const registerFlowId = db.insertFlow('user-registration', controllerDefId, 'User registration flow', 'user');
@@ -198,8 +189,8 @@ describe('flows commands', () => {
 
     it('shows modules crossed in output', () => {
       const output = runCommand(`flows -d ${dbPath}`);
-      expect(output).toContain('user-controller');
-      expect(output).toContain('user-service');
+      expect(output).toContain('User Controller');
+      expect(output).toContain('User Service');
     });
   });
 
@@ -228,9 +219,9 @@ describe('flows commands', () => {
 
     it('shows step module names', () => {
       const output = runCommand(`flows show user-registration -d ${dbPath}`);
-      expect(output).toContain('user-controller');
-      expect(output).toContain('user-service');
-      expect(output).toContain('user-repo');
+      expect(output).toContain('User Controller');
+      expect(output).toContain('User Service');
+      expect(output).toContain('User Repository');
     });
 
     it('handles partial name match', () => {

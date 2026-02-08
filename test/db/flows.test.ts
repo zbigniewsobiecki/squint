@@ -353,14 +353,16 @@ describe('Flow Detection', () => {
       const fileId = createFile('/project/controller.ts');
       const defId = createDefinition(fileId, 'Controller', 'function', 0, 10);
 
-      // Create a module and add the definition to it
-      const moduleId = db.insertModule('TestModule', { layer: 'controller' });
-      db.addModuleMember(moduleId, defId);
+      // Create a module tree and assign the definition to it
+      const rootId = db.ensureRootModule();
+      const moduleId = db.insertModule(rootId, 'test-module', 'Test Module');
+      db.assignSymbolToModule(defId, moduleId);
 
       const trace = db.traceFlowFromEntry(defId);
       expect(trace).toHaveLength(1);
       expect(trace[0].moduleId).toBe(moduleId);
-      expect(trace[0].layer).toBe('controller');
+      // Layer is now null since it's no longer stored in modules
+      expect(trace[0].layer).toBeNull();
     });
 
     it('sorts steps at same depth by usage line order', () => {
@@ -497,14 +499,15 @@ describe('Flow Detection', () => {
       const fileId = createFile('/project/service.ts');
       const defId = createDefinition(fileId, 'MyService', 'function', 0, 20);
 
-      const moduleId = db.insertModule('ServiceModule', { layer: 'service' });
-      db.addModuleMember(moduleId, defId);
+      const rootId = db.ensureRootModule();
+      const moduleId = db.insertModule(rootId, 'service-module', 'Service Module');
+      db.assignSymbolToModule(defId, moduleId);
 
       const flowId = db.insertFlow('TestFlow', defId);
       db.addFlowStep(flowId, 1, defId, moduleId, 'service');
 
       const flowWithSteps = db.getFlowWithSteps(flowId);
-      expect(flowWithSteps!.steps[0].moduleName).toBe('ServiceModule');
+      expect(flowWithSteps!.steps[0].moduleName).toBe('Service Module');
     });
 
     it('returns null for non-existent flow', () => {
@@ -557,8 +560,9 @@ describe('Flow Detection', () => {
       const def2 = createDefinition(fileId, 'Service1', 'function', 15, 25);
       const def3 = createDefinition(fileId, 'Repository1', 'function', 30, 40);
 
-      const moduleId = db.insertModule('TestModule');
-      db.addModuleMember(moduleId, def2);
+      const rootId = db.ensureRootModule();
+      const moduleId = db.insertModule(rootId, 'test-module', 'Test Module');
+      db.assignSymbolToModule(def2, moduleId);
 
       const flowId = db.insertFlow('TestFlow', def1);
       db.addFlowStep(flowId, 1, def1);
@@ -664,13 +668,14 @@ describe('Flow Detection', () => {
       db.setDefinitionMetadata(repoDef, 'domain', '["sales"]');
 
       // Create modules
-      const controllerModule = db.insertModule('SalesAPI', { layer: 'controller' });
-      const serviceModule = db.insertModule('SalesService', { layer: 'service' });
-      const repoModule = db.insertModule('SalesRepository', { layer: 'repository' });
+      const rootId = db.ensureRootModule();
+      const controllerModule = db.insertModule(rootId, 'sales-api', 'Sales API');
+      const serviceModule = db.insertModule(rootId, 'sales-service', 'Sales Service');
+      const repoModule = db.insertModule(rootId, 'sales-repository', 'Sales Repository');
 
-      db.addModuleMember(controllerModule, controllerDef);
-      db.addModuleMember(serviceModule, serviceDef);
-      db.addModuleMember(repoModule, repoDef);
+      db.assignSymbolToModule(controllerDef, controllerModule);
+      db.assignSymbolToModule(serviceDef, serviceModule);
+      db.assignSymbolToModule(repoDef, repoModule);
 
       // Create call relationships
       createCallRelationship(controllerFile, serviceFile, controllerDef, serviceDef, 'salesService', 20);

@@ -427,7 +427,13 @@ The command processes symbols bottom-up (dependencies first), so annotations bui
 
 ### `ats llm modules` - Detect Architectural Modules
 
-Uses graph clustering (Louvain algorithm) on the call graph to automatically detect groups of tightly-coupled symbols. Optionally uses LLM to name and describe the detected modules.
+Uses a two-phase LLM approach to create a hierarchical module structure:
+
+**Phase 1: Module Tree Design**
+The LLM analyzes the overall codebase structure (file paths, symbol patterns, domains) to design a hierarchical module tree with dot-notation paths like `project.backend.services.auth`.
+
+**Phase 2: Symbol Assignment**
+Symbols are assigned to leaf modules in batches. The LLM receives symbol metadata (name, kind, purpose, domain, file path) and assigns each to the most appropriate module.
 
 ```bash
 ats llm modules [flags]
@@ -436,12 +442,10 @@ ats llm modules [flags]
 | Flag | Description |
 |------|-------------|
 | `-d, --database` | Path to database (default: `index.db`) |
-| `--min-size` | Minimum members for a valid module (default: 3) |
-| `--resolution` | Louvain resolution (higher = more modules, default: 1.0) |
+| `-b, --batch-size` | Symbols per assignment batch (default: 30) |
 | `--dry-run` | Show detected modules without persisting |
 | `--force` | Re-detect even if modules exist |
-| `--skip-llm` | Skip LLM naming (use auto-generated names) |
-| `-m, --model` | LLM model for naming (default: sonnet) |
+| `-m, --model` | LLM model for detection (default: sonnet) |
 | `--json` | Output as JSON |
 
 **Examples:**
@@ -450,21 +454,28 @@ ats llm modules [flags]
 ats llm modules
 
 # Dry run to preview detection
-ats llm modules --dry-run --skip-llm
+ats llm modules --dry-run
 
-# Higher resolution for more granular modules
-ats llm modules --resolution 1.5 --min-size 2
+# Use faster model with larger batches
+ats llm modules --model haiku --batch-size 50
 
 # Re-detect and overwrite existing modules
 ats llm modules --force
 ```
 
-**Output:**
-Modules are persisted to the database with:
-- Name and description (auto-generated or LLM-provided)
-- Layer classification (controller, service, repository, util, etc.)
-- Subsystem grouping
-- Member definitions with confidence scores
+**Module Structure:**
+Modules are organized hierarchically with dot-notation paths:
+- `project` - Root module for the codebase
+- `project.backend` - Backend subsystem
+- `project.backend.services` - Service layer
+- `project.backend.services.auth` - Authentication service (leaf with members)
+
+**Web UI:**
+The web UI (`ats web`) displays modules as an interactive tree with:
+- Expandable/collapsible hierarchy
+- Member counts at each level
+- Click to view module members
+- Visual tree lines showing parent-child relationships
 
 ---
 
@@ -547,7 +558,7 @@ ats files orphans             # Find files with no incoming imports
 
 ### `ats modules` - View Detected Modules
 
-Lists modules detected by `ats llm modules`. Modules are groups of tightly-coupled symbols representing architectural boundaries.
+Lists modules detected by `ats llm modules`. Modules are organized hierarchically with dot-notation paths (e.g., `project.backend.services.auth`) representing architectural boundaries.
 
 ```bash
 ats modules [flags]
@@ -556,27 +567,45 @@ ats modules [flags]
 | Flag | Description |
 |------|-------------|
 | `-d, --database` | Path to database (default: `index.db`) |
-| `--layer` | Filter by layer: `controller`, `service`, `repository`, `adapter`, `utility` |
+| `--tree` | Display modules as a hierarchical tree |
 | `--json` | Output as JSON |
 
 **Examples:**
 ```bash
-ats modules                    # List all modules with member counts
-ats modules --layer service    # Only service-layer modules
+ats modules                    # List all modules with paths
+ats modules --tree             # Show as hierarchical tree
 ats modules --json             # JSON output for automation
 ```
 
-**Output:**
+**Output (tree view):**
 ```
-Modules (3 total, 45 members)
+Module Tree (8 modules, 156 symbols assigned)
 
-Name              Layer        Members  Description
-─────────────────────────────────────────────────────
-auth              service      12       Authentication logic
-user-api          controller   8        User endpoints
-database          repository   15       Data access
+project
+├── backend
+│   ├── controllers (12 members) - HTTP request handlers
+│   ├── services (28 members) - Business logic layer
+│   │   ├── auth (8 members) - Authentication logic
+│   │   └── user (10 members) - User management
+│   └── repositories (18 members) - Data access layer
+└── shared
+    └── utils (14 members) - Common utilities
 
-10 definitions not assigned to any module
+15 definitions not assigned to any module
+```
+
+**Output (flat list):**
+```
+Modules (8 total, 156 assigned)
+
+Path                              Members  Description
+────────────────────────────────────────────────────────────
+project                           0        Root module
+project.backend                   0        Backend application
+project.backend.controllers       12       HTTP request handlers
+project.backend.services          28       Business logic layer
+project.backend.services.auth     8        Authentication logic
+...
 ```
 
 #### `ats modules show` - View Module Details
@@ -589,17 +618,18 @@ ats modules show <name> [flags]
 
 **Examples:**
 ```bash
-ats modules show auth              # Show auth module details
-ats modules show user-api --json   # JSON output
+ats modules show auth                        # Show auth module details
+ats modules show project.backend.services    # Show by full path
+ats modules show services --json             # JSON output
 ```
 
 **Output:**
 ```
 Module: auth
-Layer: service
-Description: Authentication logic
+Full Path: project.backend.services.auth
+Description: Authentication and session management
 
-Members (12):
+Members (8):
   Name                  Kind          Location
   ───────────────────────────────────────────────────────
   validateToken         function      src/auth/validate.ts
@@ -880,19 +910,23 @@ ats relationships --count
 
 ### Phase 5: Detect Architecture (Modules & Flows)
 
-Once symbols and relationships are annotated, detect higher-level structures:
+Once symbols are annotated with purpose and domain, detect higher-level structures:
 
 ```bash
-# Detect architectural modules (tightly-coupled symbol groups)
-ats llm modules --dry-run --skip-llm   # Preview
-ats llm modules                         # Detect and persist
+# Detect hierarchical module tree (two-phase LLM approach)
+ats llm modules --dry-run               # Preview module tree
+ats llm modules                          # Detect and persist
+
+# View modules as tree
+ats modules --tree
 
 # Detect execution flows (request paths through the system)
 ats llm flows --dry-run --skip-llm      # Preview
 ats llm flows                           # Detect and persist
 
 # View detected modules and flows via the web UI
-ats browse
+ats web
+# The Modules view shows an interactive tree
 # API endpoints: /api/modules, /api/flows
 ```
 

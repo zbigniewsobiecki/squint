@@ -1,258 +1,252 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildFlowSystemPrompt,
-  buildFlowUserPrompt,
-  type FlowCandidate,
-} from '../../../src/commands/llm/_shared/prompts.js';
+  buildEntryPointSystemPrompt,
+  buildEntryPointUserPrompt,
+  buildFlowConstructionSystemPrompt,
+  buildFlowConstructionUserPrompt,
+  buildGapFillingSystemPrompt,
+  buildGapFillingUserPrompt,
+  formatCoverageStats,
+  type EntryPointCandidate,
+  type FlowConstructionContext,
+  type GapFillingContext,
+} from '../../../src/commands/llm/_shared/flow-prompts.js';
+import type { FlowCoverageStats } from '../../../src/db/schema.js';
 
-describe('Flow Prompts', () => {
-  describe('buildFlowSystemPrompt', () => {
-    it('returns a non-empty system prompt', () => {
-      const prompt = buildFlowSystemPrompt();
+describe('Flow Prompts v2', () => {
+  describe('Entry Point Classification', () => {
+    it('buildEntryPointSystemPrompt returns a non-empty system prompt', () => {
+      const prompt = buildEntryPointSystemPrompt();
       expect(prompt).toBeTruthy();
       expect(prompt.length).toBeGreaterThan(100);
     });
 
-    it('includes instructions for naming flows', () => {
-      const prompt = buildFlowSystemPrompt();
-      expect(prompt).toContain('execution flow');
-      expect(prompt).toContain('CSV');
-      expect(prompt).toContain('flow_id');
-      expect(prompt).toContain('name');
-      expect(prompt).toContain('description');
+    it('includes classification categories', () => {
+      const prompt = buildEntryPointSystemPrompt();
+      expect(prompt).toContain('top_level');
+      expect(prompt).toContain('subflow_candidate');
+      expect(prompt).toContain('internal');
     });
 
-    it('includes naming guidelines', () => {
-      const prompt = buildFlowSystemPrompt();
-      expect(prompt).toContain('PascalCase');
-      expect(prompt).toContain('action-oriented');
+    it('includes CSV format instructions', () => {
+      const prompt = buildEntryPointSystemPrompt();
+      expect(prompt).toContain('CSV');
+      expect(prompt).toContain('type,id,classification,confidence,reason');
+    });
+
+    it('buildEntryPointUserPrompt formats candidates correctly', () => {
+      const candidates: EntryPointCandidate[] = [
+        {
+          id: 42,
+          name: 'UserController',
+          kind: 'class',
+          filePath: '/project/controllers/user.controller.ts',
+          incomingDeps: 5,
+          outgoingDeps: 10,
+          purpose: 'Handles user API requests',
+          domain: ['user-management', 'auth'],
+          role: 'controller',
+        },
+      ];
+
+      const prompt = buildEntryPointUserPrompt(candidates);
+
+      expect(prompt).toContain('## Entry Point Candidates (1)');
+      expect(prompt).toContain('#42: UserController (class)');
+      expect(prompt).toContain('Connectivity: 5 incoming, 10 outgoing');
+      expect(prompt).toContain('Purpose: "Handles user API requests"');
+      expect(prompt).toContain('Domains: user-management, auth');
+      expect(prompt).toContain('Role: controller');
     });
   });
 
-  describe('buildFlowUserPrompt', () => {
-    it('formats a single flow candidate correctly', () => {
-      const candidates: FlowCandidate[] = [
-        {
-          id: 1,
-          entryPointId: 100,
-          entryPointName: 'UserController',
-          entryPointKind: 'class',
-          entryPointFilePath: '/project/controllers/user.controller.ts',
-          steps: [
-            {
-              definitionId: 100,
-              name: 'UserController',
-              kind: 'class',
-              filePath: '/project/controllers/user.controller.ts',
-              depth: 0,
-              moduleId: 1,
-              moduleName: 'UserAPI',
-              layer: 'controller',
-            },
-            {
-              definitionId: 101,
-              name: 'userService',
-              kind: 'function',
-              filePath: '/project/services/user.service.ts',
-              depth: 1,
-              moduleId: 2,
-              moduleName: 'UserService',
-              layer: 'service',
-            },
-          ],
-          modulesCrossed: ['UserAPI', 'UserService'],
-          dominantDomains: ['user-management'],
-        },
-      ];
-
-      const prompt = buildFlowUserPrompt(candidates);
-
-      expect(prompt).toContain('## Execution Flows to Name (1)');
-      expect(prompt).toContain('### Flow #1');
-      expect(prompt).toContain('Entry point: UserController (class)');
-      expect(prompt).toContain('/project/controllers/user.controller.ts');
-      expect(prompt).toContain('Domains: user-management');
-      expect(prompt).toContain('Steps (2 total)');
-      expect(prompt).toContain('1. UserController [controller] (UserAPI)');
-      expect(prompt).toContain('2. userService [service] (UserService)');
-      expect(prompt).toContain('Modules crossed: UserAPI → UserService');
+  describe('Flow Construction', () => {
+    it('buildFlowConstructionSystemPrompt returns a non-empty prompt', () => {
+      const prompt = buildFlowConstructionSystemPrompt();
+      expect(prompt).toBeTruthy();
+      expect(prompt.length).toBeGreaterThan(100);
     });
 
-    it('formats multiple flow candidates', () => {
-      const candidates: FlowCandidate[] = [
-        {
-          id: 1,
-          entryPointId: 100,
-          entryPointName: 'Controller1',
-          entryPointKind: 'function',
-          entryPointFilePath: '/project/c1.ts',
-          steps: [
-            {
-              definitionId: 100,
-              name: 'Controller1',
-              kind: 'function',
-              filePath: '/project/c1.ts',
-              depth: 0,
-              moduleId: null,
-              moduleName: null,
-              layer: null,
-            },
-          ],
-          modulesCrossed: [],
-          dominantDomains: [],
-        },
-        {
-          id: 2,
-          entryPointId: 200,
-          entryPointName: 'Controller2',
-          entryPointKind: 'function',
-          entryPointFilePath: '/project/c2.ts',
-          steps: [
-            {
-              definitionId: 200,
-              name: 'Controller2',
-              kind: 'function',
-              filePath: '/project/c2.ts',
-              depth: 0,
-              moduleId: null,
-              moduleName: null,
-              layer: null,
-            },
-          ],
-          modulesCrossed: [],
-          dominantDomains: [],
-        },
-      ];
-
-      const prompt = buildFlowUserPrompt(candidates);
-
-      expect(prompt).toContain('## Execution Flows to Name (2)');
-      expect(prompt).toContain('### Flow #1');
-      expect(prompt).toContain('### Flow #2');
-      expect(prompt).toContain('Controller1');
-      expect(prompt).toContain('Controller2');
+    it('includes sub-flow instructions', () => {
+      const prompt = buildFlowConstructionSystemPrompt();
+      expect(prompt).toContain('subflow');
+      expect(prompt).toContain('Composite flows');
+      expect(prompt).toContain('is_composite');
     });
 
-    it('handles steps without layer or module info', () => {
-      const candidates: FlowCandidate[] = [
-        {
-          id: 1,
-          entryPointId: 100,
-          entryPointName: 'SimpleController',
-          entryPointKind: 'function',
-          entryPointFilePath: '/project/controller.ts',
-          steps: [
-            {
-              definitionId: 100,
-              name: 'SimpleController',
-              kind: 'function',
-              filePath: '/project/controller.ts',
-              depth: 0,
-              moduleId: null,
-              moduleName: null,
-              layer: null,
-            },
-          ],
-          modulesCrossed: [],
-          dominantDomains: [],
-        },
-      ];
-
-      const prompt = buildFlowUserPrompt(candidates);
-
-      // Should just show name without layer or module decorators
-      expect(prompt).toContain('1. SimpleController');
-      // Should not have [layer] or (module) decorators
-      expect(prompt).not.toContain('[null]');
-      expect(prompt).not.toContain('(null)');
+    it('includes CSV format with step types', () => {
+      const prompt = buildFlowConstructionSystemPrompt();
+      expect(prompt).toContain('type,flow_id,field,value');
+      expect(prompt).toContain('step,');
+      expect(prompt).toContain('subflow:');
+      expect(prompt).toContain('subflow_reason');
     });
 
-    it('truncates steps list at 10 for large flows', () => {
-      const manySteps = Array.from({ length: 15 }, (_, i) => ({
-        definitionId: i,
-        name: `Step${i}`,
-        kind: 'function',
-        filePath: `/project/step${i}.ts`,
-        depth: i,
-        moduleId: null,
-        moduleName: null,
-        layer: null,
-      }));
-
-      const candidates: FlowCandidate[] = [
+    it('buildFlowConstructionUserPrompt formats contexts correctly', () => {
+      const contexts: FlowConstructionContext[] = [
         {
-          id: 1,
-          entryPointId: 0,
-          entryPointName: 'EntryPoint',
-          entryPointKind: 'function',
-          entryPointFilePath: '/project/entry.ts',
-          steps: manySteps,
-          modulesCrossed: [],
-          dominantDomains: [],
+          entryPoint: {
+            id: 42,
+            name: 'UserController',
+            kind: 'class',
+            filePath: '/project/controllers/user.controller.ts',
+            line: 10,
+            endLine: 100,
+            isExported: true,
+            purpose: 'Handles user requests',
+            domain: ['user'],
+            role: 'controller',
+          },
+          neighborhood: {
+            nodes: [
+              {
+                id: 42,
+                name: 'UserController',
+                kind: 'class',
+                filePath: '/project/controllers/user.controller.ts',
+                line: 10,
+                endLine: 100,
+                isExported: true,
+                purpose: 'Handles user requests',
+                domain: ['user'],
+                role: 'controller',
+              },
+              {
+                id: 43,
+                name: 'UserService',
+                kind: 'class',
+                filePath: '/project/services/user.service.ts',
+                line: 5,
+                endLine: 50,
+                isExported: true,
+                purpose: 'User business logic',
+                domain: ['user'],
+                role: 'service',
+              },
+            ],
+            edges: [
+              {
+                fromId: 42,
+                toId: 43,
+                weight: 3,
+                semantic: 'delegates user operations to service layer',
+              },
+            ],
+          },
+          existingFlows: [],
+          existingSubflows: ['ValidateUser'],
         },
       ];
 
-      const prompt = buildFlowUserPrompt(candidates);
+      const prompt = buildFlowConstructionUserPrompt(contexts);
 
-      expect(prompt).toContain('Steps (15 total)');
-      expect(prompt).toContain('Step0');
-      expect(prompt).toContain('Step9');
-      expect(prompt).not.toContain('11. Step10');
-      expect(prompt).toContain('... and 5 more steps');
+      expect(prompt).toContain('## Available Sub-flows');
+      expect(prompt).toContain('ValidateUser');
+      expect(prompt).toContain('### Flow 1: Entry Point #42 - UserController');
+      expect(prompt).toContain('**Call Graph Neighborhood:**');
+      expect(prompt).toContain('#42: UserController (class) [controller]');
+      expect(prompt).toContain('**Call Relationships:**');
+      expect(prompt).toContain('UserController (#42) → UserService (#43)');
+      expect(prompt).toContain('delegates user operations to service layer');
+    });
+  });
+
+  describe('Gap Filling', () => {
+    it('buildGapFillingSystemPrompt returns a non-empty prompt', () => {
+      const prompt = buildGapFillingSystemPrompt();
+      expect(prompt).toBeTruthy();
+      expect(prompt.length).toBeGreaterThan(100);
     });
 
-    it('omits modules crossed when empty', () => {
-      const candidates: FlowCandidate[] = [
-        {
-          id: 1,
-          entryPointId: 100,
-          entryPointName: 'Controller',
-          entryPointKind: 'function',
-          entryPointFilePath: '/project/controller.ts',
-          steps: [],
-          modulesCrossed: [],
-          dominantDomains: [],
-        },
-      ];
-
-      const prompt = buildFlowUserPrompt(candidates);
-      expect(prompt).not.toContain('Modules crossed:');
+    it('includes suggestion types', () => {
+      const prompt = buildGapFillingSystemPrompt();
+      expect(prompt).toContain('new_flow');
+      expect(prompt).toContain('add_to_existing');
+      expect(prompt).toContain('new_subflow');
     });
 
-    it('omits domains when empty', () => {
-      const candidates: FlowCandidate[] = [
-        {
-          id: 1,
-          entryPointId: 100,
-          entryPointName: 'Controller',
-          entryPointKind: 'function',
-          entryPointFilePath: '/project/controller.ts',
-          steps: [],
-          modulesCrossed: [],
-          dominantDomains: [],
+    it('buildGapFillingUserPrompt formats context correctly', () => {
+      const context: GapFillingContext = {
+        uncoveredSymbols: [
+          {
+            id: 89,
+            name: 'validatePayment',
+            kind: 'function',
+            filePath: '/project/utils/payment.ts',
+            purpose: 'Validates payment details',
+            domain: ['payments'],
+            role: 'utility',
+            incomingDeps: 12,
+            outgoingDeps: 3,
+          },
+        ],
+        existingFlows: [
+          {
+            id: 1,
+            name: 'CreateSale',
+            description: 'Processes a new sale',
+            stepCount: 5,
+          },
+        ],
+        coverageStats: {
+          covered: 50,
+          total: 100,
+          percentage: 50.0,
         },
-      ];
+      };
 
-      const prompt = buildFlowUserPrompt(candidates);
-      expect(prompt).not.toContain('Domains:');
+      const prompt = buildGapFillingUserPrompt(context);
+
+      expect(prompt).toContain('## Current Coverage');
+      expect(prompt).toContain('50/100 symbols covered (50.0%)');
+      expect(prompt).toContain('## Existing Flows');
+      expect(prompt).toContain('[1] CreateSale (5 steps): Processes a new sale');
+      expect(prompt).toContain('## Uncovered Important Symbols (1)');
+      expect(prompt).toContain('#89: validatePayment (function)');
+      expect(prompt).toContain('Connectivity: 12 incoming, 3 outgoing');
     });
+  });
 
-    it('includes CSV format request at end', () => {
-      const candidates: FlowCandidate[] = [
-        {
-          id: 1,
-          entryPointId: 100,
-          entryPointName: 'Controller',
-          entryPointKind: 'function',
-          entryPointFilePath: '/project/controller.ts',
-          steps: [],
-          modulesCrossed: [],
-          dominantDomains: [],
-        },
-      ];
+  describe('Coverage Stats Formatting', () => {
+    it('formats coverage stats correctly', () => {
+      const stats: FlowCoverageStats = {
+        totalDefinitions: 100,
+        coveredByFlows: 75,
+        coveragePercentage: 75.0,
+        topLevelFlows: 5,
+        subFlows: 3,
+        avgCompositionDepth: 1.5,
+        uncoveredEntryPoints: [
+          {
+            id: 99,
+            name: 'UncoveredHandler',
+            kind: 'function',
+            filePath: '/project/handlers/uncovered.ts',
+            incomingDeps: 0,
+            outgoingDeps: 8,
+          },
+        ],
+        uncoveredHighConnectivity: [],
+        orphanedSubflows: [],
+        coverageByDomain: new Map([
+          ['auth', { covered: 10, total: 15 }],
+          ['payments', { covered: 5, total: 10 }],
+        ]),
+      };
 
-      const prompt = buildFlowUserPrompt(candidates);
-      expect(prompt).toContain('Provide flow names and descriptions in CSV format.');
+      const formatted = formatCoverageStats(stats);
+
+      expect(formatted).toContain('## Flow Coverage Statistics');
+      expect(formatted).toContain('Total definitions: 100');
+      expect(formatted).toContain('Covered by flows: 75 (75.0%)');
+      expect(formatted).toContain('Top-level flows: 5');
+      expect(formatted).toContain('Sub-flows: 3');
+      expect(formatted).toContain('Avg composition depth: 1.50');
+      expect(formatted).toContain('### Uncovered Entry Points');
+      expect(formatted).toContain('UncoveredHandler (#99): 8 outgoing deps');
+      expect(formatted).toContain('### Coverage by Domain');
+      expect(formatted).toContain('auth: 10/15 (66.7%)');
+      expect(formatted).toContain('payments: 5/10 (50.0%)');
     });
   });
 });

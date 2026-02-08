@@ -7,7 +7,7 @@ export default class Modules extends Command {
 
   static override examples = [
     '<%= config.bin %> modules',
-    '<%= config.bin %> modules --layer service',
+    '<%= config.bin %> modules --tree',
     '<%= config.bin %> modules --json',
     '<%= config.bin %> modules -d ./my-index.db',
   ];
@@ -15,8 +15,9 @@ export default class Modules extends Command {
   static override flags = {
     database: SharedFlags.database,
     json: SharedFlags.json,
-    layer: Flags.string({
-      description: 'Filter by layer (controller, service, repository, adapter, utility)',
+    tree: Flags.boolean({
+      description: 'Show modules as a tree structure',
+      default: false,
     }),
   };
 
@@ -27,69 +28,85 @@ export default class Modules extends Command {
       const allModules = db.getAllModulesWithMembers();
       const stats = db.getModuleStats();
 
-      // Filter by layer if specified
-      const modules = flags.layer
-        ? allModules.filter(m => m.layer === flags.layer)
-        : allModules;
-
       const jsonData = {
-        modules: modules.map(m => ({
+        modules: allModules.map(m => ({
           id: m.id,
+          parentId: m.parentId,
+          slug: m.slug,
+          fullPath: m.fullPath,
           name: m.name,
           description: m.description,
-          layer: m.layer,
-          subsystem: m.subsystem,
+          depth: m.depth,
           memberCount: m.members.length,
         })),
         stats: {
           moduleCount: stats.moduleCount,
-          memberCount: stats.memberCount,
-          avgMembersPerModule: Math.round(stats.avgMembersPerModule * 10) / 10,
-          unassignedDefinitions: stats.unassignedDefinitions,
+          assignedSymbols: stats.assigned,
+          unassignedSymbols: stats.unassigned,
         },
       };
 
       outputJsonOrPlain(this, flags.json, jsonData, () => {
-        if (modules.length === 0) {
-          if (flags.layer) {
-            this.log(chalk.gray(`No modules found with layer "${flags.layer}".`));
-          } else {
-            this.log(chalk.gray('No modules found. Use `ats llm modules` to detect modules.'));
-          }
+        if (allModules.length === 0) {
+          this.log(chalk.gray('No modules found. Use `ats llm modules` to create modules.'));
           return;
         }
 
-        this.log(`Modules (${chalk.cyan(String(modules.length))} total, ${chalk.cyan(String(stats.memberCount))} members)`);
+        this.log(`Modules (${chalk.cyan(String(allModules.length))} total, ${chalk.cyan(String(stats.assigned))} symbols assigned)`);
         this.log('');
 
-        // Calculate column widths
-        const nameWidth = Math.max(16, ...modules.map(m => m.name.length));
-        const layerWidth = 12;
-        const membersWidth = 8;
+        if (flags.tree) {
+          // Tree display
+          const tree = db.getModuleTree();
+          if (tree) {
+            this.printTree(tree, '', true);
+          }
+        } else {
+          // Table display
+          const pathWidth = Math.max(30, ...allModules.map(m => m.fullPath.length));
+          const nameWidth = Math.max(16, ...allModules.map(m => m.name.length));
+          const membersWidth = 8;
 
-        // Header
-        this.log(
-          chalk.gray('Name'.padEnd(nameWidth)) + '  ' +
-          chalk.gray('Layer'.padEnd(layerWidth)) + '  ' +
-          chalk.gray('Members'.padEnd(membersWidth)) + '  ' +
-          chalk.gray('Description')
-        );
-        this.log(tableSeparator(nameWidth + layerWidth + membersWidth + 40));
+          // Header
+          this.log(
+            chalk.gray('Path'.padEnd(pathWidth)) + '  ' +
+            chalk.gray('Name'.padEnd(nameWidth)) + '  ' +
+            chalk.gray('Members'.padEnd(membersWidth))
+          );
+          this.log(tableSeparator(pathWidth + nameWidth + membersWidth + 10));
 
-        // Rows
-        for (const m of modules) {
-          const name = m.name.padEnd(nameWidth);
-          const layer = (m.layer ?? '-').padEnd(layerWidth);
-          const members = String(m.members.length).padStart(membersWidth - 1).padEnd(membersWidth);
-          const desc = m.description ? (m.description.length > 40 ? m.description.slice(0, 37) + '...' : m.description) : '';
+          // Rows
+          for (const m of allModules) {
+            const path = m.fullPath.padEnd(pathWidth);
+            const name = m.name.padEnd(nameWidth);
+            const members = String(m.members.length).padStart(membersWidth - 1).padEnd(membersWidth);
 
-          this.log(`${chalk.cyan(name)}  ${chalk.yellow(layer)}  ${members}  ${chalk.gray(desc)}`);
+            this.log(`${chalk.cyan(path)}  ${name}  ${members}`);
+          }
         }
 
         // Summary
         this.log('');
-        this.log(chalk.gray(`${stats.unassignedDefinitions} definitions not assigned to any module`));
+        this.log(chalk.gray(`${stats.unassigned} symbols not assigned to any module`));
       });
     });
+  }
+
+  private printTree(
+    node: { fullPath: string; name: string; description: string | null; children: unknown[] },
+    prefix: string,
+    isLast: boolean,
+  ): void {
+    const connector = isLast ? '└── ' : '├── ';
+    const line = prefix + connector + chalk.cyan(node.name);
+    const desc = node.description ? chalk.gray(` - ${node.description}`) : '';
+    this.log(line + desc);
+
+    const children = node.children as typeof node[];
+    const newPrefix = prefix + (isLast ? '    ' : '│   ');
+
+    for (let i = 0; i < children.length; i++) {
+      this.printTree(children[i], newPrefix, i === children.length - 1);
+    }
   }
 }

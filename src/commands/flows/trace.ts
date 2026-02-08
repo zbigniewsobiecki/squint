@@ -103,7 +103,7 @@ export default class FlowsTrace extends Command {
   }
 
   private buildTree(
-    db: ReturnType<typeof import('../../db/database.js').IndexDatabase.prototype.getDefinitionById> extends infer T ? { getDefinitionById: (id: number) => T; getDefinitionModule: (id: number) => { module: { id: number; name: string; layer: string | null }; cohesion: number | null } | null; getCallGraph: () => Array<{ fromId: number; toId: number; weight: number }> } : never,
+    db: { getDefinitionById: (id: number) => { id: number; name: string; kind: string; filePath: string; line: number } | null; getDefinitionModule: (id: number) => { module: { id: number; name: string } } | null; getCallGraph: () => Array<{ fromId: number; toId: number; weight: number }> },
     rootId: number,
     trace: Array<{ definitionId: number; depth: number; moduleId: number | null; layer: string | null }>
   ): TraceNode {
@@ -158,7 +158,7 @@ export default class FlowsTrace extends Command {
         depth,
         moduleId: moduleInfo?.module.id ?? null,
         moduleName: moduleInfo?.module.name ?? null,
-        layer: moduleInfo?.module.layer ?? null,
+        layer: null, // Layer is no longer part of module tree
         children,
       };
     };

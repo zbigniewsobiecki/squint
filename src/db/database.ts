@@ -16,9 +16,9 @@ export {
   type Domain,
   type DomainWithCount,
   type EnhancedRelationshipContext,
-  type ModuleLayer,
   type Module,
   type ModuleMember,
+  type ModuleTreeNode,
   type ModuleWithMembers,
   type CallGraphEdge,
   type Flow,
@@ -55,8 +55,8 @@ import {
   type Domain,
   type DomainWithCount,
   type EnhancedRelationshipContext,
-  type ModuleLayer,
   type Module,
+  type ModuleTreeNode,
   type ModuleWithMembers,
   type CallGraphEdge,
   type Flow,
@@ -2710,12 +2710,12 @@ export class IndexDatabase implements IIndexWriter {
   }
 
   // ============================================
-  // Module detection methods
+  // Module tree methods
   // ============================================
 
   /**
-   * Ensure the modules and module_members tables exist (for existing databases).
-   * Called automatically by module methods to support legacy databases.
+   * Ensure the modules and module_members tables exist with tree structure.
+   * Called automatically by module methods to support existing databases.
    */
   private ensureModulesTables(): void {
     const tableExists = this.db.prepare(`
@@ -2726,24 +2726,67 @@ export class IndexDatabase implements IIndexWriter {
       this.db.exec(`
         CREATE TABLE modules (
           id INTEGER PRIMARY KEY,
+          parent_id INTEGER REFERENCES modules(id) ON DELETE CASCADE,
+          slug TEXT NOT NULL,
+          full_path TEXT NOT NULL UNIQUE,
           name TEXT NOT NULL,
           description TEXT,
-          layer TEXT,
-          subsystem TEXT,
-          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          depth INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(parent_id, slug)
         );
+
+        CREATE INDEX idx_modules_parent ON modules(parent_id);
+        CREATE INDEX idx_modules_path ON modules(full_path);
+        CREATE INDEX idx_modules_depth ON modules(depth);
 
         CREATE TABLE module_members (
-          module_id INTEGER NOT NULL,
-          definition_id INTEGER NOT NULL,
-          cohesion REAL,
-          PRIMARY KEY (module_id, definition_id),
-          FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE,
-          FOREIGN KEY (definition_id) REFERENCES definitions(id) ON DELETE CASCADE
+          module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+          definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+          assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (definition_id)
         );
 
-        CREATE INDEX idx_module_members_def ON module_members(definition_id);
+        CREATE INDEX idx_module_members_module ON module_members(module_id);
       `);
+    } else {
+      // Check if we need to migrate from old schema to new schema
+      const hasSlug = this.db.prepare(`
+        SELECT COUNT(*) as count FROM pragma_table_info('modules') WHERE name='slug'
+      `).get() as { count: number };
+
+      if (hasSlug.count === 0) {
+        // Old schema detected - drop and recreate
+        this.db.exec(`
+          DROP TABLE IF EXISTS module_members;
+          DROP TABLE IF EXISTS modules;
+
+          CREATE TABLE modules (
+            id INTEGER PRIMARY KEY,
+            parent_id INTEGER REFERENCES modules(id) ON DELETE CASCADE,
+            slug TEXT NOT NULL,
+            full_path TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            description TEXT,
+            depth INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(parent_id, slug)
+          );
+
+          CREATE INDEX idx_modules_parent ON modules(parent_id);
+          CREATE INDEX idx_modules_path ON modules(full_path);
+          CREATE INDEX idx_modules_depth ON modules(depth);
+
+          CREATE TABLE module_members (
+            module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+            definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+            assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (definition_id)
+          );
+
+          CREATE INDEX idx_module_members_module ON module_members(module_id);
+        `);
+      }
     }
   }
 
@@ -2812,103 +2855,292 @@ export class IndexDatabase implements IIndexWriter {
   }
 
   /**
-   * Insert a new module.
+   * Ensure the root "project" module exists and return its ID.
    */
-  insertModule(
-    name: string,
-    options?: {
-      description?: string;
-      layer?: ModuleLayer;
-      subsystem?: string;
-    }
-  ): number {
+  ensureRootModule(): number {
     this.ensureModulesTables();
+
+    const existing = this.db.prepare(`
+      SELECT id FROM modules WHERE full_path = 'project'
+    `).get() as { id: number } | undefined;
+
+    if (existing) return existing.id;
+
     const stmt = this.db.prepare(`
-      INSERT INTO modules (name, description, layer, subsystem)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO modules (parent_id, slug, full_path, name, description, depth)
+      VALUES (NULL, 'project', 'project', 'Project', 'Root module for the project', 0)
     `);
-    const result = stmt.run(
-      name,
-      options?.description ?? null,
-      options?.layer ?? null,
-      options?.subsystem ?? null
-    );
+    const result = stmt.run();
     return result.lastInsertRowid as number;
   }
 
   /**
-   * Add a member to a module.
+   * Insert a new module in the tree.
    */
-  addModuleMember(moduleId: number, definitionId: number, cohesion?: number): void {
+  insertModule(
+    parentId: number | null,
+    slug: string,
+    name: string,
+    description?: string
+  ): number {
     this.ensureModulesTables();
+
+    // Calculate full_path and depth
+    let fullPath: string;
+    let depth: number;
+
+    if (parentId === null) {
+      fullPath = slug;
+      depth = 0;
+    } else {
+      const parent = this.db.prepare(`
+        SELECT full_path, depth FROM modules WHERE id = ?
+      `).get(parentId) as { full_path: string; depth: number } | undefined;
+
+      if (!parent) {
+        throw new Error(`Parent module ${parentId} not found`);
+      }
+
+      fullPath = `${parent.full_path}.${slug}`;
+      depth = parent.depth + 1;
+    }
+
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO module_members (module_id, definition_id, cohesion)
-      VALUES (?, ?, ?)
+      INSERT INTO modules (parent_id, slug, full_path, name, description, depth)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(moduleId, definitionId, cohesion ?? null);
+    const result = stmt.run(parentId, slug, fullPath, name, description ?? null, depth);
+    return result.lastInsertRowid as number;
   }
 
   /**
-   * Get all modules.
+   * Get a module by its full path.
    */
-  getModules(): Module[] {
+  getModuleByPath(fullPath: string): Module | null {
     this.ensureModulesTables();
     const stmt = this.db.prepare(`
       SELECT
         id,
+        parent_id as parentId,
+        slug,
+        full_path as fullPath,
         name,
         description,
-        layer,
-        subsystem,
+        depth,
         created_at as createdAt
       FROM modules
-      ORDER BY name
+      WHERE full_path = ?
+    `);
+    return stmt.get(fullPath) as Module | null;
+  }
+
+  /**
+   * Get a module by ID.
+   */
+  getModuleById(id: number): Module | null {
+    this.ensureModulesTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        parent_id as parentId,
+        slug,
+        full_path as fullPath,
+        name,
+        description,
+        depth,
+        created_at as createdAt
+      FROM modules
+      WHERE id = ?
+    `);
+    return stmt.get(id) as Module | null;
+  }
+
+  /**
+   * Get direct children of a module.
+   */
+  getModuleChildren(moduleId: number): Module[] {
+    this.ensureModulesTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        parent_id as parentId,
+        slug,
+        full_path as fullPath,
+        name,
+        description,
+        depth,
+        created_at as createdAt
+      FROM modules
+      WHERE parent_id = ?
+      ORDER BY slug
+    `);
+    return stmt.all(moduleId) as Module[];
+  }
+
+  /**
+   * Get all modules as a flat list.
+   */
+  getAllModules(): Module[] {
+    this.ensureModulesTables();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        parent_id as parentId,
+        slug,
+        full_path as fullPath,
+        name,
+        description,
+        depth,
+        created_at as createdAt
+      FROM modules
+      ORDER BY depth, full_path
     `);
     return stmt.all() as Module[];
   }
 
   /**
-   * Get a module by ID with all its members.
+   * Get the module tree as a recursive structure.
    */
-  getModuleWithMembers(moduleId: number): ModuleWithMembers | null {
+  getModuleTree(): ModuleTreeNode | null {
     this.ensureModulesTables();
 
-    const moduleStmt = this.db.prepare(`
-      SELECT
-        id,
-        name,
-        description,
-        layer,
-        subsystem,
-        created_at as createdAt
-      FROM modules
-      WHERE id = ?
-    `);
-    const module = moduleStmt.get(moduleId) as Module | undefined;
-    if (!module) return null;
+    const modules = this.getAllModules();
+    if (modules.length === 0) return null;
 
-    const membersStmt = this.db.prepare(`
+    // Build a map for quick lookup
+    const moduleMap = new Map<number, ModuleTreeNode>();
+    for (const m of modules) {
+      moduleMap.set(m.id, { ...m, children: [] });
+    }
+
+    // Build tree structure
+    let root: ModuleTreeNode | null = null;
+    for (const m of modules) {
+      const node = moduleMap.get(m.id)!;
+      if (m.parentId === null) {
+        root = node;
+      } else {
+        const parent = moduleMap.get(m.parentId);
+        if (parent) {
+          parent.children.push(node);
+        }
+      }
+    }
+
+    return root;
+  }
+
+  /**
+   * Assign a symbol (definition) to a module.
+   */
+  assignSymbolToModule(definitionId: number, moduleId: number): void {
+    this.ensureModulesTables();
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO module_members (module_id, definition_id)
+      VALUES (?, ?)
+    `);
+    stmt.run(moduleId, definitionId);
+  }
+
+  /**
+   * Get all symbols not yet assigned to any module.
+   */
+  getUnassignedSymbols(): AnnotatedSymbolInfo[] {
+    this.ensureModulesTables();
+
+    const stmt = this.db.prepare(`
       SELECT
-        mm.definition_id as definitionId,
+        d.id,
         d.name,
         d.kind,
         f.path as filePath,
-        mm.cohesion
+        d.line,
+        d.end_line as endLine,
+        d.is_exported as isExported,
+        MAX(CASE WHEN dm.key = 'purpose' THEN dm.value END) as purpose,
+        MAX(CASE WHEN dm.key = 'domain' THEN dm.value END) as domain,
+        MAX(CASE WHEN dm.key = 'role' THEN dm.value END) as role
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      LEFT JOIN definition_metadata dm ON dm.definition_id = d.id
+      WHERE d.id NOT IN (SELECT definition_id FROM module_members)
+      GROUP BY d.id
+      ORDER BY f.path, d.line
+    `);
+
+    const rows = stmt.all() as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      line: number;
+      endLine: number;
+      isExported: number;
+      purpose: string | null;
+      domain: string | null;
+      role: string | null;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      filePath: row.filePath,
+      line: row.line,
+      endLine: row.endLine,
+      isExported: row.isExported === 1,
+      purpose: row.purpose,
+      domain: row.domain ? (JSON.parse(row.domain) as string[]) : null,
+      role: row.role,
+    }));
+  }
+
+  /**
+   * Get symbols assigned to a specific module.
+   */
+  getModuleSymbols(moduleId: number): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    line: number;
+  }> {
+    this.ensureModulesTables();
+
+    const stmt = this.db.prepare(`
+      SELECT
+        d.id,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        d.line
       FROM module_members mm
       JOIN definitions d ON mm.definition_id = d.id
       JOIN files f ON d.file_id = f.id
       WHERE mm.module_id = ?
       ORDER BY f.path, d.line
     `);
-    const members = membersStmt.all(moduleId) as Array<{
-      definitionId: number;
+
+    return stmt.all(moduleId) as Array<{
+      id: number;
       name: string;
       kind: string;
       filePath: string;
-      cohesion: number | null;
+      line: number;
     }>;
+  }
 
-    return { ...module, members };
+  /**
+   * Get a module with all its members.
+   */
+  getModuleWithMembers(moduleId: number): ModuleWithMembers | null {
+    this.ensureModulesTables();
+
+    const module = this.getModuleById(moduleId);
+    if (!module) return null;
+
+    const members = this.getModuleSymbols(moduleId);
+    return { ...module, members: members.map(m => ({ ...m, definitionId: m.id })) };
   }
 
   /**
@@ -2916,45 +3148,39 @@ export class IndexDatabase implements IIndexWriter {
    */
   getAllModulesWithMembers(): ModuleWithMembers[] {
     this.ensureModulesTables();
-
-    const modules = this.getModules();
+    const modules = this.getAllModules();
     return modules.map(m => {
-      const withMembers = this.getModuleWithMembers(m.id);
-      return withMembers!;
+      const members = this.getModuleSymbols(m.id);
+      return { ...m, members: members.map(mem => ({ ...mem, definitionId: mem.id })) };
     });
   }
 
   /**
-   * Get module membership for a definition.
+   * Delete all modules and their memberships.
    */
-  getDefinitionModule(definitionId: number): { module: Module; cohesion: number | null } | null {
+  clearModules(): void {
     this.ensureModulesTables();
-    const stmt = this.db.prepare(`
-      SELECT
-        m.id,
-        m.name,
-        m.description,
-        m.layer,
-        m.subsystem,
-        m.created_at as createdAt,
-        mm.cohesion
-      FROM module_members mm
-      JOIN modules m ON mm.module_id = m.id
-      WHERE mm.definition_id = ?
-    `);
-    const row = stmt.get(definitionId) as (Module & { cohesion: number | null }) | undefined;
-    if (!row) return null;
+    this.db.exec('DELETE FROM modules');
+  }
+
+  /**
+   * Get module statistics.
+   */
+  getModuleStats(): {
+    moduleCount: number;
+    assigned: number;
+    unassigned: number;
+  } {
+    this.ensureModulesTables();
+
+    const moduleCount = (this.db.prepare('SELECT COUNT(*) as count FROM modules').get() as { count: number }).count;
+    const assigned = (this.db.prepare('SELECT COUNT(*) as count FROM module_members').get() as { count: number }).count;
+    const totalDefs = (this.db.prepare('SELECT COUNT(*) as count FROM definitions').get() as { count: number }).count;
 
     return {
-      module: {
-        id: row.id,
-        name: row.name,
-        description: row.description,
-        layer: row.layer,
-        subsystem: row.subsystem,
-        createdAt: row.createdAt,
-      },
-      cohesion: row.cohesion,
+      moduleCount,
+      assigned,
+      unassigned: totalDefs - assigned,
     };
   }
 
@@ -2969,139 +3195,27 @@ export class IndexDatabase implements IIndexWriter {
   }
 
   /**
-   * Update a module's metadata.
+   * Get module membership for a definition.
    */
-  updateModule(
-    moduleId: number,
-    updates: {
-      name?: string;
-      description?: string;
-      layer?: ModuleLayer;
-      subsystem?: string;
-    }
-  ): boolean {
+  getDefinitionModule(definitionId: number): { module: Module } | null {
     this.ensureModulesTables();
-
-    const sets: string[] = [];
-    const params: (string | null)[] = [];
-
-    if (updates.name !== undefined) {
-      sets.push('name = ?');
-      params.push(updates.name);
-    }
-    if (updates.description !== undefined) {
-      sets.push('description = ?');
-      params.push(updates.description);
-    }
-    if (updates.layer !== undefined) {
-      sets.push('layer = ?');
-      params.push(updates.layer);
-    }
-    if (updates.subsystem !== undefined) {
-      sets.push('subsystem = ?');
-      params.push(updates.subsystem);
-    }
-
-    if (sets.length === 0) return false;
-
-    params.push(String(moduleId));
-    const stmt = this.db.prepare(`UPDATE modules SET ${sets.join(', ')} WHERE id = ?`);
-    const result = stmt.run(...params);
-    return result.changes > 0;
-  }
-
-  /**
-   * Delete all modules and their memberships.
-   */
-  clearModules(): number {
-    this.ensureModulesTables();
-    const stmt = this.db.prepare('DELETE FROM modules');
-    const result = stmt.run();
-    return result.changes;
-  }
-
-  /**
-   * Get module statistics.
-   */
-  getModuleStats(): {
-    moduleCount: number;
-    memberCount: number;
-    avgMembersPerModule: number;
-    unassignedDefinitions: number;
-  } {
-    this.ensureModulesTables();
-
-    const moduleCount = this.getModuleCount();
-    const memberCountStmt = this.db.prepare('SELECT COUNT(*) as count FROM module_members');
-    const memberCount = (memberCountStmt.get() as { count: number }).count;
-
-    const defCountStmt = this.db.prepare('SELECT COUNT(*) as count FROM definitions');
-    const totalDefinitions = (defCountStmt.get() as { count: number }).count;
-
-    return {
-      moduleCount,
-      memberCount,
-      avgMembersPerModule: moduleCount > 0 ? memberCount / moduleCount : 0,
-      unassignedDefinitions: totalDefinitions - memberCount,
-    };
-  }
-
-  /**
-   * Get definitions not assigned to any module.
-   * Optionally filter by kind (e.g., 'interface', 'type', 'enum').
-   */
-  getUnassignedDefinitions(kinds?: string[]): Array<{
-    id: number;
-    fileId: number;
-    name: string;
-    kind: string;
-    filePath: string;
-    line: number;
-    isExported: boolean;
-  }> {
-    this.ensureModulesTables();
-
-    let sql = `
+    const stmt = this.db.prepare(`
       SELECT
-        d.id,
-        d.file_id as fileId,
-        d.name,
-        d.kind,
-        f.path as filePath,
-        d.line,
-        d.is_exported as isExported
-      FROM definitions d
-      JOIN files f ON d.file_id = f.id
-      WHERE d.id NOT IN (SELECT definition_id FROM module_members)
-    `;
-
-    if (kinds && kinds.length > 0) {
-      const placeholders = kinds.map(() => '?').join(', ');
-      sql += ` AND d.kind IN (${placeholders})`;
-    }
-
-    sql += ' ORDER BY f.path, d.line';
-
-    const stmt = this.db.prepare(sql);
-    const rows = (kinds && kinds.length > 0 ? stmt.all(...kinds) : stmt.all()) as Array<{
-      id: number;
-      fileId: number;
-      name: string;
-      kind: string;
-      filePath: string;
-      line: number;
-      isExported: number;
-    }>;
-
-    return rows.map(row => ({
-      id: row.id,
-      fileId: row.fileId,
-      name: row.name,
-      kind: row.kind,
-      filePath: row.filePath,
-      line: row.line,
-      isExported: row.isExported === 1,
-    }));
+        m.id,
+        m.parent_id as parentId,
+        m.slug,
+        m.full_path as fullPath,
+        m.name,
+        m.description,
+        m.depth,
+        m.created_at as createdAt
+      FROM module_members mm
+      JOIN modules m ON mm.module_id = m.id
+      WHERE mm.definition_id = ?
+    `);
+    const module = stmt.get(definitionId) as Module | undefined;
+    if (!module) return null;
+    return { module };
   }
 
   /**
@@ -3448,7 +3562,7 @@ export class IndexDatabase implements IIndexWriter {
         depth: info.depth,
         usageLine: info.usageLine,
         moduleId: moduleInfo?.module.id ?? null,
-        layer: moduleInfo?.module.layer ?? null,
+        layer: null, // Layer is now determined at flow step level, not from modules
       });
     }
 

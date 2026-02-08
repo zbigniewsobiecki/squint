@@ -83,25 +83,29 @@ describe('modules commands', () => {
       endPosition: { row: 15, column: 1 },
     });
 
-    // Create modules
-    const authModuleId = db.insertModule('auth', {
-      description: 'Authentication and authorization logic',
-      layer: 'service',
-      subsystem: 'security',
-    });
+    // Create module tree
+    const rootId = db.ensureRootModule();
 
-    const userModuleId = db.insertModule('user-api', {
-      description: 'User management endpoints',
-      layer: 'controller',
-      subsystem: 'user-management',
-    });
+    const authModuleId = db.insertModule(
+      rootId,
+      'auth',
+      'Auth',
+      'Authentication and authorization logic'
+    );
 
-    // Add members to modules
-    db.addModuleMember(authModuleId, validateTokenId, 0.95);
-    db.addModuleMember(authModuleId, hashPasswordId, 0.90);
-    db.addModuleMember(authModuleId, authServiceId, 0.85);
-    db.addModuleMember(userModuleId, getUserId, 0.88);
-    db.addModuleMember(userModuleId, createUserId, 0.92);
+    const userModuleId = db.insertModule(
+      rootId,
+      'user-api',
+      'User API',
+      'User management endpoints'
+    );
+
+    // Assign symbols to modules
+    db.assignSymbolToModule(validateTokenId, authModuleId);
+    db.assignSymbolToModule(hashPasswordId, authModuleId);
+    db.assignSymbolToModule(authServiceId, authModuleId);
+    db.assignSymbolToModule(getUserId, userModuleId);
+    db.assignSymbolToModule(createUserId, userModuleId);
 
     db.close();
   });
@@ -128,21 +132,13 @@ describe('modules commands', () => {
     it('lists all modules with member counts', () => {
       const output = runCommand(`modules -d ${dbPath}`);
       expect(output).toContain('Modules');
-      expect(output).toContain('auth');
-      expect(output).toContain('user-api');
-      expect(output).toContain('service');
-      expect(output).toContain('controller');
+      expect(output).toContain('project.auth');
+      expect(output).toContain('project.user-api');
     });
 
     it('shows total member count', () => {
       const output = runCommand(`modules -d ${dbPath}`);
-      expect(output).toContain('5 members');
-    });
-
-    it('filters by layer', () => {
-      const output = runCommand(`modules --layer service -d ${dbPath}`);
-      expect(output).toContain('auth');
-      expect(output).not.toContain('user-api');
+      expect(output).toContain('5 symbols assigned');
     });
 
     it('shows no modules message when empty', () => {
@@ -160,31 +156,38 @@ describe('modules commands', () => {
       const output = runCommand(`modules --json -d ${dbPath}`);
       const json = JSON.parse(output);
       expect(json.modules).toBeDefined();
-      expect(json.modules).toHaveLength(2);
+      expect(json.modules).toHaveLength(3); // root + 2 modules
       expect(json.stats).toBeDefined();
-      expect(json.stats.moduleCount).toBe(2);
-      expect(json.stats.memberCount).toBe(5);
+      expect(json.stats.moduleCount).toBe(3);
+      expect(json.stats.assignedSymbols).toBe(5);
     });
 
     it('includes module descriptions in JSON output', () => {
       const output = runCommand(`modules --json -d ${dbPath}`);
       const json = JSON.parse(output);
-      const authModule = json.modules.find((m: { name: string }) => m.name === 'auth');
+      const authModule = json.modules.find((m: { fullPath: string }) => m.fullPath === 'project.auth');
       expect(authModule.description).toBe('Authentication and authorization logic');
-      expect(authModule.layer).toBe('service');
+      expect(authModule.fullPath).toBe('project.auth');
+    });
+
+    it('can display tree structure', () => {
+      const output = runCommand(`modules --tree -d ${dbPath}`);
+      expect(output).toContain('Project');
+      expect(output).toContain('Auth');
+      expect(output).toContain('User API');
     });
   });
 
   describe('modules show', () => {
     it('shows module details', () => {
-      const output = runCommand(`modules show auth -d ${dbPath}`);
-      expect(output).toContain('Module: auth');
-      expect(output).toContain('Layer: service');
+      const output = runCommand(`modules show project.auth -d ${dbPath}`);
+      expect(output).toContain('Module: Auth');
+      expect(output).toContain('project.auth');
       expect(output).toContain('Authentication and authorization logic');
     });
 
     it('lists all members', () => {
-      const output = runCommand(`modules show auth -d ${dbPath}`);
+      const output = runCommand(`modules show project.auth -d ${dbPath}`);
       expect(output).toContain('Members (3)');
       expect(output).toContain('validateToken');
       expect(output).toContain('hashPassword');
@@ -192,19 +195,19 @@ describe('modules commands', () => {
     });
 
     it('shows member kinds', () => {
-      const output = runCommand(`modules show auth -d ${dbPath}`);
+      const output = runCommand(`modules show project.auth -d ${dbPath}`);
       expect(output).toContain('function');
       expect(output).toContain('class');
     });
 
     it('shows file paths for members', () => {
-      const output = runCommand(`modules show auth -d ${dbPath}`);
+      const output = runCommand(`modules show project.auth -d ${dbPath}`);
       expect(output).toContain('auth.ts');
     });
 
     it('handles partial name match', () => {
       const output = runCommand(`modules show user -d ${dbPath}`);
-      expect(output).toContain('Module: user-api');
+      expect(output).toContain('Module: User API');
       expect(output).toContain('getUser');
       expect(output).toContain('createUser');
     });
@@ -212,13 +215,14 @@ describe('modules commands', () => {
     it('shows disambiguation for multiple matches', () => {
       // Add another module with 'user' in the name
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.insertModule('user-service', { layer: 'service' });
+      const rootId = setupDb.ensureRootModule();
+      setupDb.insertModule(rootId, 'user-service', 'User Service');
       setupDb.close();
 
       const output = runCommand(`modules show user -d ${dbPath}`);
       expect(output).toContain('Multiple modules match');
-      expect(output).toContain('user-api');
-      expect(output).toContain('user-service');
+      expect(output).toContain('project.user-api');
+      expect(output).toContain('project.user-service');
     });
 
     it('reports error for non-existent module', () => {
@@ -227,10 +231,10 @@ describe('modules commands', () => {
     });
 
     it('outputs JSON with --json flag', () => {
-      const output = runCommand(`modules show auth --json -d ${dbPath}`);
+      const output = runCommand(`modules show project.auth --json -d ${dbPath}`);
       const json = JSON.parse(output);
-      expect(json.name).toBe('auth');
-      expect(json.layer).toBe('service');
+      expect(json.name).toBe('Auth');
+      expect(json.fullPath).toBe('project.auth');
       expect(json.description).toBe('Authentication and authorization logic');
       expect(json.members).toHaveLength(3);
       expect(json.members[0].name).toBeDefined();

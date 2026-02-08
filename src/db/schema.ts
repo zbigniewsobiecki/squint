@@ -103,21 +103,29 @@ export interface DomainWithCount extends Domain {
   symbolCount: number;
 }
 
-export type ModuleLayer = 'controller' | 'service' | 'repository' | 'adapter' | 'utility';
+// ============================================================
+// Module Tree Types
+// ============================================================
 
 export interface Module {
   id: number;
+  parentId: number | null;
+  slug: string;
+  fullPath: string;
   name: string;
   description: string | null;
-  layer: ModuleLayer | null;
-  subsystem: string | null;
+  depth: number;
   createdAt: string;
 }
 
 export interface ModuleMember {
   moduleId: number;
   definitionId: number;
-  cohesion: number | null;
+  assignedAt: string;
+}
+
+export interface ModuleTreeNode extends Module {
+  children: ModuleTreeNode[];
 }
 
 export interface ModuleWithMembers extends Module {
@@ -126,7 +134,7 @@ export interface ModuleWithMembers extends Module {
     name: string;
     kind: string;
     filePath: string;
-    cohesion: number | null;
+    line: number;
   }>;
 }
 
@@ -496,27 +504,32 @@ CREATE TABLE domains (
 
 CREATE INDEX idx_domains_name ON domains(name);
 
--- Module boundaries detected via community detection on the call graph
+-- Module tree structure
 CREATE TABLE modules (
   id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL,
-  description TEXT,
-  layer TEXT,           -- 'controller' | 'service' | 'repository' | 'adapter' | 'utility'
-  subsystem TEXT,       -- e.g., 'payments', 'accounts', 'compliance'
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  parent_id INTEGER REFERENCES modules(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL,                    -- e.g., "login" (leaf segment)
+  full_path TEXT NOT NULL UNIQUE,        -- e.g., "project.packages.electron-app.screens.login"
+  name TEXT NOT NULL,                    -- Human-readable: "Login Screen"
+  description TEXT,                      -- Free text description
+  depth INTEGER NOT NULL DEFAULT 0,      -- 0 for root, 1 for children, etc.
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(parent_id, slug)
 );
 
--- Mapping of definitions to modules
+CREATE INDEX idx_modules_parent ON modules(parent_id);
+CREATE INDEX idx_modules_path ON modules(full_path);
+CREATE INDEX idx_modules_depth ON modules(depth);
+
+-- Symbol assignments (each symbol belongs to exactly one module)
 CREATE TABLE module_members (
-  module_id INTEGER NOT NULL,
-  definition_id INTEGER NOT NULL,
-  cohesion REAL,        -- 0.0-1.0 how cohesive this member is with the module
-  PRIMARY KEY (module_id, definition_id),
-  FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE,
-  FOREIGN KEY (definition_id) REFERENCES definitions(id) ON DELETE CASCADE
+  module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+  definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+  assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (definition_id)
 );
 
-CREATE INDEX idx_module_members_def ON module_members(definition_id);
+CREATE INDEX idx_module_members_module ON module_members(module_id);
 
 -- End-to-end execution flows
 CREATE TABLE flows (

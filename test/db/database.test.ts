@@ -2011,8 +2011,8 @@ describe('IndexDatabase', () => {
     });
   });
 
-  describe('getUnassignedDefinitions', () => {
-    it('returns all definitions when no modules exist', () => {
+  describe('getUnassignedSymbols', () => {
+    it('returns all symbols when no modules exist', () => {
       const fileId = db.insertFile({
         path: '/project/types.ts',
         language: 'typescript',
@@ -2039,11 +2039,11 @@ describe('IndexDatabase', () => {
         endPosition: { row: 10, column: 1 },
       });
 
-      const unassigned = db.getUnassignedDefinitions();
+      const unassigned = db.getUnassignedSymbols();
       expect(unassigned).toHaveLength(2);
     });
 
-    it('filters by kind when specified', () => {
+    it('returns all unassigned symbols with annotations', () => {
       const fileId = db.insertFile({
         path: '/project/mixed.ts',
         language: 'typescript',
@@ -2079,9 +2079,9 @@ describe('IndexDatabase', () => {
         endPosition: { row: 10, column: 1 },
       });
 
-      const types = db.getUnassignedDefinitions(['interface', 'type']);
-      expect(types).toHaveLength(2);
-      expect(types.map(t => t.name).sort()).toEqual(['User', 'UserType']);
+      const symbols = db.getUnassignedSymbols();
+      expect(symbols).toHaveLength(3);
+      expect(symbols.map(s => s.name).sort()).toEqual(['User', 'UserType', 'createUser']);
     });
 
     it('excludes assigned definitions', () => {
@@ -2112,10 +2112,11 @@ describe('IndexDatabase', () => {
       });
 
       // Assign def1 to a module
-      const moduleId = db.insertModule('UserModule');
-      db.addModuleMember(moduleId, def1);
+      const rootId = db.ensureRootModule();
+      const moduleId = db.insertModule(rootId, 'user-module', 'User Module');
+      db.assignSymbolToModule(def1, moduleId);
 
-      const unassigned = db.getUnassignedDefinitions();
+      const unassigned = db.getUnassignedSymbols();
       expect(unassigned).toHaveLength(1);
       expect(unassigned[0].name).toBe('User');
     });

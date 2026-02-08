@@ -264,24 +264,25 @@ function getSymbolGraph(db: IndexDatabase): {
 function getModulesData(database: IndexDatabase): {
   modules: Array<{
     id: number;
+    parentId: number | null;
+    slug: string;
     name: string;
+    fullPath: string;
     description: string | null;
-    layer: string | null;
-    subsystem: string | null;
+    depth: number;
     memberCount: number;
     members: Array<{
       definitionId: number;
       name: string;
       kind: string;
       filePath: string;
-      cohesion: number | null;
+      line: number;
     }>;
   }>;
   stats: {
     moduleCount: number;
-    memberCount: number;
-    avgMembersPerModule: number;
-    unassignedDefinitions: number;
+    assigned: number;
+    unassigned: number;
   };
 } {
   try {
@@ -291,10 +292,12 @@ function getModulesData(database: IndexDatabase): {
     return {
       modules: modulesWithMembers.map(module => ({
         id: module.id,
+        parentId: module.parentId,
+        slug: module.slug,
         name: module.name,
+        fullPath: module.fullPath,
         description: module.description,
-        layer: module.layer,
-        subsystem: module.subsystem,
+        depth: module.depth,
         memberCount: module.members.length,
         members: module.members,
       })),
@@ -306,9 +309,8 @@ function getModulesData(database: IndexDatabase): {
       modules: [],
       stats: {
         moduleCount: 0,
-        memberCount: 0,
-        avgMembersPerModule: 0,
-        unassignedDefinitions: 0,
+        assigned: 0,
+        unassigned: 0,
       },
     };
   }
@@ -1055,6 +1057,216 @@ function getEmbeddedHTML(): string {
     .empty-state h2 {
       color: #d4d4d4;
       margin-bottom: 8px;
+    }
+
+    /* Module Tree Styles */
+    .module-tree {
+      padding: 20px;
+      overflow-y: auto;
+      height: 100%;
+    }
+
+    .module-tree h2 {
+      color: #e0e0e0;
+      font-size: 16px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .module-tree .view-stats {
+      font-size: 12px;
+      color: #858585;
+      font-weight: normal;
+    }
+
+    .tree-container {
+      position: relative;
+    }
+
+    .module-node {
+      position: relative;
+      margin-left: 0;
+    }
+
+    .module-node.depth-1 { margin-left: 24px; }
+    .module-node.depth-2 { margin-left: 48px; }
+    .module-node.depth-3 { margin-left: 72px; }
+    .module-node.depth-4 { margin-left: 96px; }
+    .module-node.depth-5 { margin-left: 120px; }
+
+    .module-node-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      margin: 2px 0;
+      background: #252526;
+      border: 1px solid #3c3c3c;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .module-node-header:hover {
+      border-color: #4fc1ff;
+      background: #2d2d2d;
+    }
+
+    .module-node.expanded > .module-node-header {
+      border-color: #4fc1ff;
+      background: #2a3540;
+    }
+
+    .module-toggle {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: #858585;
+      transition: transform 0.2s;
+      flex-shrink: 0;
+    }
+
+    .module-toggle.has-children {
+      color: #4fc1ff;
+    }
+
+    .module-node.expanded > .module-node-header .module-toggle {
+      transform: rotate(90deg);
+    }
+
+    .module-node-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: #e0e0e0;
+    }
+
+    .module-node-path {
+      font-size: 11px;
+      color: #666;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+    }
+
+    .module-node-badge {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: #3c3c3c;
+      color: #858585;
+      margin-left: auto;
+    }
+
+    .module-children {
+      display: none;
+      position: relative;
+    }
+
+    .module-node.expanded > .module-children {
+      display: block;
+    }
+
+    /* Tree lines */
+    .module-children::before {
+      content: '';
+      position: absolute;
+      left: 18px;
+      top: 0;
+      bottom: 12px;
+      width: 1px;
+      background: #3c3c3c;
+    }
+
+    .module-node::before {
+      content: '';
+      position: absolute;
+      left: -6px;
+      top: 18px;
+      width: 12px;
+      height: 1px;
+      background: #3c3c3c;
+    }
+
+    .module-node.depth-0::before {
+      display: none;
+    }
+
+    /* Module details panel (shows when clicking module name) */
+    .module-details {
+      display: none;
+      margin: 8px 0 8px 24px;
+      padding: 12px;
+      background: #1e1e1e;
+      border-radius: 6px;
+      border: 1px solid #3c3c3c;
+    }
+
+    .module-node.show-details > .module-details {
+      display: block;
+    }
+
+    .module-description {
+      font-size: 12px;
+      color: #858585;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+
+    .module-members-header {
+      font-size: 11px;
+      color: #666;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .module-members-toggle {
+      color: #4fc1ff;
+      cursor: pointer;
+      font-size: 10px;
+    }
+
+    .module-members-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 250px;
+      overflow-y: auto;
+    }
+
+    .module-member {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 8px;
+      background: #252526;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .module-member-kind {
+      font-size: 9px;
+      padding: 2px 5px;
+      border-radius: 3px;
+      font-weight: 500;
+      min-width: 50px;
+      text-align: center;
+    }
+
+    .module-member-name {
+      color: #d4d4d4;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+    }
+
+    .module-member-file {
+      color: #666;
+      margin-left: auto;
+      font-size: 10px;
     }
   </style>
 </head>
@@ -1878,7 +2090,7 @@ function getEmbeddedHTML(): string {
       });
     }
 
-    // Render Modules View
+    // Render Modules View as hierarchical tree
     async function renderModulesView() {
       const container = document.getElementById('graph-container');
 
@@ -1887,6 +2099,9 @@ function getEmbeddedHTML(): string {
         simulation.stop();
         simulation = null;
       }
+
+      // Always clear cache to ensure fresh data
+      modulesData = null;
 
       // Fetch modules data if not cached
       if (!modulesData) {
@@ -1900,9 +2115,9 @@ function getEmbeddedHTML(): string {
       }
 
       // Update stats header
-      document.getElementById('stat-symbols').textContent = modulesData.stats.memberCount;
+      document.getElementById('stat-symbols').textContent = modulesData.stats.assigned + ' assigned';
       document.getElementById('stat-annotated').textContent = modulesData.stats.moduleCount + ' modules';
-      document.getElementById('stat-relationships').textContent = modulesData.stats.unassignedDefinitions + ' unassigned';
+      document.getElementById('stat-relationships').textContent = modulesData.stats.unassigned + ' unassigned';
 
       if (modulesData.modules.length === 0) {
         container.innerHTML = \`
@@ -1914,69 +2129,106 @@ function getEmbeddedHTML(): string {
         return;
       }
 
-      // Sort modules by member count
-      const sortedModules = [...modulesData.modules].sort((a, b) => b.memberCount - a.memberCount);
+      // Build tree structure from flat modules using parentId
+      const moduleMap = new Map();
+      for (const m of modulesData.modules) {
+        moduleMap.set(m.id, { ...m, children: [] });
+      }
 
-      container.innerHTML = \`
-        <div class="list-view">
-          <h2>
-            Modules
-            <span class="view-stats">\${modulesData.stats.moduleCount} modules, \${modulesData.stats.memberCount} members</span>
-          </h2>
-          <div class="card-grid" id="modules-grid"></div>
-        </div>
-      \`;
+      const roots = [];
+      for (const m of moduleMap.values()) {
+        if (m.parentId === null) {
+          roots.push(m);
+        } else {
+          const parent = moduleMap.get(m.parentId);
+          if (parent) {
+            parent.children.push(m);
+          } else {
+            // Orphan module - treat as root
+            roots.push(m);
+          }
+        }
+      }
 
-      const grid = document.getElementById('modules-grid');
+      // Sort children by name at each level
+      function sortChildren(node) {
+        node.children.sort((a, b) => a.name.localeCompare(b.name));
+        for (const child of node.children) {
+          sortChildren(child);
+        }
+      }
+      roots.sort((a, b) => a.name.localeCompare(b.name));
+      for (const root of roots) {
+        sortChildren(root);
+      }
 
-      for (const module of sortedModules) {
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.dataset.moduleId = module.id;
+      // Render tree HTML
+      function renderTreeNode(module, depth = 0) {
+        const hasChildren = module.children.length > 0;
+        const depthClass = 'depth-' + Math.min(depth, 5);
+        const isRoot = depth === 0;
 
-        const layerClass = module.layer ? 'layer-' + module.layer : '';
         const membersHtml = module.members.map(m => \`
-          <div class="member-item">
-            <span class="member-kind kind-\${m.kind}">\${m.kind}</span>
-            <span class="member-name">\${m.name}</span>
-            <span class="member-file">\${m.filePath.split('/').slice(-1)[0]}</span>
+          <div class="module-member">
+            <span class="module-member-kind kind-\${m.kind}">\${m.kind}</span>
+            <span class="module-member-name">\${m.name}</span>
+            <span class="module-member-file">\${m.filePath.split('/').slice(-1)[0]}:\${m.line}</span>
           </div>
         \`).join('');
 
-        card.innerHTML = \`
-          <div class="card-header">
-            <span class="card-title">\${module.name}</span>
-            \${module.layer ? \`<span class="card-badge \${layerClass}">\${module.layer}</span>\` : ''}
-          </div>
-          \${module.description ? \`<div class="card-description">\${module.description}</div>\` : ''}
-          <div class="card-meta">
-            <div class="card-meta-item">
-              Members: <span class="card-meta-value">\${module.memberCount}</span>
+        const childrenHtml = module.children.map(child => renderTreeNode(child, depth + 1)).join('');
+
+        return \`
+          <div class="module-node \${depthClass}\${isRoot && hasChildren ? ' expanded' : ''}" data-module-id="\${module.id}">
+            <div class="module-node-header">
+              <span class="module-toggle \${hasChildren ? 'has-children' : ''}">
+                \${hasChildren ? '▶' : '○'}
+              </span>
+              <span class="module-node-name">\${module.name}</span>
+              <span class="module-node-path">\${module.fullPath}</span>
+              <span class="module-node-badge">\${module.memberCount}</span>
             </div>
-            \${module.subsystem ? \`
-              <div class="card-meta-item">
-                Subsystem: <span class="card-meta-value">\${module.subsystem}</span>
-              </div>
-            \` : ''}
-          </div>
-          <div class="card-members">
-            <h4>Members (\${module.memberCount})</h4>
-            <div class="member-list">\${membersHtml}</div>
+            <div class="module-details">
+              \${module.description ? \`<div class="module-description">\${module.description}</div>\` : ''}
+              \${module.members.length > 0 ? \`
+                <div class="module-members-header">
+                  Members (\${module.memberCount})
+                </div>
+                <div class="module-members-list">\${membersHtml}</div>
+              \` : '<div class="module-members-header">No direct members</div>'}
+            </div>
+            \${hasChildren ? \`<div class="module-children">\${childrenHtml}</div>\` : ''}
           </div>
         \`;
-
-        card.addEventListener('click', () => {
-          // Toggle expanded state
-          const wasExpanded = card.classList.contains('expanded');
-          // Collapse all others
-          document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
-          if (!wasExpanded) {
-            card.classList.add('expanded');
-          }
-        });
-
-        grid.appendChild(card);
       }
+
+      const treeHtml = roots.map(root => renderTreeNode(root, 0)).join('');
+
+      container.innerHTML = \`
+        <div class="module-tree">
+          <h2>
+            Module Tree
+            <span class="view-stats">\${modulesData.stats.moduleCount} modules, \${modulesData.stats.assigned} symbols assigned</span>
+          </h2>
+          <div class="tree-container">\${treeHtml}</div>
+        </div>
+      \`;
+
+      // Add event listeners for tree interactions
+      container.querySelectorAll('.module-node-header').forEach(header => {
+        header.addEventListener('click', (e) => {
+          const node = header.closest('.module-node');
+          const toggle = header.querySelector('.module-toggle');
+          const hasChildren = toggle.classList.contains('has-children');
+
+          if (hasChildren) {
+            // Any click on header toggles expand for nodes with children
+            node.classList.toggle('expanded');
+          }
+          // Always allow showing details too
+          node.classList.toggle('show-details');
+        });
+      });
     }
 
     // Render Flows View
