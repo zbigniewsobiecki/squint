@@ -573,6 +573,7 @@ function getFlowsDagData(database: IndexDatabase): {
     id: number;
     name: string;
     stakeholder: string | null;
+    description: string | null;
     stepCount: number;
     steps: Array<{
       interactionId: number;
@@ -612,6 +613,7 @@ function getFlowsDagData(database: IndexDatabase): {
         id: flow.id,
         name: flow.name,
         stakeholder: flow.stakeholder,
+        description: flow.description,
         stepCount: steps.length,
         steps: steps.map((step) => ({
           interactionId: step.interactionId,

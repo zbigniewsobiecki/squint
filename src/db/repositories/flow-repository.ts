@@ -4,8 +4,11 @@ import type {
   ExpandedFlow,
   Flow,
   FlowCoverageStats,
+  FlowDefinitionStep,
+  FlowDefinitionStepWithDetails,
   FlowStakeholder,
   FlowStep,
+  FlowWithDefinitionSteps,
   FlowWithSteps,
   InteractionWithPaths,
 } from '../schema.js';
@@ -392,6 +395,136 @@ export class FlowRepository {
 
     // Add new steps in order
     this.addSteps(flowId, interactionIds);
+  }
+
+  // ============================================================
+  // Flow Definition Steps Operations (definition-level tracing)
+  // ============================================================
+
+  /**
+   * Add a definition-level step to a flow.
+   */
+  addDefinitionStep(flowId: number, fromDefinitionId: number, toDefinitionId: number, stepOrder?: number): void {
+    ensureFlowsTables(this.db);
+
+    // Auto-calculate step_order if not provided
+    let order = stepOrder;
+    if (order === undefined) {
+      const maxOrder = this.db
+        .prepare(`
+        SELECT COALESCE(MAX(step_order), 0) as max FROM flow_definition_steps WHERE flow_id = ?
+      `)
+        .get(flowId) as { max: number };
+      order = maxOrder.max + 1;
+    }
+
+    const stmt = this.db.prepare(`
+      INSERT INTO flow_definition_steps (flow_id, step_order, from_definition_id, to_definition_id)
+      VALUES (?, ?, ?, ?)
+    `);
+    stmt.run(flowId, order, fromDefinitionId, toDefinitionId);
+  }
+
+  /**
+   * Add multiple definition-level steps to a flow in order.
+   */
+  addDefinitionSteps(flowId: number, steps: Array<{ fromDefinitionId: number; toDefinitionId: number }>): void {
+    ensureFlowsTables(this.db);
+
+    const stmt = this.db.prepare(`
+      INSERT INTO flow_definition_steps (flow_id, step_order, from_definition_id, to_definition_id)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    for (let i = 0; i < steps.length; i++) {
+      stmt.run(flowId, i + 1, steps[i].fromDefinitionId, steps[i].toDefinitionId);
+    }
+  }
+
+  /**
+   * Clear all definition-level steps from a flow.
+   */
+  clearDefinitionSteps(flowId: number): number {
+    ensureFlowsTables(this.db);
+    const stmt = this.db.prepare('DELETE FROM flow_definition_steps WHERE flow_id = ?');
+    const result = stmt.run(flowId);
+    return result.changes;
+  }
+
+  /**
+   * Get definition-level steps for a flow.
+   */
+  getDefinitionSteps(flowId: number): FlowDefinitionStep[] {
+    ensureFlowsTables(this.db);
+    const stmt = this.db.prepare(`
+      SELECT
+        flow_id as flowId,
+        step_order as stepOrder,
+        from_definition_id as fromDefinitionId,
+        to_definition_id as toDefinitionId
+      FROM flow_definition_steps
+      WHERE flow_id = ?
+      ORDER BY step_order
+    `);
+    return stmt.all(flowId) as FlowDefinitionStep[];
+  }
+
+  /**
+   * Get flow with all its definition-level steps and details.
+   */
+  getWithDefinitionSteps(flowId: number): FlowWithDefinitionSteps | null {
+    ensureFlowsTables(this.db);
+
+    const flow = this.getById(flowId);
+    if (!flow) return null;
+
+    const stepsStmt = this.db.prepare(`
+      SELECT
+        fds.flow_id as flowId,
+        fds.step_order as stepOrder,
+        fds.from_definition_id as fromDefinitionId,
+        fds.to_definition_id as toDefinitionId,
+        from_d.name as fromDefinitionName,
+        from_d.kind as fromDefinitionKind,
+        from_f.path as fromFilePath,
+        from_d.line as fromLine,
+        from_mm.module_id as fromModuleId,
+        from_m.full_path as fromModulePath,
+        to_d.name as toDefinitionName,
+        to_d.kind as toDefinitionKind,
+        to_f.path as toFilePath,
+        to_d.line as toLine,
+        to_mm.module_id as toModuleId,
+        to_m.full_path as toModulePath
+      FROM flow_definition_steps fds
+      JOIN definitions from_d ON fds.from_definition_id = from_d.id
+      JOIN files from_f ON from_d.file_id = from_f.id
+      JOIN definitions to_d ON fds.to_definition_id = to_d.id
+      JOIN files to_f ON to_d.file_id = to_f.id
+      LEFT JOIN module_members from_mm ON from_d.id = from_mm.definition_id
+      LEFT JOIN modules from_m ON from_mm.module_id = from_m.id
+      LEFT JOIN module_members to_mm ON to_d.id = to_mm.definition_id
+      LEFT JOIN modules to_m ON to_mm.module_id = to_m.id
+      WHERE fds.flow_id = ?
+      ORDER BY fds.step_order
+    `);
+
+    const definitionSteps = stepsStmt.all(flowId) as FlowDefinitionStepWithDetails[];
+
+    return {
+      ...flow,
+      definitionSteps,
+    };
+  }
+
+  /**
+   * Get count of definition-level steps for a flow.
+   */
+  getDefinitionStepCount(flowId: number): number {
+    ensureFlowsTables(this.db);
+    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM flow_definition_steps WHERE flow_id = ?');
+    const row = stmt.get(flowId) as { count: number };
+    return row.count;
   }
 
   // ============================================================

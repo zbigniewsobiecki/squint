@@ -16,8 +16,10 @@ import {
   type FileInsert,
   type Flow,
   type FlowCoverageStats,
+  type FlowDefinitionStep,
   type FlowStakeholder,
   type FlowStep,
+  type FlowWithDefinitionSteps,
   type FlowWithSteps,
   type IIndexWriter,
   type IncomingDependency,
@@ -691,6 +693,42 @@ export class IndexDatabase implements IIndexWriter {
 
   getUncoveredInteractions(): InteractionWithPaths[] {
     return this.flows.getUncoveredInteractions();
+  }
+
+  // Flow Definition Steps Operations
+
+  addFlowDefinitionStep(flowId: number, fromDefinitionId: number, toDefinitionId: number, stepOrder?: number): void {
+    this.flows.addDefinitionStep(flowId, fromDefinitionId, toDefinitionId, stepOrder);
+  }
+
+  addFlowDefinitionSteps(flowId: number, steps: Array<{ fromDefinitionId: number; toDefinitionId: number }>): void {
+    this.flows.addDefinitionSteps(flowId, steps);
+  }
+
+  clearFlowDefinitionSteps(flowId: number): number {
+    return this.flows.clearDefinitionSteps(flowId);
+  }
+
+  getFlowDefinitionSteps(flowId: number): FlowDefinitionStep[] {
+    return this.flows.getDefinitionSteps(flowId);
+  }
+
+  getFlowWithDefinitionSteps(flowId: number): FlowWithDefinitionSteps | null {
+    return this.flows.getWithDefinitionSteps(flowId);
+  }
+
+  getFlowDefinitionStepCount(flowId: number): number {
+    return this.flows.getDefinitionStepCount(flowId);
+  }
+
+  // Definition-Level Call Graph
+
+  getDefinitionCallGraph(): CallGraphEdge[] {
+    return this.interactions.getDefinitionCallGraph();
+  }
+
+  getDefinitionCallGraphMap(): Map<number, number[]> {
+    return this.interactions.getDefinitionCallGraphMap();
   }
 
   // ============================================================

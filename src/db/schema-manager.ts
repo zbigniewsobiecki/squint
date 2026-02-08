@@ -190,6 +190,28 @@ export function ensureFlowsTables(db: Database.Database): void {
       CREATE INDEX idx_flow_steps_interaction ON flow_steps(interaction_id);
     `);
   }
+
+  // Ensure flow_definition_steps table exists (definition-level flow steps)
+  const flowDefStepsTableExists = db
+    .prepare(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='flow_definition_steps'
+  `)
+    .get();
+
+  if (!flowDefStepsTableExists) {
+    db.exec(`
+      CREATE TABLE flow_definition_steps (
+        flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+        step_order INTEGER NOT NULL,
+        from_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+        to_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+        PRIMARY KEY (flow_id, step_order)
+      );
+
+      CREATE INDEX idx_flow_def_steps_from ON flow_definition_steps(from_definition_id);
+      CREATE INDEX idx_flow_def_steps_to ON flow_definition_steps(to_definition_id);
+    `);
+  }
 }
 
 /**

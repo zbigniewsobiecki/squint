@@ -164,6 +164,7 @@ export interface DagFlow {
   id: number;
   name: string;
   stakeholder: string | null;
+  description: string | null;
   stepCount: number;
   steps: DagFlowStep[];
 }

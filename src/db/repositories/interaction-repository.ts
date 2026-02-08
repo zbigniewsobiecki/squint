@@ -358,7 +358,7 @@ export class InteractionRepository {
     ensureModulesTables(this.db);
 
     // Get symbol-level call graph
-    const symbolEdges = this.getCallGraph();
+    const symbolEdges = this.getCallGraphInternal();
 
     // Build module lookup for definitions
     const defModuleMap = new Map<number, { moduleId: number; modulePath: string }>();
@@ -434,7 +434,7 @@ export class InteractionRepository {
       JOIN module_members to_mm ON to_mm.definition_id = to_d.id
       JOIN modules to_m ON to_mm.module_id = to_m.id
       JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression')
+      WHERE u.context IN ('call_expression', 'new_expression', 'jsx_self_closing_element', 'jsx_opening_element')
         AND from_d.line <= u.line AND u.line <= from_d.end_line
         AND s.definition_id != from_d.id
         AND from_mm.module_id != to_mm.module_id
@@ -460,7 +460,7 @@ export class InteractionRepository {
       JOIN module_members to_mm ON to_mm.definition_id = to_d.id
       JOIN modules to_m ON to_mm.module_id = to_m.id
       JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression')
+      WHERE u.context IN ('call_expression', 'new_expression', 'jsx_self_closing_element', 'jsx_opening_element')
         AND from_d.line <= u.line AND u.line <= from_d.end_line
         AND s.definition_id != from_d.id
         AND from_mm.module_id != to_mm.module_id
@@ -777,9 +777,40 @@ export class InteractionRepository {
     return { created: result.changes };
   }
 
-  // Private helpers
+  // ============================================================
+  // Definition-Level Call Graph (for flow tracing)
+  // ============================================================
 
-  private getCallGraph(): CallGraphEdge[] {
+  /**
+   * Get the definition-level call graph (not aggregated to modules).
+   * Returns edges from caller definition to called definition.
+   */
+  getDefinitionCallGraph(): CallGraphEdge[] {
+    return this.getCallGraphInternal();
+  }
+
+  /**
+   * Get the definition-level call graph as a Map for efficient lookups.
+   * Maps from_definition_id to array of to_definition_ids.
+   */
+  getDefinitionCallGraphMap(): Map<number, number[]> {
+    const edges = this.getCallGraphInternal();
+    const result = new Map<number, number[]>();
+
+    for (const edge of edges) {
+      const existing = result.get(edge.fromId) ?? [];
+      existing.push(edge.toId);
+      result.set(edge.fromId, existing);
+    }
+
+    return result;
+  }
+
+  // ============================================================
+  // Private helpers
+  // ============================================================
+
+  private getCallGraphInternal(): CallGraphEdge[] {
     const stmt = this.db.prepare(`
       SELECT
         caller.id as from_id,
@@ -790,7 +821,7 @@ export class InteractionRepository {
       JOIN files f ON caller.file_id = f.id
       JOIN symbols s ON s.file_id = f.id AND s.definition_id IS NOT NULL
       JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression')
+      WHERE u.context IN ('call_expression', 'new_expression', 'jsx_self_closing_element', 'jsx_opening_element')
         AND caller.line <= u.line AND u.line <= caller.end_line
         AND s.definition_id != caller.id
       GROUP BY caller.id, s.definition_id
@@ -805,7 +836,7 @@ export class InteractionRepository {
       JOIN imports i ON i.from_file_id = f.id
       JOIN symbols s ON s.reference_id = i.id AND s.definition_id IS NOT NULL
       JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression')
+      WHERE u.context IN ('call_expression', 'new_expression', 'jsx_self_closing_element', 'jsx_opening_element')
         AND caller.line <= u.line AND u.line <= caller.end_line
         AND s.definition_id != caller.id
       GROUP BY caller.id, s.definition_id

@@ -33,6 +33,13 @@ interface EntryPointInfo {
   modulePath: string | null;
 }
 
+interface TracedDefinitionStep {
+  fromDefinitionId: number;
+  toDefinitionId: number;
+  fromModuleId: number | null;
+  toModuleId: number | null;
+}
+
 interface FlowSuggestion {
   name: string;
   slug: string;
@@ -41,6 +48,7 @@ interface FlowSuggestion {
   stakeholder: FlowStakeholder;
   description: string;
   interactionIds: number[];
+  definitionSteps: TracedDefinitionStep[];
 }
 
 export default class Flows extends Command {
@@ -151,30 +159,42 @@ export default class Flows extends Command {
         }
       }
 
-      // Step 2: Trace flows from entry points
+      // Step 2: Trace flows from entry points using definition-level call graph
       if (!isJson) {
         this.log('');
-        this.log(chalk.bold('Step 2: Tracing Flows from Entry Points'));
+        this.log(chalk.bold('Step 2: Tracing Flows from Entry Points (Definition-Level)'));
       }
 
       const interactions = db.getAllInteractions();
       const flowSuggestions: FlowSuggestion[] = [];
 
-      // Build interaction lookup by module
-      const interactionsByFromModule = new Map<number, InteractionWithPaths[]>();
-      for (const interaction of interactions) {
-        const list = interactionsByFromModule.get(interaction.fromModuleId) ?? [];
-        list.push(interaction);
-        interactionsByFromModule.set(interaction.fromModuleId, list);
+      // Build definition-level call graph
+      const definitionCallGraph = db.getDefinitionCallGraphMap();
+
+      // Build definition-to-module lookup
+      const defToModule = new Map<number, { moduleId: number; modulePath: string }>();
+      const allModulesWithMembers = db.getAllModulesWithMembers();
+      for (const mod of allModulesWithMembers) {
+        for (const member of mod.members) {
+          defToModule.set(member.definitionId, { moduleId: mod.id, modulePath: mod.fullPath });
+        }
       }
 
-      // Trace flow for each entry point
+      // Build interaction lookup for module pairs (for deriving interactionIds)
+      const interactionByModulePair = new Map<string, number>();
+      for (const interaction of interactions) {
+        const key = `${interaction.fromModuleId}->${interaction.toModuleId}`;
+        interactionByModulePair.set(key, interaction.id);
+      }
+
+      // Trace flow for each entry point using definition-level call graph
       for (const entryPoint of entryPoints) {
-        if (!entryPoint.moduleId) continue;
+        const definitionSteps = this.traceDefinitionFlow(entryPoint.definitionId, definitionCallGraph, defToModule);
 
-        const path = this.traceFlow(entryPoint.moduleId, interactionsByFromModule);
+        if (definitionSteps.length > 0) {
+          // Derive unique interaction IDs from cross-module definition steps
+          const derivedInteractionIds = this.deriveInteractionIds(definitionSteps, interactionByModulePair);
 
-        if (path.length > 0) {
           flowSuggestions.push({
             name: this.generateFlowName(entryPoint),
             slug: this.generateFlowSlug(entryPoint),
@@ -182,13 +202,14 @@ export default class Flows extends Command {
             entryPath: `${entryPoint.name} (${entryPoint.filePath}:${entryPoint.line})`,
             stakeholder: this.inferStakeholder(entryPoint),
             description: `Flow starting from ${entryPoint.name}`,
-            interactionIds: path.map((i) => i.id),
+            interactionIds: derivedInteractionIds,
+            definitionSteps,
           });
         }
       }
 
       if (!isJson && verbose) {
-        this.log(chalk.gray(`Traced ${flowSuggestions.length} potential flows`));
+        this.log(chalk.gray(`Traced ${flowSuggestions.length} potential flows with definition-level steps`));
       }
 
       // Step 3: Use LLM to enhance flow metadata
@@ -247,9 +268,20 @@ export default class Flows extends Command {
               description: flow.description,
             });
 
-            // Add steps
+            // Add module-level steps (for backward compatibility / architecture views)
             if (flow.interactionIds.length > 0) {
               db.addFlowSteps(flowId, flow.interactionIds);
+            }
+
+            // Add definition-level steps (for accurate user story tracing)
+            if (flow.definitionSteps.length > 0) {
+              db.addFlowDefinitionSteps(
+                flowId,
+                flow.definitionSteps.map((s) => ({
+                  fromDefinitionId: s.fromDefinitionId,
+                  toDefinitionId: s.toDefinitionId,
+                }))
+              );
             }
           } catch (e) {
             if (verbose && !isJson) {
@@ -519,32 +551,71 @@ Classify each as entry point or internal helper.`;
   }
 
   /**
-   * Trace a flow from a starting module through interactions.
-   * Includes ALL interactions (including utility) since they are part of user journeys.
+   * Trace a flow from a starting definition through the definition-level call graph.
+   * Returns definition-level steps, not module-level interactions.
+   * This provides accurate per-entry-point tracing instead of tracing all module interactions.
    */
-  private traceFlow(
-    startModuleId: number,
-    interactionsByFromModule: Map<number, InteractionWithPaths[]>
-  ): InteractionWithPaths[] {
+  private traceDefinitionFlow(
+    startDefinitionId: number,
+    callGraph: Map<number, number[]>,
+    defToModule: Map<number, { moduleId: number; modulePath: string }>
+  ): TracedDefinitionStep[] {
     const visited = new Set<number>();
-    const path: InteractionWithPaths[] = [];
-    const maxDepth = 50; // Increased from 10 for deep call chains
+    const steps: TracedDefinitionStep[] = [];
+    const maxDepth = 15; // Limit depth for definition-level tracing
 
-    const trace = (moduleId: number, depth: number): void => {
+    const trace = (defId: number, depth: number): void => {
       if (depth >= maxDepth) return;
-      if (visited.has(moduleId)) return;
-      visited.add(moduleId);
+      if (visited.has(defId)) return;
+      visited.add(defId);
 
-      const outgoing = interactionsByFromModule.get(moduleId) ?? [];
-      for (const interaction of outgoing) {
-        // Include ALL interactions (utility + business) - they're all part of user journeys
-        path.push(interaction);
-        trace(interaction.toModuleId, depth + 1);
+      const calledDefs = callGraph.get(defId) ?? [];
+      for (const calledDefId of calledDefs) {
+        const fromModule = defToModule.get(defId);
+        const toModule = defToModule.get(calledDefId);
+
+        // Only include cross-module calls (skip internal module calls)
+        if (fromModule && toModule && fromModule.moduleId !== toModule.moduleId) {
+          steps.push({
+            fromDefinitionId: defId,
+            toDefinitionId: calledDefId,
+            fromModuleId: fromModule.moduleId,
+            toModuleId: toModule.moduleId,
+          });
+        }
+
+        // Continue tracing recursively
+        trace(calledDefId, depth + 1);
       }
     };
 
-    trace(startModuleId, 0);
-    return path;
+    trace(startDefinitionId, 0);
+    return steps;
+  }
+
+  /**
+   * Derive unique interaction IDs from definition-level steps.
+   * Maps cross-module definition calls back to module-level interactions.
+   */
+  private deriveInteractionIds(
+    definitionSteps: TracedDefinitionStep[],
+    interactionByModulePair: Map<string, number>
+  ): number[] {
+    const seenIds = new Set<number>();
+    const result: number[] = [];
+
+    for (const step of definitionSteps) {
+      if (step.fromModuleId && step.toModuleId) {
+        const key = `${step.fromModuleId}->${step.toModuleId}`;
+        const interactionId = interactionByModulePair.get(key);
+        if (interactionId && !seenIds.has(interactionId)) {
+          seenIds.add(interactionId);
+          result.push(interactionId);
+        }
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -581,6 +652,7 @@ Classify each as entry point or internal helper.`;
         stakeholder: 'developer', // Internal, not user-facing
         description: `Internal interactions originating from ${modulePath}`,
         interactionIds: interactions.map((i) => i.id),
+        definitionSteps: [], // Gap flows don't have definition-level tracing
       });
     }
 

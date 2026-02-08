@@ -308,6 +308,29 @@ marker path {
   text-shadow: 0 0 4px var(--bg-primary), 0 0 4px var(--bg-primary), 0 0 4px var(--bg-primary);
 }
 
+/* Semantic labels on arrows */
+.flow-semantic-label {
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.flow-semantic-label.label-visible {
+  opacity: 1;
+}
+
+.semantic-label-bg {
+  fill: var(--bg-elevated);
+  stroke: var(--border-primary);
+  stroke-width: 1;
+}
+
+.semantic-label-text {
+  font-size: 10px;
+  fill: var(--text-primary);
+  font-weight: 500;
+}
+
 /* Dimmed arrows when hovering over a specific step */
 .flow-arrow.arrow-dimmed {
   stroke-opacity: 0.2;

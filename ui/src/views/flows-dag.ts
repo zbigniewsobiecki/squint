@@ -78,7 +78,10 @@ function renderFlowsDagView(store: Store) {
             return `
               <div class="flow-item${isSelected ? ' selected' : ''}" data-flow-id="${flow.id}">
                 <span class="flow-color-dot" style="background: ${color};"></span>
-                <span class="flow-name" title="${flow.name}">${flow.name}</span>
+                <div class="flow-item-content">
+                  <span class="flow-name" title="${flow.name}">${flow.name}</span>
+                  ${flow.description ? `<span class="flow-description">${flow.description}</span>` : ''}
+                </div>
                 <span class="flow-step-count">${flow.stepCount}</span>
               </div>
             `;
@@ -328,6 +331,7 @@ function updateFlowArrows(store: Store) {
   const g = d3.select('#flows-dag-svg g');
   g.selectAll('.flow-arrow').remove();
   g.selectAll('.flow-step-number').remove();
+  g.selectAll('.flow-semantic-label').remove();
 
   const selectedFlows = state.selectedFlows;
 
@@ -419,6 +423,38 @@ function updateFlowArrows(store: Store) {
         .attr('fill', color)
         .text(stepNum + 1);
 
+      // Add semantic label at midpoint of curve
+      if (step.semantic) {
+        const midLabel = getQuadraticPoint(0.5, fromX, fromY, ctrlX, ctrlY, toX, toY);
+        const labelText = step.semantic;
+
+        // Create a group for background + text
+        const labelGroup = g
+          .append('g')
+          .attr('class', 'flow-semantic-label')
+          .attr('data-step-idx', stepNum - 1)
+          .attr('transform', `translate(${midLabel.x}, ${midLabel.y})`);
+
+        // Add background rect (sized after text is added)
+        const bgRect = labelGroup.append('rect').attr('class', 'semantic-label-bg').attr('rx', 4).attr('ry', 4);
+
+        // Add text
+        const text = labelGroup
+          .append('text')
+          .attr('class', 'semantic-label-text')
+          .attr('text-anchor', 'middle')
+          .attr('dominant-baseline', 'middle')
+          .text(labelText);
+
+        // Size background to fit text
+        const bbox = (text.node() as SVGTextElement).getBBox();
+        bgRect
+          .attr('x', -bbox.width / 2 - 6)
+          .attr('y', -bbox.height / 2 - 3)
+          .attr('width', bbox.width + 12)
+          .attr('height', bbox.height + 6);
+      }
+
       stepNum++;
     }
   }
@@ -462,6 +498,12 @@ function highlightStep(store: Store, stepIdx: number) {
     return Number.parseInt(d3.select(this).attr('data-step-idx') || '-1') !== stepIdx;
   });
 
+  // Show only the hovered step's semantic label
+  d3.selectAll('.flow-semantic-label').classed('label-visible', function () {
+    const idx = Number.parseInt(d3.select(this).attr('data-step-idx') || '-1');
+    return idx === stepIdx;
+  });
+
   // Update module dimming - only show from/to modules
   updateModuleDimming(activeModuleIds);
 }
@@ -470,6 +512,7 @@ function clearStepHighlight(store: Store) {
   // Remove arrow dimming
   d3.selectAll('.flow-arrow').classed('arrow-dimmed', false);
   d3.selectAll('.flow-step-number').classed('number-dimmed', false);
+  d3.selectAll('.flow-semantic-label').classed('label-visible', false);
 
   // Restore flow-level module highlighting
   const state = store.getState();
@@ -567,18 +610,27 @@ function showFlowSteps(store: Store, flowId: number) {
     originalSidebarHtml = sidebarContent.innerHTML;
   }
 
-  // Build steps HTML
+  // Build steps HTML with tree structure showing module paths
   const stepsHtml = flow.steps
-    .map(
-      (step, idx) => `
-    <div class="step-item" data-step-idx="${idx}">
-      <span class="step-number">${idx + 1}</span>
-      <div class="step-content">
-        <div class="step-name">${step.semantic || `Step ${idx + 1}`}</div>
-      </div>
-    </div>
-  `
-    )
+    .map((step, idx) => {
+      // Find module names from IDs
+      const fromModule = state.flowsDagData?.modules.find((m) => m.id === step.fromModuleId);
+      const toModule = state.flowsDagData?.modules.find((m) => m.id === step.toModuleId);
+
+      return `
+        <div class="step-item step-tree" data-step-idx="${idx}">
+          <div class="step-tree-header">
+            <span class="step-number">${idx + 1}</span>
+            <span class="step-semantic">${step.semantic || `Step ${idx + 1}`}</span>
+          </div>
+          <div class="step-tree-path">
+            <span class="step-module from">${fromModule?.name || 'Unknown'}</span>
+            <span class="step-arrow">→</span>
+            <span class="step-module to">${toModule?.name || 'Unknown'}</span>
+          </div>
+        </div>
+      `;
+    })
     .join('');
 
   sidebarContent.innerHTML = `
@@ -587,6 +639,7 @@ function showFlowSteps(store: Store, flowId: number) {
       <span>Back to flows</span>
     </div>
     <div class="steps-flow-title">${flow.name}</div>
+    ${flow.description ? `<div class="steps-flow-description">${flow.description}</div>` : ''}
     <div class="steps-list">
       ${stepsHtml || '<div style="padding: 16px; color: #858585;">No steps</div>'}
     </div>

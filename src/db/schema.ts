@@ -234,7 +234,7 @@ export interface Flow {
 }
 
 /**
- * Flow step: An ordered interaction within a flow
+ * Flow step: An ordered interaction within a flow (module-level)
  */
 export interface FlowStep {
   flowId: number;
@@ -243,7 +243,35 @@ export interface FlowStep {
 }
 
 /**
- * Flow with its steps and interaction details for display
+ * Flow definition step: An ordered definition-level call edge within a flow
+ */
+export interface FlowDefinitionStep {
+  flowId: number;
+  stepOrder: number; // 1, 2, 3...
+  fromDefinitionId: number;
+  toDefinitionId: number;
+}
+
+/**
+ * Flow definition step with full details for display
+ */
+export interface FlowDefinitionStepWithDetails extends FlowDefinitionStep {
+  fromDefinitionName: string;
+  fromDefinitionKind: string;
+  fromFilePath: string;
+  fromLine: number;
+  fromModuleId: number | null;
+  fromModulePath: string | null;
+  toDefinitionName: string;
+  toDefinitionKind: string;
+  toFilePath: string;
+  toLine: number;
+  toModuleId: number | null;
+  toModulePath: string | null;
+}
+
+/**
+ * Flow with its steps and interaction details for display (module-level)
  */
 export interface FlowWithSteps extends Flow {
   steps: Array<
@@ -251,6 +279,13 @@ export interface FlowWithSteps extends Flow {
       interaction: InteractionWithPaths;
     }
   >;
+}
+
+/**
+ * Flow with its definition-level steps for display
+ */
+export interface FlowWithDefinitionSteps extends Flow {
+  definitionSteps: FlowDefinitionStepWithDetails[];
 }
 
 /**
@@ -599,7 +634,7 @@ CREATE INDEX idx_flows_slug ON flows(slug);
 CREATE INDEX idx_flows_entry_point ON flows(entry_point_id);
 CREATE INDEX idx_flows_stakeholder ON flows(stakeholder);
 
--- Flow steps: ordered interactions within a flow
+-- Flow steps: ordered interactions within a flow (module-level)
 CREATE TABLE flow_steps (
   flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
   step_order INTEGER NOT NULL,
@@ -608,6 +643,18 @@ CREATE TABLE flow_steps (
 );
 
 CREATE INDEX idx_flow_steps_interaction ON flow_steps(interaction_id);
+
+-- Flow definition steps: ordered definition-level call edges within a flow
+CREATE TABLE flow_definition_steps (
+  flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+  step_order INTEGER NOT NULL,
+  from_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+  to_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+  PRIMARY KEY (flow_id, step_order)
+);
+
+CREATE INDEX idx_flow_def_steps_from ON flow_definition_steps(from_definition_id);
+CREATE INDEX idx_flow_def_steps_to ON flow_definition_steps(to_definition_id);
 `;
 
 // ============================================================
