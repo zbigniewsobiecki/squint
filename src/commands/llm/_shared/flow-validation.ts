@@ -18,6 +18,7 @@ export const DEFAULT_VALIDATION_OPTIONS: ValidationOptions = {
 };
 
 export type FlowValidationErrorType =
+  | 'invalid_entry_point_module'
   | 'invalid_entry_point'
   | 'invalid_interaction_id'
   | 'max_steps_exceeded'
@@ -61,20 +62,33 @@ export class FlowValidator {
     const errors: FlowValidationError[] = [];
     const warnings: FlowValidationWarning[] = [];
 
-    // 1. Check if entry point is valid
-    if (flow.entryPointId !== null) {
-      const entryPoint = this.db.getDefinitionById(flow.entryPointId);
-      if (!entryPoint) {
+    // 1. Check if entry point module is valid
+    if (flow.entryPointModuleId !== null) {
+      const entryPointModule = this.db.getModuleById(flow.entryPointModuleId);
+      if (!entryPointModule) {
         errors.push({
-          type: 'invalid_entry_point',
-          message: `Entry point ID ${flow.entryPointId} does not exist`,
+          type: 'invalid_entry_point_module',
+          message: `Entry point module ID ${flow.entryPointModuleId} does not exist`,
           flowId: flow.id,
           flowName: flow.name,
         });
       }
     }
 
-    // 2. Check steps
+    // 2. Check if entry point definition is valid (if set)
+    if (flow.entryPointId !== null) {
+      const entryPoint = this.db.getDefinitionById(flow.entryPointId);
+      if (!entryPoint) {
+        errors.push({
+          type: 'invalid_entry_point',
+          message: `Entry point definition ID ${flow.entryPointId} does not exist`,
+          flowId: flow.id,
+          flowName: flow.name,
+        });
+      }
+    }
+
+    // 3. Check steps
     const steps = this.db.getFlowSteps(flow.id);
 
     if (steps.length === 0) {
@@ -94,7 +108,7 @@ export class FlowValidator {
       });
     }
 
-    // 3. Validate each step's interaction exists
+    // 4. Validate each step's interaction exists
     for (const step of steps) {
       const interaction = this.db.getInteractionById(step.interactionId);
       if (!interaction) {
@@ -107,7 +121,7 @@ export class FlowValidator {
       }
     }
 
-    // 4. Check for missing description
+    // 5. Check for missing description
     if (!flow.description) {
       warnings.push({
         type: 'missing_description',

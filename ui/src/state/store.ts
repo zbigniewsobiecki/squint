@@ -1,6 +1,7 @@
 import type {
   FlowsDagResponse,
   FlowsResponse,
+  InteractionsResponse,
   ModulesResponse,
   RelationshipType,
   SymbolGraphResponse,
@@ -13,9 +14,10 @@ export interface AppState {
   modulesData: ModulesResponse | null;
   flowsData: FlowsResponse | null;
   flowsDagData: FlowsDagResponse | null;
+  interactionsData: InteractionsResponse | null;
 
   // UI state
-  currentView: 'force' | 'sunburst' | 'modules' | 'flows';
+  currentView: 'force' | 'sunburst' | 'modules' | 'flows' | 'interactions';
   selectedGrouping: RelationshipType;
   selectedFlowId: number | null; // Currently viewed flow (for detail view)
   selectedFlows: Set<number>;
@@ -44,6 +46,7 @@ export function createStore(): Store {
     modulesData: null,
     flowsData: null,
     flowsDagData: null,
+    interactionsData: null,
     currentView: 'force',
     selectedGrouping: 'structure',
     selectedFlowId: null,

@@ -128,6 +128,7 @@ export function ensureFlowsTables(db: Database.Database): void {
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         slug TEXT NOT NULL UNIQUE,
+        entry_point_module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL,
         entry_point_id INTEGER REFERENCES definitions(id) ON DELETE SET NULL,
         entry_path TEXT,
         stakeholder TEXT,
@@ -136,6 +137,7 @@ export function ensureFlowsTables(db: Database.Database): void {
       );
 
       CREATE INDEX idx_flows_slug ON flows(slug);
+      CREATE INDEX idx_flows_entry_point_module ON flows(entry_point_module_id);
       CREATE INDEX idx_flows_entry_point ON flows(entry_point_id);
       CREATE INDEX idx_flows_stakeholder ON flows(stakeholder);
     `);
@@ -150,6 +152,7 @@ export function ensureFlowsTables(db: Database.Database): void {
     if (hasEntryPointId.count === 0) {
       // Old schema detected - drop and recreate
       db.exec(`
+        DROP TABLE IF EXISTS flow_definition_steps;
         DROP TABLE IF EXISTS flow_steps;
         DROP TABLE IF EXISTS flows;
 
@@ -157,6 +160,7 @@ export function ensureFlowsTables(db: Database.Database): void {
           id INTEGER PRIMARY KEY,
           name TEXT NOT NULL,
           slug TEXT NOT NULL UNIQUE,
+          entry_point_module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL,
           entry_point_id INTEGER REFERENCES definitions(id) ON DELETE SET NULL,
           entry_path TEXT,
           stakeholder TEXT,
@@ -165,9 +169,25 @@ export function ensureFlowsTables(db: Database.Database): void {
         );
 
         CREATE INDEX idx_flows_slug ON flows(slug);
+        CREATE INDEX idx_flows_entry_point_module ON flows(entry_point_module_id);
         CREATE INDEX idx_flows_entry_point ON flows(entry_point_id);
         CREATE INDEX idx_flows_stakeholder ON flows(stakeholder);
       `);
+    } else {
+      // Check if we need to add entry_point_module_id column
+      const hasEntryPointModuleId = db
+        .prepare(`
+        SELECT COUNT(*) as count FROM pragma_table_info('flows') WHERE name='entry_point_module_id'
+      `)
+        .get() as { count: number };
+
+      if (hasEntryPointModuleId.count === 0) {
+        // Add the new column and index
+        db.exec(`
+          ALTER TABLE flows ADD COLUMN entry_point_module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL;
+          CREATE INDEX idx_flows_entry_point_module ON flows(entry_point_module_id);
+        `);
+      }
     }
   }
 

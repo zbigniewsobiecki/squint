@@ -5,32 +5,28 @@ import type { IndexDatabase } from '../../db/database.js';
 import type { FlowStakeholder, InteractionWithPaths } from '../../db/schema.js';
 import { SharedFlags, openDatabase } from '../_shared/index.js';
 
-interface RootDefinition {
+interface ModuleCandidate {
   id: number;
+  fullPath: string;
   name: string;
-  kind: string;
-  filePath: string;
-  line: number;
-  purpose: string | null;
-  role: string | null;
-  outgoingCount: number;
+  description: string | null;
+  depth: number;
+  memberCount: number;
+  members: Array<{ definitionId: number; name: string; kind: string }>;
 }
 
-interface EntryPointClassification {
-  definitionId: number;
+interface EntryPointModuleClassification {
+  moduleId: number;
   isEntryPoint: boolean;
   confidence: 'high' | 'medium' | 'low';
   reason: string;
 }
 
-interface EntryPointInfo {
-  definitionId: number;
-  name: string;
-  kind: string;
-  filePath: string;
-  line: number;
-  moduleId: number | null;
-  modulePath: string | null;
+interface EntryPointModuleInfo {
+  moduleId: number;
+  modulePath: string;
+  moduleName: string;
+  memberDefinitions: Array<{ id: number; name: string; kind: string }>;
 }
 
 interface TracedDefinitionStep {
@@ -43,6 +39,7 @@ interface TracedDefinitionStep {
 interface FlowSuggestion {
   name: string;
   slug: string;
+  entryPointModuleId: number | null;
   entryPointId: number | null;
   entryPath: string;
   stakeholder: FlowStakeholder;
@@ -141,28 +138,28 @@ export default class Flows extends Command {
         }
       }
 
-      // Step 1: Detect entry points using LLM classification
+      // Step 1: Detect entry point MODULES using LLM classification
       if (!isJson) {
-        this.log(chalk.bold('Step 1: Detecting Entry Points (LLM Classification)'));
+        this.log(chalk.bold('Step 1: Detecting Entry Point Modules (LLM Classification)'));
       }
 
-      const entryPoints = await this.detectEntryPoints(db, model, verbose, isJson);
+      const entryPointModules = await this.detectEntryPointModules(db, model, verbose, isJson);
 
       if (!isJson && verbose) {
-        this.log(chalk.gray(`Found ${entryPoints.length} LLM-classified entry points`));
+        this.log(chalk.gray(`Found ${entryPointModules.length} LLM-classified entry point modules`));
       }
 
-      if (entryPoints.length === 0) {
+      if (entryPointModules.length === 0) {
         if (!isJson) {
-          this.log(chalk.yellow('No entry points detected.'));
+          this.log(chalk.yellow('No entry point modules detected.'));
           this.log(chalk.gray('Gap flows will still be created for uncovered interactions.'));
         }
       }
 
-      // Step 2: Trace flows from entry points using definition-level call graph
+      // Step 2: Trace flows from entry point modules using definition-level call graph
       if (!isJson) {
         this.log('');
-        this.log(chalk.bold('Step 2: Tracing Flows from Entry Points (Definition-Level)'));
+        this.log(chalk.bold('Step 2: Tracing Flows from Entry Point Modules (Definition-Level)'));
       }
 
       const interactions = db.getAllInteractions();
@@ -187,24 +184,28 @@ export default class Flows extends Command {
         interactionByModulePair.set(key, interaction.id);
       }
 
-      // Trace flow for each entry point using definition-level call graph
-      for (const entryPoint of entryPoints) {
-        const definitionSteps = this.traceDefinitionFlow(entryPoint.definitionId, definitionCallGraph, defToModule);
+      // Trace flow for each definition within entry point modules
+      for (const entryPointModule of entryPointModules) {
+        // Create a flow for each member definition in the entry point module
+        for (const member of entryPointModule.memberDefinitions) {
+          const definitionSteps = this.traceDefinitionFlow(member.id, definitionCallGraph, defToModule);
 
-        if (definitionSteps.length > 0) {
-          // Derive unique interaction IDs from cross-module definition steps
-          const derivedInteractionIds = this.deriveInteractionIds(definitionSteps, interactionByModulePair);
+          if (definitionSteps.length > 0) {
+            // Derive unique interaction IDs from cross-module definition steps
+            const derivedInteractionIds = this.deriveInteractionIds(definitionSteps, interactionByModulePair);
 
-          flowSuggestions.push({
-            name: this.generateFlowName(entryPoint),
-            slug: this.generateFlowSlug(entryPoint),
-            entryPointId: entryPoint.definitionId,
-            entryPath: `${entryPoint.name} (${entryPoint.filePath}:${entryPoint.line})`,
-            stakeholder: this.inferStakeholder(entryPoint),
-            description: `Flow starting from ${entryPoint.name}`,
-            interactionIds: derivedInteractionIds,
-            definitionSteps,
-          });
+            flowSuggestions.push({
+              name: this.generateFlowNameFromModule(entryPointModule, member),
+              slug: this.generateFlowSlugFromModule(entryPointModule, member),
+              entryPointModuleId: entryPointModule.moduleId,
+              entryPointId: member.id,
+              entryPath: `${entryPointModule.modulePath}.${member.name}`,
+              stakeholder: this.inferStakeholderFromModule(entryPointModule),
+              description: `Flow starting from ${member.name} in ${entryPointModule.modulePath}`,
+              interactionIds: derivedInteractionIds,
+              definitionSteps,
+            });
+          }
         }
       }
 
@@ -262,6 +263,7 @@ export default class Flows extends Command {
 
           try {
             const flowId = db.insertFlow(flow.name, slug, {
+              entryPointModuleId: flow.entryPointModuleId ?? undefined,
               entryPointId: flow.entryPointId ?? undefined,
               entryPath: flow.entryPath,
               stakeholder: flow.stakeholder,
@@ -292,12 +294,12 @@ export default class Flows extends Command {
       }
 
       // Count user vs internal flows
-      const userFlowCount = enhancedFlows.filter((f) => f.entryPointId !== null).length;
+      const userFlowCount = enhancedFlows.filter((f) => f.entryPointModuleId !== null).length;
       const internalFlowCount = gapFlows.length;
 
       // Output results
       const result = {
-        entryPoints: entryPoints.length,
+        entryPointModules: entryPointModules.length,
         flowsCreated: enhancedFlows.length,
         userFlows: userFlowCount,
         internalFlows: internalFlowCount,
@@ -315,7 +317,7 @@ export default class Flows extends Command {
       } else {
         this.log('');
         this.log(chalk.bold('Results'));
-        this.log(`Entry points detected: ${result.entryPoints} (LLM classified)`);
+        this.log(`Entry point modules detected: ${result.entryPointModules} (LLM classified)`);
         this.log(`Flows created: ${result.flowsCreated}`);
         this.log(`  - User flows: ${result.userFlows}`);
         this.log(`  - Internal/gap flows: ${result.internalFlows}`);
@@ -334,32 +336,35 @@ export default class Flows extends Command {
   }
 
   /**
-   * Detect potential entry points in the codebase using LLM classification.
-   * Entry points are exported symbols that are not called by other internal code.
+   * Detect entry point MODULES in the codebase using LLM classification.
+   * Entry point modules are modules where execution originates from external triggers
+   * (pages, screens, API handlers, CLI commands, etc.)
    */
-  private async detectEntryPoints(
+  private async detectEntryPointModules(
     db: IndexDatabase,
     model: string,
     verbose: boolean,
     isJson: boolean
-  ): Promise<EntryPointInfo[]> {
-    const rootDefs = db.getRootDefinitions();
+  ): Promise<EntryPointModuleInfo[]> {
+    const allModulesWithMembers = db.getAllModulesWithMembers();
 
-    // Build rich candidate info for LLM
-    const candidates: RootDefinition[] = [];
-    for (const def of rootDefs) {
-      const metadata = db.getDefinitionMetadata(def.id);
-      const deps = db.getDefinitionDependencies(def.id);
+    // Build module candidates (only leaf modules with members)
+    const candidates: ModuleCandidate[] = [];
+    for (const mod of allModulesWithMembers) {
+      if (mod.members.length === 0) continue;
 
       candidates.push({
-        id: def.id,
-        name: def.name,
-        kind: def.kind,
-        filePath: def.filePath,
-        line: def.line,
-        purpose: metadata.purpose ?? null,
-        role: metadata.role ?? null,
-        outgoingCount: deps.length,
+        id: mod.id,
+        fullPath: mod.fullPath,
+        name: mod.name,
+        description: mod.description,
+        depth: mod.depth,
+        memberCount: mod.members.length,
+        members: mod.members.map((m) => ({
+          definitionId: m.definitionId,
+          name: m.name,
+          kind: m.kind,
+        })),
       });
     }
 
@@ -368,12 +373,12 @@ export default class Flows extends Command {
     }
 
     // Classify with LLM
-    let classifications: EntryPointClassification[];
+    let classifications: EntryPointModuleClassification[];
     try {
-      classifications = await this.classifyEntryPoints(candidates, model);
+      classifications = await this.classifyModulesAsEntryPoints(candidates, model);
       if (verbose && !isJson) {
         const entryCount = classifications.filter((c) => c.isEntryPoint).length;
-        this.log(chalk.gray(`  LLM classified ${entryCount}/${candidates.length} as entry points`));
+        this.log(chalk.gray(`  LLM classified ${entryCount}/${candidates.length} modules as entry points`));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -381,88 +386,98 @@ export default class Flows extends Command {
         this.log(chalk.yellow(`  LLM classification failed: ${message}`));
         this.log(chalk.gray('  Falling back to heuristic detection'));
       }
-      // Fallback to simple heuristics
+      // Fallback to simple heuristics based on module path
       classifications = candidates.map((c) => ({
-        definitionId: c.id,
-        isEntryPoint: this.isLikelyEntryPointHeuristic(c),
+        moduleId: c.id,
+        isEntryPoint: this.isLikelyEntryPointModuleHeuristic(c),
         confidence: 'low' as const,
         reason: 'Heuristic fallback',
       }));
     }
 
-    // Build entry points from classifications
-    const entryPoints: EntryPointInfo[] = [];
+    // Build entry point modules from classifications
+    const entryPointModules: EntryPointModuleInfo[] = [];
     for (const classification of classifications) {
       if (!classification.isEntryPoint) continue;
 
-      const def = candidates.find((c) => c.id === classification.definitionId);
-      if (!def) continue;
+      const mod = candidates.find((c) => c.id === classification.moduleId);
+      if (!mod) continue;
 
-      const moduleInfo = db.getDefinitionModule(def.id);
-      entryPoints.push({
-        definitionId: def.id,
-        name: def.name,
-        kind: def.kind,
-        filePath: def.filePath,
-        line: def.line,
-        moduleId: moduleInfo?.module?.id ?? null,
-        modulePath: moduleInfo?.module?.fullPath ?? null,
+      entryPointModules.push({
+        moduleId: mod.id,
+        modulePath: mod.fullPath,
+        moduleName: mod.name,
+        memberDefinitions: mod.members.map((m) => ({
+          id: m.definitionId,
+          name: m.name,
+          kind: m.kind,
+        })),
       });
     }
 
-    return entryPoints;
+    return entryPointModules;
   }
 
   /**
-   * Use LLM to classify root definitions as entry points.
+   * Use LLM to classify MODULES as entry point modules.
    */
-  private async classifyEntryPoints(candidates: RootDefinition[], model: string): Promise<EntryPointClassification[]> {
-    const systemPrompt = `You are classifying code symbols as entry points or internal helpers.
+  private async classifyModulesAsEntryPoints(
+    candidates: ModuleCandidate[],
+    model: string
+  ): Promise<EntryPointModuleClassification[]> {
+    const systemPrompt = `You are classifying code MODULES as entry point modules or internal modules.
 
-Entry points are:
-- Functions/methods that initiate user journeys (API handlers, event listeners, CLI commands)
-- Public interface functions that external code would call
-- Test setup/teardown functions
-- Initialization and configuration functions
-- Command handlers and route handlers
-- Main execution entry points
+Entry point modules are where execution originates from external triggers:
+- User navigation (pages, screens, views)
+- API/HTTP requests (route handlers, controllers)
+- CLI invocation (commands)
+- External events (webhooks, message handlers)
+- Main entry points (index files that bootstrap the app)
 
-Internal helpers are:
-- Private utilities called by other internal code
-- Pure transformation functions
-- Low-level implementation details
-- Type definitions and interfaces (unless they define public APIs)
-- Constants and configuration values
+Internal modules are called BY entry points, they don't originate execution:
+- Utility modules (helpers, utils, common)
+- Service modules (internal business logic)
+- Data access modules (repositories, models)
+- Infrastructure modules (config, logging, etc.)
 
-Classify each candidate. Output ONLY a CSV table:
+Classify each module based on its PURPOSE and ROLE in the architecture, not individual symbols.
+The module path tells you a lot - "screens.login" is clearly a user-facing entry point.
+
+Output ONLY a CSV table:
 
 \`\`\`csv
-id,is_entry_point,confidence,reason
-42,true,high,"API route handler for user creation"
-87,false,high,"Internal helper for password hashing"
+module_id,is_entry_point,confidence,reason
+42,true,high,"User-facing screen module"
+87,false,high,"Internal data access layer"
 \`\`\`
 
 Guidelines:
-- Be generous with entry point classification - when in doubt, mark as entry point
-- Anything that looks like a handler, command, or public interface is an entry point
-- Only mark as NOT entry point if clearly internal/utility`;
+- Focus on the MODULE's role, not individual functions within it
+- Modules containing pages/screens/routes are entry points
+- Modules with "api", "routes", "handlers", "commands" in their path are entry points
+- Modules with "utils", "helpers", "lib", "common", "shared" are internal
+- When in doubt, check what the module contains to infer its purpose`;
 
-    // Build candidate descriptions
-    const candidateList = candidates
-      .map((c) => {
-        let desc = `${c.id}: ${c.name} (${c.kind}) in ${c.filePath}:${c.line}`;
-        if (c.purpose) desc += `\n   Purpose: ${c.purpose}`;
-        if (c.role) desc += `\n   Role: ${c.role}`;
-        desc += `\n   Outgoing deps: ${c.outgoingCount}`;
+    // Build module descriptions for LLM
+    const moduleList = candidates
+      .map((m) => {
+        let desc = `${m.id}: ${m.fullPath}`;
+        if (m.description) desc += `\n   Description: ${m.description}`;
+        desc += `\n   Name: ${m.name}`;
+        desc += `\n   Members (${m.memberCount}): ${m.members
+          .slice(0, 5)
+          .map((mem) => `${mem.name} (${mem.kind})`)
+          .join(', ')}`;
+        if (m.members.length > 5) desc += `, ... and ${m.members.length - 5} more`;
         return desc;
       })
       .join('\n\n');
 
-    const userPrompt = `## Candidates to Classify (${candidates.length})
+    const userPrompt = `## Modules to Classify (${candidates.length})
 
-${candidateList}
+${moduleList}
 
-Classify each as entry point or internal helper.`;
+Classify each module as entry point module or internal module.`;
 
     const response = await LLMist.complete(userPrompt, {
       model,
@@ -470,19 +485,22 @@ Classify each as entry point or internal helper.`;
       temperature: 0,
     });
 
-    return this.parseEntryPointCSV(response, candidates);
+    return this.parseModuleClassificationCSV(response, candidates);
   }
 
   /**
-   * Parse LLM response for entry point classifications.
+   * Parse LLM response for module classifications.
    */
-  private parseEntryPointCSV(response: string, candidates: RootDefinition[]): EntryPointClassification[] {
-    const results: EntryPointClassification[] = [];
+  private parseModuleClassificationCSV(
+    response: string,
+    candidates: ModuleCandidate[]
+  ): EntryPointModuleClassification[] {
+    const results: EntryPointModuleClassification[] = [];
 
     const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/) || response.match(/```\n([\s\S]*?)\n```/);
     const csvContent = csvMatch ? csvMatch[1] : response;
 
-    const lines = csvContent.split('\n').filter((l) => l.trim() && !l.startsWith('id,'));
+    const lines = csvContent.split('\n').filter((l) => l.trim() && !l.startsWith('module_id,'));
 
     const candidateMap = new Map(candidates.map((c) => [c.id, c]));
 
@@ -498,7 +516,7 @@ Classify each as entry point or internal helper.`;
       const reason = fields[3].trim().replace(/"/g, '');
 
       results.push({
-        definitionId: id,
+        moduleId: id,
         isEntryPoint,
         confidence: ['high', 'medium', 'low'].includes(confidence) ? confidence : 'medium',
         reason,
@@ -507,10 +525,10 @@ Classify each as entry point or internal helper.`;
 
     // Add fallback for any candidates not in response
     for (const candidate of candidates) {
-      if (!results.find((r) => r.definitionId === candidate.id)) {
+      if (!results.find((r) => r.moduleId === candidate.id)) {
         results.push({
-          definitionId: candidate.id,
-          isEntryPoint: this.isLikelyEntryPointHeuristic(candidate),
+          moduleId: candidate.id,
+          isEntryPoint: this.isLikelyEntryPointModuleHeuristic(candidate),
           confidence: 'low',
           reason: 'Not in LLM response, using heuristic',
         });
@@ -521,31 +539,32 @@ Classify each as entry point or internal helper.`;
   }
 
   /**
-   * Simple heuristic fallback for entry point detection.
+   * Simple heuristic fallback for entry point module detection.
    */
-  private isLikelyEntryPointHeuristic(candidate: RootDefinition): boolean {
-    const name = candidate.name.toLowerCase();
-    const kind = candidate.kind;
+  private isLikelyEntryPointModuleHeuristic(candidate: ModuleCandidate): boolean {
+    const path = candidate.fullPath.toLowerCase();
 
-    // Handler patterns
-    if (name.startsWith('handle') || name.endsWith('handler')) return true;
-    if (name.startsWith('on') && name.length > 2) return true;
-    if (name.endsWith('controller') || name.endsWith('listener')) return true;
+    // Page/screen patterns
+    if (path.includes('page') || path.includes('screen') || path.includes('view')) return true;
 
     // Route/API patterns
-    if (name.includes('route') || name.includes('api') || name.includes('endpoint')) return true;
+    if (path.includes('route') || path.includes('api') || path.includes('endpoint')) return true;
+    if (path.includes('handler') || path.includes('controller')) return true;
 
     // Command patterns
-    if (name.includes('command') || name.includes('action')) return true;
+    if (path.includes('command') || path.includes('cli')) return true;
 
-    // Main/index exports
-    if (name === 'default' || name === 'main' || name === 'run' || name === 'execute') return true;
+    // Internal patterns (NOT entry points)
+    if (path.includes('util') || path.includes('helper') || path.includes('common')) return false;
+    if (path.includes('lib') || path.includes('shared') || path.includes('core')) return false;
+    if (path.includes('service') || path.includes('repository') || path.includes('model')) return false;
 
-    // Classes with handler/controller suffix
-    if (kind === 'class' && (name.endsWith('controller') || name.endsWith('handler'))) return true;
-
-    // Role-based detection
-    if (candidate.role === 'entry-point' || candidate.role === 'handler') return true;
+    // Check member names for hints
+    const memberNames = candidate.members.map((m) => m.name.toLowerCase());
+    const hasHandlerLikeMember = memberNames.some(
+      (n) => n.includes('handle') || n.includes('route') || n.includes('page')
+    );
+    if (hasHandlerLikeMember) return true;
 
     return false;
   }
@@ -647,6 +666,7 @@ Classify each as entry point or internal helper.`;
       gapFlows.push({
         name: flowName,
         slug: slug,
+        entryPointModuleId: null,
         entryPointId: null,
         entryPath: `Internal: ${modulePath}`,
         stakeholder: 'developer', // Internal, not user-facing
@@ -660,11 +680,14 @@ Classify each as entry point or internal helper.`;
   }
 
   /**
-   * Generate a flow name from an entry point.
+   * Generate a flow name from an entry point module and member.
    */
-  private generateFlowName(entryPoint: EntryPointInfo): string {
+  private generateFlowNameFromModule(
+    _module: EntryPointModuleInfo,
+    member: { id: number; name: string; kind: string }
+  ): string {
     // Convert handler names to flow names
-    let name = entryPoint.name;
+    let name = member.name;
 
     // Remove common prefixes/suffixes
     name = name.replace(/^handle/, '');
@@ -681,22 +704,24 @@ Classify each as entry point or internal helper.`;
   }
 
   /**
-   * Generate a slug from an entry point.
+   * Generate a slug from an entry point module and member.
    */
-  private generateFlowSlug(entryPoint: EntryPointInfo): string {
-    return this.generateFlowName(entryPoint)
+  private generateFlowSlugFromModule(
+    _module: EntryPointModuleInfo,
+    member: { id: number; name: string; kind: string }
+  ): string {
+    return this.generateFlowNameFromModule(_module, member)
       .replace(/([a-z])([A-Z])/g, '$1-$2')
       .toLowerCase();
   }
 
   /**
-   * Infer stakeholder from entry point context.
+   * Infer stakeholder from entry point module context.
    */
-  private inferStakeholder(entryPoint: EntryPointInfo): FlowStakeholder {
-    const name = entryPoint.name.toLowerCase();
-    const path = entryPoint.filePath.toLowerCase();
+  private inferStakeholderFromModule(module: EntryPointModuleInfo): FlowStakeholder {
+    const path = module.modulePath.toLowerCase();
 
-    if (path.includes('admin') || name.includes('admin')) return 'admin';
+    if (path.includes('admin')) return 'admin';
     if (path.includes('api') || path.includes('route')) return 'external';
     if (path.includes('cron') || path.includes('job') || path.includes('worker')) return 'system';
     if (path.includes('cli') || path.includes('command')) return 'developer';

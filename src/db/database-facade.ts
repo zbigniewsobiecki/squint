@@ -620,6 +620,10 @@ export class IndexDatabase implements IIndexWriter {
     return this.flows.getByEntryPoint(entryPointId);
   }
 
+  getFlowsByEntryPointModule(entryPointModuleId: number): Flow[] {
+    return this.flows.getByEntryPointModule(entryPointModuleId);
+  }
+
   getFlowWithSteps(flowId: number): FlowWithSteps | null {
     return this.flows.getWithSteps(flowId);
   }
@@ -628,6 +632,7 @@ export class IndexDatabase implements IIndexWriter {
     flowId: number,
     updates: {
       name?: string;
+      entryPointModuleId?: number;
       entryPointId?: number;
       entryPath?: string;
       stakeholder?: FlowStakeholder;

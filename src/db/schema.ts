@@ -226,7 +226,8 @@ export interface Flow {
   id: number;
   name: string;
   slug: string;
-  entryPointId: number | null; // FK to definitions (the entry point symbol)
+  entryPointModuleId: number | null; // FK to modules (the entry point module)
+  entryPointId: number | null; // FK to definitions (specific definition within module)
   entryPath: string | null; // e.g., "POST /api/auth/login"
   stakeholder: FlowStakeholder | null; // user, admin, system, developer, external
   description: string | null;
@@ -623,6 +624,7 @@ CREATE TABLE flows (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
   slug TEXT NOT NULL UNIQUE,
+  entry_point_module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL,
   entry_point_id INTEGER REFERENCES definitions(id) ON DELETE SET NULL,
   entry_path TEXT,  -- e.g., "POST /api/auth/login"
   stakeholder TEXT,  -- 'user' | 'admin' | 'system' | 'developer' | 'external'
@@ -631,6 +633,7 @@ CREATE TABLE flows (
 );
 
 CREATE INDEX idx_flows_slug ON flows(slug);
+CREATE INDEX idx_flows_entry_point_module ON flows(entry_point_module_id);
 CREATE INDEX idx_flows_entry_point ON flows(entry_point_id);
 CREATE INDEX idx_flows_stakeholder ON flows(stakeholder);
 

@@ -8,6 +8,7 @@ import { createApiClient } from './api/client';
 import { createStore } from './state/store';
 import { initFlowsDag } from './views/flows-dag';
 import { initForceGraph } from './views/force-graph';
+import { initInteractions } from './views/interactions';
 import { initModulesTree } from './views/modules-tree';
 import { initSunburst } from './views/sunburst';
 
@@ -21,6 +22,7 @@ const views = {
   sunburst: initSunburst,
   modules: initModulesTree,
   flows: initFlowsDag,
+  interactions: initInteractions,
 };
 
 // Current view state
@@ -76,6 +78,16 @@ function updateStatsForView(view: string) {
       <span class="stat">Flows: <span class="stat-value" id="stat-flows">${state.flowsDagData?.flows.length ?? '-'}</span></span>
       <span class="stat">Modules: <span class="stat-value" id="stat-modules">${state.flowsDagData?.modules.length ?? '-'}</span></span>
     `;
+  } else if (view === 'interactions') {
+    const data = state.interactionsData;
+    if (data) {
+      statsContainer.innerHTML = `
+        <span class="stat">Interactions: <span class="stat-value">${data.stats.totalCount}</span></span>
+        <span class="stat">Business: <span class="stat-value annotated">${data.stats.businessCount}</span></span>
+        <span class="stat">Utility: <span class="stat-value">${data.stats.utilityCount}</span></span>
+        <span class="stat">Coverage: <span class="stat-value">${data.relationshipCoverage.coveragePercent.toFixed(0)}%</span></span>
+      `;
+    }
   } else {
     statsContainer.innerHTML = `
       <span class="stat">Symbols: <span class="stat-value" id="stat-symbols">${state.graphData?.stats.totalSymbols ?? '-'}</span></span>
@@ -125,6 +137,10 @@ async function loadInitialData() {
     // Load flows DAG data
     const flowsDagData = await api.getFlowsDag();
     store.setState({ flowsDagData });
+
+    // Load interactions data
+    const interactionsData = await api.getInteractions();
+    store.setState({ interactionsData });
 
     // Render initial view
     renderCurrentView();

@@ -14,6 +14,7 @@ import type {
 } from '../schema.js';
 
 export interface FlowInsertOptions {
+  entryPointModuleId?: number;
   entryPointId?: number;
   entryPath?: string;
   stakeholder?: FlowStakeholder;
@@ -22,6 +23,7 @@ export interface FlowInsertOptions {
 
 export interface FlowUpdateOptions {
   name?: string;
+  entryPointModuleId?: number;
   entryPointId?: number;
   entryPath?: string;
   stakeholder?: FlowStakeholder;
@@ -48,13 +50,14 @@ export class FlowRepository {
     ensureFlowsTables(this.db);
 
     const stmt = this.db.prepare(`
-      INSERT INTO flows (name, slug, entry_point_id, entry_path, stakeholder, description)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO flows (name, slug, entry_point_module_id, entry_point_id, entry_path, stakeholder, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
       name,
       slug,
+      options?.entryPointModuleId ?? null,
       options?.entryPointId ?? null,
       options?.entryPath ?? null,
       options?.stakeholder ?? null,
@@ -74,6 +77,7 @@ export class FlowRepository {
         id,
         name,
         slug,
+        entry_point_module_id as entryPointModuleId,
         entry_point_id as entryPointId,
         entry_path as entryPath,
         stakeholder,
@@ -96,6 +100,7 @@ export class FlowRepository {
         id,
         name,
         slug,
+        entry_point_module_id as entryPointModuleId,
         entry_point_id as entryPointId,
         entry_path as entryPath,
         stakeholder,
@@ -118,6 +123,7 @@ export class FlowRepository {
         id,
         name,
         slug,
+        entry_point_module_id as entryPointModuleId,
         entry_point_id as entryPointId,
         entry_path as entryPath,
         stakeholder,
@@ -139,6 +145,7 @@ export class FlowRepository {
         id,
         name,
         slug,
+        entry_point_module_id as entryPointModuleId,
         entry_point_id as entryPointId,
         entry_path as entryPath,
         stakeholder,
@@ -161,6 +168,7 @@ export class FlowRepository {
         id,
         name,
         slug,
+        entry_point_module_id as entryPointModuleId,
         entry_point_id as entryPointId,
         entry_path as entryPath,
         stakeholder,
@@ -171,6 +179,29 @@ export class FlowRepository {
       ORDER BY name
     `);
     return stmt.all(entryPointId) as Flow[];
+  }
+
+  /**
+   * Get flows by entry point module ID.
+   */
+  getByEntryPointModule(entryPointModuleId: number): Flow[] {
+    ensureFlowsTables(this.db);
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        name,
+        slug,
+        entry_point_module_id as entryPointModuleId,
+        entry_point_id as entryPointId,
+        entry_path as entryPath,
+        stakeholder,
+        description,
+        created_at as createdAt
+      FROM flows
+      WHERE entry_point_module_id = ?
+      ORDER BY name
+    `);
+    return stmt.all(entryPointModuleId) as Flow[];
   }
 
   /**
@@ -247,6 +278,10 @@ export class FlowRepository {
     if (updates.name !== undefined) {
       sets.push('name = ?');
       params.push(updates.name);
+    }
+    if (updates.entryPointModuleId !== undefined) {
+      sets.push('entry_point_module_id = ?');
+      params.push(updates.entryPointModuleId);
     }
     if (updates.entryPointId !== undefined) {
       sets.push('entry_point_id = ?');
@@ -543,6 +578,7 @@ export class FlowRepository {
         id: flowWithSteps.id,
         name: flowWithSteps.name,
         slug: flowWithSteps.slug,
+        entryPointModuleId: flowWithSteps.entryPointModuleId,
         entryPointId: flowWithSteps.entryPointId,
         entryPath: flowWithSteps.entryPath,
         stakeholder: flowWithSteps.stakeholder,
@@ -562,7 +598,7 @@ export class FlowRepository {
     const flowCount = this.getCount();
 
     const withEntryStmt = this.db.prepare(`
-      SELECT COUNT(*) as count FROM flows WHERE entry_point_id IS NOT NULL
+      SELECT COUNT(*) as count FROM flows WHERE entry_point_module_id IS NOT NULL
     `);
     const withEntryPointCount = (withEntryStmt.get() as { count: number }).count;
 
@@ -629,6 +665,7 @@ export class FlowRepository {
         f.id,
         f.name,
         f.slug,
+        f.entry_point_module_id as entryPointModuleId,
         f.entry_point_id as entryPointId,
         f.entry_path as entryPath,
         f.stakeholder,
