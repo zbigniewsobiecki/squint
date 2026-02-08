@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { IndexDatabase, computeHash } from '../../src/db/database.js';
 
-describe('Hierarchical Flow Detection', () => {
+describe('Interactions and Flows', () => {
   let db: IndexDatabase;
 
   beforeEach(() => {
@@ -72,6 +72,15 @@ describe('Hierarchical Flow Detection', () => {
       position: { row: callRow, column: 10 },
       context: 'call_expression',
     });
+  }
+
+  // Helper to create modules
+  function createModules(): { module1: number; module2: number; module3: number } {
+    const rootId = db.ensureRootModule();
+    const module1 = db.insertModule(rootId, 'controllers', 'Controllers');
+    const module2 = db.insertModule(rootId, 'services', 'Services');
+    const module3 = db.insertModule(rootId, 'repositories', 'Repositories');
+    return { module1, module2, module3 };
   }
 
   describe('getCallGraph', () => {
@@ -203,577 +212,458 @@ describe('Hierarchical Flow Detection', () => {
     });
   });
 
-  describe('ensureRootFlow', () => {
-    it('creates a root flow with depth 0', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      expect(rootFlow.id).toBeDefined();
-      expect(rootFlow.name).toBe('User Journey');
-      expect(rootFlow.slug).toBe('user-journey');
-      expect(rootFlow.depth).toBe(0);
-      expect(rootFlow.parentId).toBeNull();
+  describe('Interactions', () => {
+    describe('insertInteraction', () => {
+      it('inserts a basic interaction', () => {
+        const { module1, module2 } = createModules();
+
+        const id = db.insertInteraction(module1, module2, {
+          direction: 'uni',
+          weight: 1,
+          pattern: 'business',
+        });
+
+        expect(id).toBeGreaterThan(0);
+
+        const interaction = db.getInteractionById(id);
+        expect(interaction).not.toBeNull();
+        expect(interaction!.fromModuleId).toBe(module1);
+        expect(interaction!.toModuleId).toBe(module2);
+        expect(interaction!.direction).toBe('uni');
+        expect(interaction!.pattern).toBe('business');
+      });
+
+      it('inserts interaction with symbols', () => {
+        const { module1, module2 } = createModules();
+
+        const id = db.insertInteraction(module1, module2, {
+          direction: 'uni',
+          symbols: ['getUser', 'createUser', 'deleteUser'],
+        });
+
+        const interaction = db.getInteractionById(id);
+        expect(interaction!.symbols).toEqual(['getUser', 'createUser', 'deleteUser']);
+      });
+
+      it('inserts interaction with semantic', () => {
+        const { module1, module2 } = createModules();
+
+        const id = db.insertInteraction(module1, module2, {
+          direction: 'uni',
+          semantic: 'Controller delegates business logic to service',
+        });
+
+        const interaction = db.getInteractionById(id);
+        expect(interaction!.semantic).toBe('Controller delegates business logic to service');
+      });
     });
 
-    it('returns existing root flow if slug matches', () => {
-      const first = db.ensureRootFlow('user-journey');
-      const second = db.ensureRootFlow('user-journey');
-      expect(first.id).toBe(second.id);
+    describe('upsertInteraction', () => {
+      it('inserts when not exists', () => {
+        const { module1, module2 } = createModules();
+
+        const id = db.upsertInteraction(module1, module2, {
+          direction: 'uni',
+          weight: 5,
+        });
+
+        const interaction = db.getInteractionById(id);
+        expect(interaction!.weight).toBe(5);
+      });
+
+      it('updates when exists', () => {
+        const { module1, module2 } = createModules();
+
+        // First insert
+        const id1 = db.insertInteraction(module1, module2, {
+          direction: 'uni',
+          weight: 1,
+          pattern: 'utility',
+        });
+
+        // Upsert with new values
+        const id2 = db.upsertInteraction(module1, module2, {
+          direction: 'bi',
+          weight: 10,
+          pattern: 'business',
+          semantic: 'Updated semantic',
+        });
+
+        expect(id2).toBe(id1);
+
+        const interaction = db.getInteractionById(id2);
+        expect(interaction!.direction).toBe('bi');
+        expect(interaction!.weight).toBe(10);
+        expect(interaction!.pattern).toBe('business');
+        expect(interaction!.semantic).toBe('Updated semantic');
+      });
+    });
+
+    describe('getInteractionByModules', () => {
+      it('returns interaction by module pair', () => {
+        const { module1, module2 } = createModules();
+
+        db.insertInteraction(module1, module2, { direction: 'uni' });
+
+        const interaction = db.getInteractionByModules(module1, module2);
+        expect(interaction).not.toBeNull();
+        expect(interaction!.fromModuleId).toBe(module1);
+        expect(interaction!.toModuleId).toBe(module2);
+      });
+
+      it('returns null when not found', () => {
+        const { module1, module2 } = createModules();
+
+        const interaction = db.getInteractionByModules(module1, module2);
+        expect(interaction).toBeNull();
+      });
+    });
+
+    describe('getAllInteractions', () => {
+      it('returns all interactions with module paths', () => {
+        const { module1, module2, module3 } = createModules();
+
+        db.insertInteraction(module1, module2, { direction: 'uni', pattern: 'business' });
+        db.insertInteraction(module2, module3, { direction: 'uni', pattern: 'business' });
+
+        const interactions = db.getAllInteractions();
+        expect(interactions).toHaveLength(2);
+        expect(interactions[0].fromModulePath).toBeDefined();
+        expect(interactions[0].toModulePath).toBeDefined();
+      });
+    });
+
+    describe('getInteractionsByPattern', () => {
+      it('filters interactions by pattern', () => {
+        const { module1, module2, module3 } = createModules();
+
+        db.insertInteraction(module1, module2, { direction: 'uni', pattern: 'business' });
+        db.insertInteraction(module2, module3, { direction: 'uni', pattern: 'utility' });
+
+        const business = db.getInteractionsByPattern('business');
+        expect(business).toHaveLength(1);
+        expect(business[0].fromModuleId).toBe(module1);
+
+        const utility = db.getInteractionsByPattern('utility');
+        expect(utility).toHaveLength(1);
+        expect(utility[0].fromModuleId).toBe(module2);
+      });
+    });
+
+    describe('getInteractionCount', () => {
+      it('returns correct count', () => {
+        const { module1, module2, module3 } = createModules();
+
+        expect(db.getInteractionCount()).toBe(0);
+
+        db.insertInteraction(module1, module2, { direction: 'uni' });
+        expect(db.getInteractionCount()).toBe(1);
+
+        db.insertInteraction(module2, module3, { direction: 'uni' });
+        expect(db.getInteractionCount()).toBe(2);
+      });
+    });
+
+    describe('clearInteractions', () => {
+      it('removes all interactions', () => {
+        const { module1, module2, module3 } = createModules();
+
+        db.insertInteraction(module1, module2, { direction: 'uni' });
+        db.insertInteraction(module2, module3, { direction: 'uni' });
+
+        expect(db.getInteractionCount()).toBe(2);
+
+        const cleared = db.clearInteractions();
+        expect(cleared).toBe(2);
+        expect(db.getInteractionCount()).toBe(0);
+      });
     });
   });
 
-  describe('insertFlow', () => {
-    it('inserts a child flow under a parent', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const childId = db.insertFlow(rootFlow.id, 'authentication', 'Authentication', {
-        description: 'User authentication flow',
+  describe('Flows', () => {
+    describe('insertFlow', () => {
+      it('inserts a basic flow', () => {
+        const id = db.insertFlow('UserLoginFlow', 'user-login-flow', {
+          description: 'Handles user login',
+          stakeholder: 'user',
+        });
+
+        expect(id).toBeGreaterThan(0);
+
+        const flow = db.getFlowById(id);
+        expect(flow).not.toBeNull();
+        expect(flow!.name).toBe('UserLoginFlow');
+        expect(flow!.slug).toBe('user-login-flow');
+        expect(flow!.description).toBe('Handles user login');
+        expect(flow!.stakeholder).toBe('user');
       });
 
-      const child = db.getFlowById(childId);
-      expect(child).not.toBeNull();
-      expect(child!.name).toBe('Authentication');
-      expect(child!.slug).toBe('authentication');
-      expect(child!.parentId).toBe(rootFlow.id);
-      expect(child!.depth).toBe(1);
-      expect(child!.fullPath).toBe('user-journey.authentication');
-    });
+      it('inserts flow with entry point', () => {
+        const fileId = createFile('/project/controllers/auth.ts');
+        const entryPointId = createDefinition(fileId, 'handleLogin', 'function', 0, 50);
 
-    it('creates leaf flows with module transitions', () => {
-      // Create modules first
-      const rootModule = db.ensureRootModule();
-      const controllerModule = db.insertModule(rootModule, 'controllers', 'Controllers');
-      const serviceModule = db.insertModule(rootModule, 'services', 'Services');
+        const id = db.insertFlow('UserLoginFlow', 'user-login-flow', {
+          entryPointId,
+          entryPath: 'POST /api/auth/login',
+        });
 
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const leafId = db.insertFlow(rootFlow.id, 'controller-to-service', 'Controller to Service', {
-        fromModuleId: controllerModule,
-        toModuleId: serviceModule,
-        semantic: 'Controller delegates to service',
+        const flow = db.getFlowById(id);
+        expect(flow!.entryPointId).toBe(entryPointId);
+        expect(flow!.entryPath).toBe('POST /api/auth/login');
       });
 
-      const leaf = db.getFlowById(leafId);
-      expect(leaf).not.toBeNull();
-      expect(leaf!.fromModuleId).toBe(controllerModule);
-      expect(leaf!.toModuleId).toBe(serviceModule);
-      expect(leaf!.semantic).toBe('Controller delegates to service');
+      it('enforces unique slug', () => {
+        db.insertFlow('Flow1', 'my-flow', {});
+
+        expect(() => {
+          db.insertFlow('Flow2', 'my-flow', {});
+        }).toThrow();
+      });
     });
 
-    it('auto-assigns step order within parent', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const child1 = db.insertFlow(rootFlow.id, 'step-1', 'Step 1');
-      const child2 = db.insertFlow(rootFlow.id, 'step-2', 'Step 2');
-      const child3 = db.insertFlow(rootFlow.id, 'step-3', 'Step 3');
+    describe('getFlowBySlug', () => {
+      it('returns flow by slug', () => {
+        db.insertFlow('TestFlow', 'test-flow', { description: 'Test' });
 
-      const flow1 = db.getFlowById(child1);
-      const flow2 = db.getFlowById(child2);
-      const flow3 = db.getFlowById(child3);
+        const flow = db.getFlowBySlug('test-flow');
+        expect(flow).not.toBeNull();
+        expect(flow!.name).toBe('TestFlow');
+      });
 
-      expect(flow1!.stepOrder).toBe(1);
-      expect(flow2!.stepOrder).toBe(2);
-      expect(flow3!.stepOrder).toBe(3);
+      it('returns null for non-existent slug', () => {
+        const flow = db.getFlowBySlug('non-existent');
+        expect(flow).toBeNull();
+      });
+    });
+
+    describe('getAllFlows', () => {
+      it('returns all flows', () => {
+        db.insertFlow('Flow1', 'flow-1', {});
+        db.insertFlow('Flow2', 'flow-2', {});
+        db.insertFlow('Flow3', 'flow-3', {});
+
+        const flows = db.getAllFlows();
+        expect(flows).toHaveLength(3);
+      });
+    });
+
+    describe('getFlowsByStakeholder', () => {
+      it('filters flows by stakeholder', () => {
+        db.insertFlow('UserFlow', 'user-flow', { stakeholder: 'user' });
+        db.insertFlow('AdminFlow', 'admin-flow', { stakeholder: 'admin' });
+        db.insertFlow('SystemFlow', 'system-flow', { stakeholder: 'system' });
+
+        const userFlows = db.getFlowsByStakeholder('user');
+        expect(userFlows).toHaveLength(1);
+        expect(userFlows[0].name).toBe('UserFlow');
+
+        const adminFlows = db.getFlowsByStakeholder('admin');
+        expect(adminFlows).toHaveLength(1);
+        expect(adminFlows[0].name).toBe('AdminFlow');
+      });
+    });
+
+    describe('updateFlow', () => {
+      it('updates flow name', () => {
+        const id = db.insertFlow('OldName', 'test-flow', {});
+
+        const updated = db.updateFlow(id, { name: 'NewName' });
+        expect(updated).toBe(true);
+
+        const flow = db.getFlowById(id);
+        expect(flow!.name).toBe('NewName');
+      });
+
+      it('updates flow description', () => {
+        const id = db.insertFlow('Test', 'test-flow', {});
+
+        db.updateFlow(id, { description: 'New description' });
+
+        const flow = db.getFlowById(id);
+        expect(flow!.description).toBe('New description');
+      });
+
+      it('returns false for non-existent flow', () => {
+        const updated = db.updateFlow(999, { name: 'Test' });
+        expect(updated).toBe(false);
+      });
+
+      it('returns false when no updates provided', () => {
+        const id = db.insertFlow('Test', 'test-flow', {});
+
+        const updated = db.updateFlow(id, {});
+        expect(updated).toBe(false);
+      });
+    });
+
+    describe('deleteFlow', () => {
+      it('deletes a flow', () => {
+        const id = db.insertFlow('Test', 'test-flow', {});
+        expect(db.getFlowCount()).toBe(1);
+
+        const deleted = db.deleteFlow(id);
+        expect(deleted).toBe(true);
+        expect(db.getFlowCount()).toBe(0);
+      });
+    });
+
+    describe('getFlowCount', () => {
+      it('returns correct count', () => {
+        expect(db.getFlowCount()).toBe(0);
+
+        db.insertFlow('Flow1', 'flow-1', {});
+        expect(db.getFlowCount()).toBe(1);
+
+        db.insertFlow('Flow2', 'flow-2', {});
+        expect(db.getFlowCount()).toBe(2);
+      });
+    });
+
+    describe('clearFlows', () => {
+      it('removes all flows', () => {
+        db.insertFlow('Flow1', 'flow-1', {});
+        db.insertFlow('Flow2', 'flow-2', {});
+
+        expect(db.getFlowCount()).toBe(2);
+
+        const cleared = db.clearFlows();
+        expect(cleared).toBe(2);
+        expect(db.getFlowCount()).toBe(0);
+      });
     });
   });
 
-  describe('getFlowByPath', () => {
-    it('retrieves a flow by its full path', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      db.insertFlow(rootFlow.id, 'authentication', 'Authentication');
+  describe('Flow Steps', () => {
+    it('adds steps to a flow', () => {
+      const { module1, module2, module3 } = createModules();
 
-      const flow = db.getFlowByPath('user-journey.authentication');
+      // Create interactions
+      const int1 = db.insertInteraction(module1, module2, { direction: 'uni' });
+      const int2 = db.insertInteraction(module2, module3, { direction: 'uni' });
+
+      // Create flow
+      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
+
+      // Add steps
+      db.addFlowSteps(flowId, [int1, int2]);
+
+      // Get flow with steps
+      const flow = db.getFlowWithSteps(flowId);
       expect(flow).not.toBeNull();
-      expect(flow!.name).toBe('Authentication');
+      expect(flow!.steps).toHaveLength(2);
+      expect(flow!.steps[0].stepOrder).toBe(1);
+      expect(flow!.steps[0].interactionId).toBe(int1);
+      expect(flow!.steps[1].stepOrder).toBe(2);
+      expect(flow!.steps[1].interactionId).toBe(int2);
     });
 
-    it('returns null for non-existent path', () => {
-      const flow = db.getFlowByPath('non-existent.path');
-      expect(flow).toBeNull();
-    });
-  });
+    it('expands flow to full interaction details', () => {
+      const { module1, module2, module3 } = createModules();
 
-  describe('getFlowChildren', () => {
-    it('returns children ordered by stepOrder', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      db.insertFlow(rootFlow.id, 'step-3', 'Step 3');
-      db.insertFlow(rootFlow.id, 'step-1', 'Step 1');
-      db.insertFlow(rootFlow.id, 'step-2', 'Step 2');
-
-      const children = db.getFlowChildren(rootFlow.id);
-      expect(children).toHaveLength(3);
-      // Should be in insertion order (step order assigned sequentially)
-      expect(children[0].slug).toBe('step-3');
-      expect(children[1].slug).toBe('step-1');
-      expect(children[2].slug).toBe('step-2');
-    });
-  });
-
-  describe('getFlowTree', () => {
-    it('returns complete tree structure', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const authId = db.insertFlow(rootFlow.id, 'authentication', 'Authentication');
-      db.insertFlow(authId, 'validate', 'Validate Credentials');
-      db.insertFlow(authId, 'create-session', 'Create Session');
-      db.insertFlow(rootFlow.id, 'dashboard', 'Load Dashboard');
-
-      const trees = db.getFlowTree();
-      expect(trees).toHaveLength(1);
-
-      const root = trees[0];
-      expect(root.name).toBe('User Journey');
-      expect(root.children).toHaveLength(2);
-
-      const auth = root.children.find(c => c.slug === 'authentication');
-      expect(auth).toBeDefined();
-      expect(auth!.children).toHaveLength(2);
-    });
-  });
-
-  describe('getLeafFlows', () => {
-    it('returns only flows with module transitions', () => {
-      // Create modules
-      const rootModule = db.ensureRootModule();
-      const controllerModule = db.insertModule(rootModule, 'controllers', 'Controllers');
-      const serviceModule = db.insertModule(rootModule, 'services', 'Services');
-
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const authId = db.insertFlow(rootFlow.id, 'authentication', 'Authentication');
-
-      // Create leaf flow with module transition
-      db.insertFlow(authId, 'validate', 'Validate', {
-        fromModuleId: controllerModule,
-        toModuleId: serviceModule,
-        semantic: 'Validates credentials',
+      // Create interactions
+      const int1 = db.insertInteraction(module1, module2, {
+        direction: 'uni',
+        semantic: 'First step',
+      });
+      const int2 = db.insertInteraction(module2, module3, {
+        direction: 'uni',
+        semantic: 'Second step',
       });
 
-      const leafFlows = db.getLeafFlows();
-      expect(leafFlows).toHaveLength(1);
-      expect(leafFlows[0].name).toBe('Validate');
-      expect(leafFlows[0].fromModuleId).toBe(controllerModule);
+      // Create flow with steps
+      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
+      db.addFlowSteps(flowId, [int1, int2]);
+
+      // Expand flow
+      const expanded = db.expandFlow(flowId);
+      expect(expanded).not.toBeNull();
+      expect(expanded!.interactions).toHaveLength(2);
+      expect(expanded!.interactions[0].id).toBe(int1);
+      expect(expanded!.interactions[0].semantic).toBe('First step');
+      expect(expanded!.interactions[1].id).toBe(int2);
+      expect(expanded!.interactions[1].semantic).toBe('Second step');
+    });
+
+    it('clears steps from a flow', () => {
+      const { module1, module2 } = createModules();
+
+      const int1 = db.insertInteraction(module1, module2, { direction: 'uni' });
+      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
+      db.addFlowSteps(flowId, [int1]);
+
+      let flow = db.getFlowWithSteps(flowId);
+      expect(flow!.steps).toHaveLength(1);
+
+      db.clearFlowSteps(flowId);
+
+      flow = db.getFlowWithSteps(flowId);
+      expect(flow!.steps).toHaveLength(0);
     });
   });
 
-  describe('expandFlow', () => {
-    it('returns ordered leaf flows for a composite flow', () => {
-      // Create modules
-      const rootModule = db.ensureRootModule();
-      const module1 = db.insertModule(rootModule, 'module-1', 'Module 1');
-      const module2 = db.insertModule(rootModule, 'module-2', 'Module 2');
-      const module3 = db.insertModule(rootModule, 'module-3', 'Module 3');
-
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const authId = db.insertFlow(rootFlow.id, 'authentication', 'Authentication');
-
-      // Create leaf flows
-      db.insertFlow(authId, 'step-1', 'Step 1', {
-        fromModuleId: module1,
-        toModuleId: module2,
-      });
-      db.insertFlow(authId, 'step-2', 'Step 2', {
-        fromModuleId: module2,
-        toModuleId: module3,
-      });
-
-      const expanded = db.expandFlow(authId);
-      expect(expanded).toHaveLength(2);
-      expect(expanded[0].slug).toBe('step-1');
-      expect(expanded[1].slug).toBe('step-2');
-    });
-
-    it('returns empty array for leaf flow', () => {
-      const rootModule = db.ensureRootModule();
-      const module1 = db.insertModule(rootModule, 'module-1', 'Module 1');
-      const module2 = db.insertModule(rootModule, 'module-2', 'Module 2');
-
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const leafId = db.insertFlow(rootFlow.id, 'leaf', 'Leaf Flow', {
-        fromModuleId: module1,
-        toModuleId: module2,
-      });
-
-      const expanded = db.expandFlow(leafId);
-      expect(expanded).toHaveLength(0); // Leaf flow has no children
-    });
-  });
-
-  describe('getFlowCoverage', () => {
+  describe('Flow Coverage', () => {
     it('calculates coverage percentage', () => {
-      // Create modules
-      const rootModule = db.ensureRootModule();
-      const module1 = db.insertModule(rootModule, 'module-1', 'Module 1');
-      const module2 = db.insertModule(rootModule, 'module-2', 'Module 2');
-      const module3 = db.insertModule(rootModule, 'module-3', 'Module 3');
+      const { module1, module2, module3 } = createModules();
 
-      // Create definitions
-      const file1 = createFile('/project/module1.ts');
-      const file2 = createFile('/project/module2.ts');
-      const file3 = createFile('/project/module3.ts');
+      // Create 3 interactions
+      const int1 = db.insertInteraction(module1, module2, { direction: 'uni' });
+      const int2 = db.insertInteraction(module2, module3, { direction: 'uni' });
+      db.insertInteraction(module1, module3, { direction: 'uni' }); // Uncovered
 
-      const def1 = createDefinition(file1, 'func1', 'function', 0, 10);
-      const def2 = createDefinition(file2, 'func2', 'function', 0, 10);
-      const def3 = createDefinition(file3, 'func3', 'function', 0, 10);
-
-      db.assignSymbolToModule(def1, module1);
-      db.assignSymbolToModule(def2, module2);
-      db.assignSymbolToModule(def3, module3);
-
-      // Create calls: module1->module2, module2->module3 (2 edges)
-      createCallRelationship(file1, file2, def1, def2, 'func2', 5);
-      createCallRelationship(file2, file3, def2, def3, 'func3', 5);
-
-      // Create flow covering only one edge
-      const rootFlow = db.ensureRootFlow('test-flow');
-      db.insertFlow(rootFlow.id, 'covered', 'Covered Edge', {
-        fromModuleId: module1,
-        toModuleId: module2,
-      });
+      // Create flow covering 2 interactions
+      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
+      db.addFlowSteps(flowId, [int1, int2]);
 
       const coverage = db.getFlowCoverage();
-      expect(coverage.totalModuleEdges).toBe(2);
-      expect(coverage.coveredByFlows).toBe(1);
-      expect(coverage.percentage).toBe(50.0);
+      expect(coverage.totalInteractions).toBe(3);
+      expect(coverage.coveredByFlows).toBe(2);
+      expect(coverage.percentage).toBeCloseTo(66.67, 1);
     });
 
-    it('returns 100% when all edges are covered', () => {
-      // Create modules
-      const rootModule = db.ensureRootModule();
-      const module1 = db.insertModule(rootModule, 'module-1', 'Module 1');
-      const module2 = db.insertModule(rootModule, 'module-2', 'Module 2');
+    it('returns 100% when all interactions are covered', () => {
+      const { module1, module2 } = createModules();
 
-      // Create definitions
-      const file1 = createFile('/project/module1.ts');
-      const file2 = createFile('/project/module2.ts');
+      const int1 = db.insertInteraction(module1, module2, { direction: 'uni' });
 
-      const def1 = createDefinition(file1, 'func1', 'function', 0, 10);
-      const def2 = createDefinition(file2, 'func2', 'function', 0, 10);
-
-      db.assignSymbolToModule(def1, module1);
-      db.assignSymbolToModule(def2, module2);
-
-      // Create call
-      createCallRelationship(file1, file2, def1, def2, 'func2', 5);
-
-      // Create flow covering the edge
-      const rootFlow = db.ensureRootFlow('test-flow');
-      db.insertFlow(rootFlow.id, 'covered', 'Covered Edge', {
-        fromModuleId: module1,
-        toModuleId: module2,
-      });
+      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
+      db.addFlowSteps(flowId, [int1]);
 
       const coverage = db.getFlowCoverage();
-      expect(coverage.totalModuleEdges).toBe(1);
+      expect(coverage.totalInteractions).toBe(1);
       expect(coverage.coveredByFlows).toBe(1);
       expect(coverage.percentage).toBe(100.0);
     });
-  });
 
-  describe('getFlowCount / getFlowStats', () => {
-    it('returns correct flow count', () => {
-      expect(db.getFlowCount()).toBe(0);
+    it('returns 0% when no flows exist', () => {
+      const { module1, module2 } = createModules();
 
-      const rootFlow = db.ensureRootFlow('user-journey');
-      expect(db.getFlowCount()).toBe(1);
+      db.insertInteraction(module1, module2, { direction: 'uni' });
 
-      db.insertFlow(rootFlow.id, 'auth', 'Authentication');
-      expect(db.getFlowCount()).toBe(2);
+      const coverage = db.getFlowCoverage();
+      expect(coverage.totalInteractions).toBe(1);
+      expect(coverage.coveredByFlows).toBe(0);
+      expect(coverage.percentage).toBe(0);
     });
 
-    it('returns correct flow statistics', () => {
-      // Create modules
-      const rootModule = db.ensureRootModule();
-      const module1 = db.insertModule(rootModule, 'module-1', 'Module 1');
-      const module2 = db.insertModule(rootModule, 'module-2', 'Module 2');
+    it('finds uncovered interactions', () => {
+      const { module1, module2, module3 } = createModules();
 
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const authId = db.insertFlow(rootFlow.id, 'auth', 'Authentication');
-      db.insertFlow(authId, 'validate', 'Validate', {
-        fromModuleId: module1,
-        toModuleId: module2,
-      });
+      const int1 = db.insertInteraction(module1, module2, { direction: 'uni' });
+      const int2 = db.insertInteraction(module2, module3, { direction: 'uni' });
+      const int3 = db.insertInteraction(module1, module3, { direction: 'uni' });
 
-      const stats = db.getFlowStats();
-      expect(stats.flowCount).toBe(3);
-      expect(stats.leafFlowCount).toBe(1);
-      expect(stats.rootFlowCount).toBe(1);
-      expect(stats.maxDepth).toBe(2);
+      // Cover only int1 and int2
+      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
+      db.addFlowSteps(flowId, [int1, int2]);
+
+      const uncovered = db.getUncoveredInteractions();
+      expect(uncovered).toHaveLength(1);
+      expect(uncovered[0].id).toBe(int3);
     });
   });
 
-  describe('clearFlows', () => {
-    it('removes all flows', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      db.insertFlow(rootFlow.id, 'auth', 'Authentication');
-      db.insertFlow(rootFlow.id, 'dashboard', 'Dashboard');
-
-      expect(db.getFlowCount()).toBe(3);
-
-      const cleared = db.clearFlows();
-      // clearFlows deletes all flows and returns number of direct deletes
-      // (children may be deleted via CASCADE, so cleared may be less than total)
-      expect(cleared).toBeGreaterThanOrEqual(1);
-      expect(db.getFlowCount()).toBe(0);
-    });
-  });
-
-  describe('updateFlow', () => {
-    it('updates flow name', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const flowId = db.insertFlow(rootFlow.id, 'old-name', 'Old Name');
-
-      const updated = db.updateFlow(flowId, { name: 'New Name' });
-      expect(updated).toBe(true);
-
-      const flow = db.getFlowById(flowId);
-      expect(flow!.name).toBe('New Name');
-    });
-
-    it('updates flow description', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const flowId = db.insertFlow(rootFlow.id, 'test', 'Test');
-
-      db.updateFlow(flowId, { description: 'New description' });
-
-      const flow = db.getFlowById(flowId);
-      expect(flow!.description).toBe('New description');
-    });
-
-    it('updates flow semantic', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const flowId = db.insertFlow(rootFlow.id, 'test', 'Test');
-
-      db.updateFlow(flowId, { semantic: 'New semantic annotation' });
-
-      const flow = db.getFlowById(flowId);
-      expect(flow!.semantic).toBe('New semantic annotation');
-    });
-
-    it('returns false for non-existent flow', () => {
-      const updated = db.updateFlow(999, { name: 'Test' });
-      expect(updated).toBe(false);
-    });
-
-    it('returns false when no updates provided', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      const flowId = db.insertFlow(rootFlow.id, 'test', 'Test');
-
-      const updated = db.updateFlow(flowId, {});
-      expect(updated).toBe(false);
-    });
-  });
-
-  describe('getFlowBySlug', () => {
-    it('returns a flow by its slug', () => {
-      const rootFlow = db.ensureRootFlow('user-journey');
-      db.insertFlow(rootFlow.id, 'authentication', 'Authentication');
-
-      const flow = db.getFlowBySlug('authentication');
-      expect(flow).not.toBeNull();
-      expect(flow!.name).toBe('Authentication');
-    });
-
-    it('returns null for non-existent slug', () => {
-      const flow = db.getFlowBySlug('non-existent');
-      expect(flow).toBeNull();
-    });
-  });
-
-  describe('reparentFlow', () => {
-    it('moves a flow under a new parent', () => {
-      const root1 = db.ensureRootFlow('root-1');
-      const root2 = db.ensureRootFlow('root-2');
-      const childId = db.insertFlow(root1.id, 'child', 'Child Flow');
-
-      // Initially under root1
-      let child = db.getFlowById(childId);
-      expect(child!.parentId).toBe(root1.id);
-      expect(child!.fullPath).toBe('root-1.child');
-      expect(child!.depth).toBe(1);
-
-      // Reparent to root2
-      db.reparentFlow(childId, root2.id);
-
-      child = db.getFlowById(childId);
-      expect(child!.parentId).toBe(root2.id);
-      expect(child!.fullPath).toBe('root-2.child');
-      expect(child!.depth).toBe(1);
-    });
-
-    it('recursively updates descendant paths', () => {
-      const root = db.ensureRootFlow('root');
-      const parentId = db.insertFlow(root.id, 'parent', 'Parent');
-      const childId = db.insertFlow(parentId, 'child', 'Child');
-      const grandchildId = db.insertFlow(childId, 'grandchild', 'Grandchild');
-
-      // Initially: root.parent.child.grandchild
-      let grandchild = db.getFlowById(grandchildId);
-      expect(grandchild!.fullPath).toBe('root.parent.child.grandchild');
-      expect(grandchild!.depth).toBe(3);
-
-      // Move child directly under root
-      db.reparentFlow(childId, root.id);
-
-      // Now: root.child.grandchild
-      grandchild = db.getFlowById(grandchildId);
-      expect(grandchild!.fullPath).toBe('root.child.grandchild');
-      expect(grandchild!.depth).toBe(2);
-
-      // Verify child is updated
-      const child = db.getFlowById(childId);
-      expect(child!.fullPath).toBe('root.child');
-      expect(child!.depth).toBe(1);
-      expect(child!.parentId).toBe(root.id);
-    });
-
-    it('assigns step order correctly', () => {
-      const root = db.ensureRootFlow('root');
-      const child1 = db.insertFlow(root.id, 'child-1', 'Child 1');
-      const child2 = db.insertFlow(root.id, 'child-2', 'Child 2');
-
-      const newRoot = db.ensureRootFlow('new-root');
-
-      // Move child2 first
-      db.reparentFlow(child2, newRoot.id);
-      // Move child1 second
-      db.reparentFlow(child1, newRoot.id);
-
-      const flow1 = db.getFlowById(child1);
-      const flow2 = db.getFlowById(child2);
-      expect(flow2!.stepOrder).toBe(1); // First
-      expect(flow1!.stepOrder).toBe(2); // Second
-    });
-
-    it('allows explicit step order', () => {
-      const root = db.ensureRootFlow('root');
-      const child1 = db.insertFlow(root.id, 'child-1', 'Child 1');
-      const child2 = db.insertFlow(root.id, 'child-2', 'Child 2');
-
-      const newRoot = db.ensureRootFlow('new-root');
-
-      // Move with explicit order
-      db.reparentFlow(child1, newRoot.id, 5);
-      db.reparentFlow(child2, newRoot.id, 3);
-
-      const flow1 = db.getFlowById(child1);
-      const flow2 = db.getFlowById(child2);
-      expect(flow1!.stepOrder).toBe(5);
-      expect(flow2!.stepOrder).toBe(3);
-    });
-
-    it('throws error for non-existent flow', () => {
-      expect(() => db.reparentFlow(999, null)).toThrow('Flow 999 not found');
-    });
-
-    it('throws error for non-existent parent', () => {
-      const root = db.ensureRootFlow('root');
-      const childId = db.insertFlow(root.id, 'child', 'Child');
-
-      expect(() => db.reparentFlow(childId, 999)).toThrow('Parent flow 999 not found');
-    });
-
-    it('moves flow to root level (parentId = null)', () => {
-      const root = db.ensureRootFlow('root');
-      const childId = db.insertFlow(root.id, 'child', 'Child');
-
-      // Initially under root
-      let child = db.getFlowById(childId);
-      expect(child!.parentId).toBe(root.id);
-      expect(child!.depth).toBe(1);
-
-      // Move to root level
-      db.reparentFlow(childId, null);
-
-      child = db.getFlowById(childId);
-      expect(child!.parentId).toBeNull();
-      expect(child!.fullPath).toBe('child');
-      expect(child!.depth).toBe(0);
-    });
-  });
-
-  describe('reparentFlows (bulk)', () => {
-    it('reparents flows in order', () => {
-      // Create orphaned flows
-      const a = db.insertFlow(null, 'a', 'A');
-      const b = db.insertFlow(null, 'b', 'B');
-      const c = db.insertFlow(null, 'c', 'C');
-
-      const newParent = db.ensureRootFlow('parent');
-
-      // Reparent in specific order: C, A, B
-      db.reparentFlows([c, a, b], newParent.id);
-
-      const flowC = db.getFlowById(c)!;
-      const flowA = db.getFlowById(a)!;
-      const flowB = db.getFlowById(b)!;
-
-      expect(flowC.stepOrder).toBe(1);
-      expect(flowA.stepOrder).toBe(2);
-      expect(flowB.stepOrder).toBe(3);
-
-      expect(flowC.parentId).toBe(newParent.id);
-      expect(flowA.parentId).toBe(newParent.id);
-      expect(flowB.parentId).toBe(newParent.id);
-
-      expect(flowC.fullPath).toBe('parent.c');
-      expect(flowA.fullPath).toBe('parent.a');
-      expect(flowB.fullPath).toBe('parent.b');
-    });
-
-    it('handles empty array', () => {
-      const parent = db.ensureRootFlow('parent');
-
-      // Should not throw
-      db.reparentFlows([], parent.id);
-
-      const children = db.getFlowChildren(parent.id);
-      expect(children).toHaveLength(0);
-    });
-
-    it('maintains correct depth for nested reparenting', () => {
-      // Create a flow with children
-      const childId = db.insertFlow(null, 'child', 'Child');
-      const grandchildId = db.insertFlow(childId, 'grandchild', 'Grandchild');
-
-      // Create a deep parent structure
-      const root = db.ensureRootFlow('root');
-      const level1 = db.insertFlow(root.id, 'level-1', 'Level 1');
-
-      // Reparent the child (with grandchild) under level1
-      db.reparentFlows([childId], level1);
-
-      const child = db.getFlowById(childId)!;
-      const grandchild = db.getFlowById(grandchildId)!;
-
-      expect(child.depth).toBe(2);  // root(0) -> level1(1) -> child(2)
-      expect(grandchild.depth).toBe(3);  // root(0) -> level1(1) -> child(2) -> grandchild(3)
-      expect(child.fullPath).toBe('root.level-1.child');
-      expect(grandchild.fullPath).toBe('root.level-1.child.grandchild');
-    });
-  });
-
-  describe('deleteFlow', () => {
-    it('deletes a flow', () => {
-      const root = db.ensureRootFlow('root');
-      const childId = db.insertFlow(root.id, 'child', 'Child');
-
-      expect(db.getFlowCount()).toBe(2);
-
-      const deleted = db.deleteFlow(childId);
-      expect(deleted).toBe(1);
-      expect(db.getFlowCount()).toBe(1);
-    });
-
-    it('cascades delete to descendants', () => {
-      const root = db.ensureRootFlow('root');
-      const parentId = db.insertFlow(root.id, 'parent', 'Parent');
-      db.insertFlow(parentId, 'child', 'Child');
-
-      expect(db.getFlowCount()).toBe(3);
-
-      // Delete parent should cascade to child
-      db.deleteFlow(parentId);
-
-      expect(db.getFlowCount()).toBe(1);  // Only root remains
-    });
-  });
-
-  describe('integration: hierarchical flow detection', () => {
-    it('builds a complete flow hierarchy from module call graph', () => {
+  describe('Integration: Flow Tracing', () => {
+    it('builds complete interaction and flow model', () => {
       // Setup: Controller -> Service -> Repository
       const controllerFile = createFile('/project/controllers/sales.controller.ts');
       const serviceFile = createFile('/project/services/sales.service.ts');
@@ -801,40 +691,57 @@ describe('Hierarchical Flow Detection', () => {
       const moduleEdges = db.getModuleCallGraph();
       expect(moduleEdges).toHaveLength(2);
 
-      // Create flow hierarchy
-      const salesFlow = db.ensureRootFlow('create-sale');
-      const apiToServiceId = db.insertFlow(salesFlow.id, 'api-to-service', 'API to Service', {
-        fromModuleId: controllerModule,
-        toModuleId: serviceModule,
+      // Create interactions
+      const int1 = db.insertInteraction(controllerModule, serviceModule, {
+        direction: 'uni',
+        pattern: 'business',
         semantic: 'Controller delegates to service',
       });
-      const serviceToRepoId = db.insertFlow(salesFlow.id, 'service-to-repo', 'Service to Repository', {
-        fromModuleId: serviceModule,
-        toModuleId: repoModule,
+      const int2 = db.insertInteraction(serviceModule, repoModule, {
+        direction: 'uni',
+        pattern: 'business',
         semantic: 'Service persists data',
       });
 
-      // Verify flow structure
-      const trees = db.getFlowTree();
-      expect(trees).toHaveLength(1);
-      expect(trees[0].name).toBe('Create Sale');
-      expect(trees[0].children).toHaveLength(2);
+      // Verify interactions
+      const interactions = db.getAllInteractions();
+      expect(interactions).toHaveLength(2);
 
-      // Verify leaf flows
-      const leafFlows = db.getLeafFlows();
-      expect(leafFlows).toHaveLength(2);
+      // Create flow
+      const flowId = db.insertFlow('CreateSaleFlow', 'create-sale-flow', {
+        entryPointId: controllerDef,
+        entryPath: 'POST /api/sales',
+        stakeholder: 'user',
+        description: 'Creates a new sale record',
+      });
+
+      // Add steps
+      db.addFlowSteps(flowId, [int1, int2]);
+
+      // Verify flow structure
+      const flow = db.getFlowById(flowId);
+      expect(flow!.name).toBe('CreateSaleFlow');
+      expect(flow!.stakeholder).toBe('user');
+
+      const flowWithSteps = db.getFlowWithSteps(flowId);
+      expect(flowWithSteps!.steps).toHaveLength(2);
+
+      // Verify expanded flow
+      const expanded = db.expandFlow(flowId);
+      expect(expanded!.interactions).toHaveLength(2);
+      expect(expanded!.interactions[0].semantic).toBe('Controller delegates to service');
+      expect(expanded!.interactions[1].semantic).toBe('Service persists data');
 
       // Verify coverage
       const coverage = db.getFlowCoverage();
-      expect(coverage.totalModuleEdges).toBe(2);
+      expect(coverage.totalInteractions).toBe(2);
       expect(coverage.coveredByFlows).toBe(2);
       expect(coverage.percentage).toBe(100.0);
 
-      // Verify expansion
-      const expanded = db.expandFlow(salesFlow.id);
-      expect(expanded).toHaveLength(2);
-      expect(expanded[0].slug).toBe('api-to-service');
-      expect(expanded[1].slug).toBe('service-to-repo');
+      // Verify stats
+      const stats = db.getStats();
+      expect(stats.flows).toBe(1);
+      expect(stats.interactions).toBe(2);
     });
   });
 });

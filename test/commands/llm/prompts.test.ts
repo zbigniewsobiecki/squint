@@ -210,7 +210,7 @@ describe('Flow Prompts v2', () => {
   describe('Coverage Stats Formatting', () => {
     it('formats coverage stats correctly', () => {
       const stats: FlowCoverageStats = {
-        totalModuleEdges: 100,
+        totalInteractions: 100,
         coveredByFlows: 75,
         percentage: 75.0,
       };
@@ -218,33 +218,33 @@ describe('Flow Prompts v2', () => {
       const formatted = formatCoverageStats(stats);
 
       expect(formatted).toContain('## Flow Coverage Statistics');
-      expect(formatted).toContain('Total module edges: 100');
+      expect(formatted).toContain('Total interactions: 100');
       expect(formatted).toContain('Covered by flows: 75 (75.0%)');
     });
 
     it('handles zero coverage', () => {
       const stats: FlowCoverageStats = {
-        totalModuleEdges: 50,
+        totalInteractions: 50,
         coveredByFlows: 0,
         percentage: 0.0,
       };
 
       const formatted = formatCoverageStats(stats);
 
-      expect(formatted).toContain('Total module edges: 50');
+      expect(formatted).toContain('Total interactions: 50');
       expect(formatted).toContain('Covered by flows: 0 (0.0%)');
     });
 
     it('handles 100% coverage', () => {
       const stats: FlowCoverageStats = {
-        totalModuleEdges: 25,
+        totalInteractions: 25,
         coveredByFlows: 25,
         percentage: 100.0,
       };
 
       const formatted = formatCoverageStats(stats);
 
-      expect(formatted).toContain('Total module edges: 25');
+      expect(formatted).toContain('Total interactions: 25');
       expect(formatted).toContain('Covered by flows: 25 (100.0%)');
     });
   });

@@ -5,19 +5,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-describe('flows commands', () => {
+describe('flows and interactions commands', () => {
   let testDir: string;
   let dbPath: string;
   let db: IndexDatabase;
-  let controllerFileId: number;
-  let serviceFileId: number;
-  let repoFileId: number;
-  let controllerDefId: number;
-  let serviceDefId: number;
-  let repoDefId: number;
   let controllerModuleId: number;
   let serviceModuleId: number;
   let repoModuleId: number;
+  let interaction1Id: number;
+  let interaction2Id: number;
+  let interaction3Id: number;
 
   beforeEach(() => {
     // Create a temporary directory for test files
@@ -29,7 +26,7 @@ describe('flows commands', () => {
     db.initialize();
 
     // Insert test files
-    controllerFileId = db.insertFile({
+    const controllerFileId = db.insertFile({
       path: path.join(testDir, 'controller.ts'),
       language: 'typescript',
       contentHash: computeHash('controller content'),
@@ -37,7 +34,7 @@ describe('flows commands', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    serviceFileId = db.insertFile({
+    const serviceFileId = db.insertFile({
       path: path.join(testDir, 'service.ts'),
       language: 'typescript',
       contentHash: computeHash('service content'),
@@ -45,7 +42,7 @@ describe('flows commands', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    repoFileId = db.insertFile({
+    const repoFileId = db.insertFile({
       path: path.join(testDir, 'repository.ts'),
       language: 'typescript',
       contentHash: computeHash('repo content'),
@@ -54,7 +51,7 @@ describe('flows commands', () => {
     });
 
     // Create definitions for a typical flow
-    controllerDefId = db.insertDefinition(controllerFileId, {
+    const controllerDefId = db.insertDefinition(controllerFileId, {
       name: 'handleRegister',
       kind: 'function',
       isExported: true,
@@ -63,7 +60,7 @@ describe('flows commands', () => {
       endPosition: { row: 10, column: 1 },
     });
 
-    serviceDefId = db.insertDefinition(serviceFileId, {
+    const serviceDefId = db.insertDefinition(serviceFileId, {
       name: 'createUser',
       kind: 'function',
       isExported: true,
@@ -72,7 +69,7 @@ describe('flows commands', () => {
       endPosition: { row: 15, column: 1 },
     });
 
-    repoDefId = db.insertDefinition(repoFileId, {
+    const repoDefId = db.insertDefinition(repoFileId, {
       name: 'insertUser',
       kind: 'function',
       isExported: true,
@@ -91,15 +88,6 @@ describe('flows commands', () => {
       endPosition: { row: 35, column: 1 },
     });
 
-    const authServiceId = db.insertDefinition(serviceFileId, {
-      name: 'authenticateUser',
-      kind: 'function',
-      isExported: true,
-      isDefault: false,
-      position: { row: 20, column: 0 },
-      endPosition: { row: 30, column: 1 },
-    });
-
     // Create module tree
     const rootId = db.ensureRootModule();
 
@@ -111,38 +99,52 @@ describe('flows commands', () => {
     db.assignSymbolToModule(controllerDefId, controllerModuleId);
     db.assignSymbolToModule(loginHandlerId, controllerModuleId);
     db.assignSymbolToModule(serviceDefId, serviceModuleId);
-    db.assignSymbolToModule(authServiceId, serviceModuleId);
     db.assignSymbolToModule(repoDefId, repoModuleId);
 
-    // Create hierarchical flows
-    // Registration flow: controller -> service -> repo
-    const registerFlow = db.ensureRootFlow('user-registration');
-    db.updateFlow(registerFlow.id, {
-      description: 'User registration flow',
-      domain: 'user',
-    });
-    db.insertFlow(registerFlow.id, 'controller-to-service', 'Controller to Service', {
-      fromModuleId: controllerModuleId,
-      toModuleId: serviceModuleId,
-      semantic: 'Controller validates and passes to service',
-    });
-    db.insertFlow(registerFlow.id, 'service-to-repo', 'Service to Repository', {
-      fromModuleId: serviceModuleId,
-      toModuleId: repoModuleId,
-      semantic: 'Service persists user data',
+    // Create interactions (module-to-module edges)
+    interaction1Id = db.insertInteraction(controllerModuleId, serviceModuleId, {
+      direction: 'uni',
+      pattern: 'business',
+      symbols: ['createUser', 'updateUser'],
+      semantic: 'Controller delegates to service',
     });
 
-    // Login flow: controller -> service
-    const loginFlow = db.ensureRootFlow('user-login');
-    db.updateFlow(loginFlow.id, {
-      description: 'User login flow',
-      domain: 'auth',
+    interaction2Id = db.insertInteraction(serviceModuleId, repoModuleId, {
+      direction: 'uni',
+      pattern: 'business',
+      symbols: ['insertUser', 'findUser'],
+      semantic: 'Service persists data',
     });
-    db.insertFlow(loginFlow.id, 'controller-to-auth', 'Controller to Auth Service', {
-      fromModuleId: controllerModuleId,
-      toModuleId: serviceModuleId,
-      semantic: 'Controller authenticates via service',
+
+    interaction3Id = db.insertInteraction(controllerModuleId, repoModuleId, {
+      direction: 'uni',
+      pattern: 'utility',
+      symbols: ['logAccess'],
+      semantic: 'Direct logging access',
     });
+
+    // Create flows (user journeys)
+    const registerFlowId = db.insertFlow('UserRegistrationFlow', 'user-registration', {
+      entryPointId: controllerDefId,
+      entryPath: 'POST /api/users/register',
+      stakeholder: 'user',
+      description: 'User registration flow from signup to data persistence',
+    });
+    db.addFlowSteps(registerFlowId, [interaction1Id, interaction2Id]);
+
+    const loginFlowId = db.insertFlow('UserLoginFlow', 'user-login', {
+      entryPointId: loginHandlerId,
+      entryPath: 'POST /api/users/login',
+      stakeholder: 'user',
+      description: 'User login authentication flow',
+    });
+    db.addFlowSteps(loginFlowId, [interaction1Id]);
+
+    const adminFlowId = db.insertFlow('AdminAuditFlow', 'admin-audit', {
+      stakeholder: 'admin',
+      description: 'Administrative audit logging flow',
+    });
+    db.addFlowSteps(adminFlowId, [interaction3Id]);
 
     db.close();
   });
@@ -165,31 +167,80 @@ describe('flows commands', () => {
     }
   }
 
+  describe('interactions list', () => {
+    it('lists all interactions', () => {
+      const output = runCommand(`interactions -d ${dbPath}`);
+      expect(output).toContain('Interactions');
+      expect(output).toContain('user-controller');
+      expect(output).toContain('user-service');
+    });
+
+    it('shows interaction patterns', () => {
+      const output = runCommand(`interactions -d ${dbPath}`);
+      expect(output).toContain('business');
+      expect(output).toContain('utility');
+    });
+
+    it('outputs JSON with --json flag', () => {
+      const output = runCommand(`interactions --json -d ${dbPath}`);
+      const json = JSON.parse(output);
+      expect(json.interactions).toBeDefined();
+      expect(json.interactions.length).toBe(3);
+      expect(json.stats).toBeDefined();
+    });
+
+    it('shows no interactions message when empty', () => {
+      const emptyDbPath = path.join(testDir, 'empty.db');
+      const emptyDb = new IndexDatabase(emptyDbPath);
+      emptyDb.initialize();
+      emptyDb.close();
+
+      const output = runCommand(`interactions -d ${emptyDbPath}`);
+      expect(output).toContain('No interactions');
+    });
+  });
+
+  describe('interactions show', () => {
+    it('shows interaction details by ID', () => {
+      const output = runCommand(`interactions show ${interaction1Id} -d ${dbPath}`);
+      expect(output).toContain('user-controller');
+      expect(output).toContain('user-service');
+      expect(output).toContain('Controller delegates to service');
+    });
+
+    it('shows symbols called', () => {
+      const output = runCommand(`interactions show ${interaction1Id} -d ${dbPath}`);
+      expect(output).toContain('createUser');
+      expect(output).toContain('updateUser');
+    });
+
+    it('outputs JSON with --json flag', () => {
+      const output = runCommand(`interactions show ${interaction1Id} --json -d ${dbPath}`);
+      const json = JSON.parse(output);
+      expect(json.interaction).toBeDefined();
+      expect(json.interaction.fromModulePath).toContain('user-controller');
+      expect(json.interaction.toModulePath).toContain('user-service');
+    });
+
+    it('reports error for non-existent interaction', () => {
+      const output = runCommand(`interactions show 999 -d ${dbPath}`);
+      expect(output).toContain('not found');
+    });
+  });
+
   describe('flows list', () => {
     it('lists all flows', () => {
       const output = runCommand(`flows -d ${dbPath}`);
       expect(output).toContain('Flows');
-      expect(output).toContain('user-registration');
-      expect(output).toContain('user-login');
+      expect(output).toContain('UserRegistrationFlow');
+      expect(output).toContain('UserLoginFlow');
+      expect(output).toContain('AdminAuditFlow');
     });
 
-    it('shows flow tree structure with --tree flag', () => {
-      const output = runCommand(`flows --tree -d ${dbPath}`);
-      expect(output).toContain('User Registration');
-      expect(output).toContain('User Login');
-    });
-
-    it('shows leaf flows with --leaf flag', () => {
-      const output = runCommand(`flows --leaf -d ${dbPath}`);
-      expect(output).toContain('Leaf Flows');
-      expect(output).toContain('Controller to Service');
-      expect(output).toContain('Service to Repository');
-    });
-
-    it('filters by domain', () => {
-      const output = runCommand(`flows --domain user -d ${dbPath}`);
-      expect(output).toContain('user-registration');
-      expect(output).not.toContain('user-login');
+    it('groups flows by stakeholder', () => {
+      const output = runCommand(`flows -d ${dbPath}`);
+      expect(output).toContain('user');
+      expect(output).toContain('admin');
     });
 
     it('shows no flows message when empty', () => {
@@ -199,31 +250,28 @@ describe('flows commands', () => {
       emptyDb.close();
 
       const output = runCommand(`flows -d ${emptyDbPath}`);
-      expect(output).toContain('No flows detected yet');
+      expect(output).toContain('No flows');
     });
 
     it('outputs JSON with --json flag', () => {
       const output = runCommand(`flows --json -d ${dbPath}`);
       const json = JSON.parse(output);
       expect(json.flows).toBeDefined();
-      expect(json.flows.length).toBeGreaterThanOrEqual(2);
+      expect(json.flows.length).toBe(3);
       expect(json.stats).toBeDefined();
-      expect(json.stats.flowCount).toBeGreaterThanOrEqual(2);
+      expect(json.coverage).toBeDefined();
     });
 
-    it('shows leaf flow indicators in output', () => {
+    it('shows coverage statistics', () => {
       const output = runCommand(`flows -d ${dbPath}`);
-      // Leaf flows are marked with [leaf] indicator
-      expect(output).toContain('[leaf]');
-      expect(output).toContain('Controller to Service');
-      expect(output).toContain('Service to Repository');
+      expect(output).toContain('coverage');
     });
   });
 
   describe('flows show', () => {
-    it('shows flow details', () => {
+    it('shows flow details by slug', () => {
       const output = runCommand(`flows show user-registration -d ${dbPath}`);
-      expect(output).toContain('Flow: User Registration');
+      expect(output).toContain('UserRegistrationFlow');
       expect(output).toContain('user-registration');
     });
 
@@ -232,15 +280,13 @@ describe('flows commands', () => {
       expect(output).toContain('User registration flow');
     });
 
-    it('shows child flows (module transitions)', () => {
+    it('shows entry point', () => {
       const output = runCommand(`flows show user-registration -d ${dbPath}`);
-      expect(output).toContain('Controller to Service');
-      expect(output).toContain('Service to Repository');
+      expect(output).toContain('POST /api/users/register');
     });
 
-    it('shows module transition details for leaf flows', () => {
+    it('shows interaction steps', () => {
       const output = runCommand(`flows show user-registration -d ${dbPath}`);
-      // Modules are shown by their full path
       expect(output).toContain('user-controller');
       expect(output).toContain('user-service');
       expect(output).toContain('user-repo');
@@ -248,15 +294,13 @@ describe('flows commands', () => {
 
     it('handles partial name match', () => {
       const output = runCommand(`flows show registration -d ${dbPath}`);
-      expect(output).toContain('User Registration');
+      expect(output).toContain('UserRegistrationFlow');
     });
 
     it('shows disambiguation for multiple matches', () => {
-      // Both flows contain 'user-'
+      // Both flows contain 'user'
       const output = runCommand(`flows show user -d ${dbPath}`);
       expect(output).toContain('Multiple flows match');
-      expect(output).toContain('user-registration');
-      expect(output).toContain('user-login');
     });
 
     it('reports error for non-existent flow', () => {
@@ -267,118 +311,11 @@ describe('flows commands', () => {
     it('outputs JSON with --json flag', () => {
       const output = runCommand(`flows show user-registration --json -d ${dbPath}`);
       const json = JSON.parse(output);
-      // Flow details are wrapped in a "flow" property
-      expect(json.flow).toBeDefined();
-      expect(json.flow.name).toBe('User Registration');
-      expect(json.flow.slug).toBe('user-registration');
-      expect(json.children).toBeDefined();
-      expect(json.children.length).toBeGreaterThanOrEqual(2);
-    });
-
-    it('expands to leaf flows with --expand flag', () => {
-      const output = runCommand(`flows show user-registration --expand -d ${dbPath}`);
-      expect(output).toContain('Expanded');
-      expect(output).toContain('leaf');
-    });
-  });
-
-  describe('flows trace', () => {
-    beforeEach(() => {
-      // Set up call graph edges for tracing
-      const setupDb = new IndexDatabase(dbPath);
-
-      // Create symbols and usages to establish call graph
-      // handleRegister calls createUser
-      const refId1 = setupDb.insertReference(controllerFileId, serviceFileId, {
-        type: 'import',
-        source: './service',
-        isExternal: false,
-        isTypeOnly: false,
-        imports: [],
-        position: { row: 0, column: 0 },
-      });
-
-      const createUserSymbol = setupDb.insertSymbol(refId1, serviceDefId, {
-        name: 'createUser',
-        localName: 'createUser',
-        kind: 'named',
-        usages: [],
-      });
-
-      // Usage within handleRegister's line range (row 0-10)
-      setupDb.insertUsage(createUserSymbol, {
-        position: { row: 5, column: 10 },
-        context: 'call_expression',
-      });
-
-      // createUser calls insertUser
-      const refId2 = setupDb.insertReference(serviceFileId, repoFileId, {
-        type: 'import',
-        source: './repository',
-        isExternal: false,
-        isTypeOnly: false,
-        imports: [],
-        position: { row: 0, column: 0 },
-      });
-
-      const insertUserSymbol = setupDb.insertSymbol(refId2, repoDefId, {
-        name: 'insertUser',
-        localName: 'insertUser',
-        kind: 'named',
-        usages: [],
-      });
-
-      // Usage within createUser's line range (row 0-15)
-      setupDb.insertUsage(insertUserSymbol, {
-        position: { row: 10, column: 10 },
-        context: 'call_expression',
-      });
-
-      setupDb.close();
-    });
-
-    it('traces from a symbol by name', () => {
-      const output = runCommand(`flows trace --name handleRegister -d ${dbPath}`);
-      expect(output).toContain('Trace from: handleRegister');
-    });
-
-    it('traces from a symbol by ID', () => {
-      const output = runCommand(`flows trace --id ${controllerDefId} -d ${dbPath}`);
-      expect(output).toContain('Trace from: handleRegister');
-    });
-
-    it('shows trace depth', () => {
-      const output = runCommand(`flows trace --name handleRegister -d ${dbPath}`);
-      expect(output).toContain('nodes traced');
-    });
-
-    it('limits trace depth with --depth flag', () => {
-      const output = runCommand(`flows trace --name handleRegister --depth 1 -d ${dbPath}`);
-      expect(output).toContain('max depth: 1');
-    });
-
-    it('reports error when name not provided', () => {
-      const output = runCommand(`flows trace -d ${dbPath}`);
-      expect(output).toContain('Either provide --name or --id');
-    });
-
-    it('reports error for non-existent symbol', () => {
-      const output = runCommand(`flows trace --name nonexistent -d ${dbPath}`);
-      expect(output).toContain('No symbol found');
-    });
-
-    it('outputs JSON with --json flag', () => {
-      const output = runCommand(`flows trace --name handleRegister --json -d ${dbPath}`);
-      const json = JSON.parse(output);
-      expect(json.entryPoint).toBeDefined();
-      expect(json.entryPoint.name).toBe('handleRegister');
-      expect(json.maxDepth).toBe(10);
-      expect(json.trace).toBeDefined();
-    });
-
-    it('shows no calls message for leaf nodes', () => {
-      const output = runCommand(`flows trace --name insertUser -d ${dbPath}`);
-      expect(output).toContain('No outgoing calls found');
+      // flowWithSteps structure - flow properties at root level, steps as array
+      expect(json.name).toBe('UserRegistrationFlow');
+      expect(json.slug).toBe('user-registration');
+      expect(json.steps).toBeDefined();
+      expect(json.steps.length).toBe(2);
     });
   });
 });

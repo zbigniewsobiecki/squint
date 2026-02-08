@@ -73,13 +73,28 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
         } else {
           notFound(res, 'Module not found');
         }
+      } else if (path === '/api/interactions') {
+        jsonResponse(res, getInteractionsData(db));
+      } else if (path === '/api/interactions/stats') {
+        jsonResponse(res, db.getInteractionStats());
+      } else if (path.match(/^\/api\/interactions\/(\d+)$/)) {
+        const id = parseInt(path.split('/')[3]);
+        const interaction = db.getInteractionById(id);
+        if (interaction) {
+          const modules = db.getAllModules();
+          const moduleMap = new Map(modules.map(m => [m.id, m.fullPath]));
+          jsonResponse(res, {
+            ...interaction,
+            fromModulePath: moduleMap.get(interaction.fromModuleId) ?? null,
+            toModulePath: moduleMap.get(interaction.toModuleId) ?? null,
+          });
+        } else {
+          notFound(res, 'Interaction not found');
+        }
       } else if (path === '/api/flows') {
         jsonResponse(res, getFlowsData(db));
       } else if (path === '/api/flows/stats') {
         jsonResponse(res, db.getFlowStats());
-      } else if (path === '/api/flows/tree') {
-        const tree = db.getFlowTree();
-        jsonResponse(res, { tree });
       } else if (path === '/api/flows/coverage') {
         const coverage = db.getFlowCoverage();
         jsonResponse(res, coverage);
@@ -87,38 +102,16 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
         jsonResponse(res, getFlowsDagData(db));
       } else if (path.match(/^\/api\/flows\/(\d+)$/)) {
         const id = parseInt(path.split('/')[3]);
-        const flow = db.getFlowById(id);
-        if (flow) {
-          const children = db.getFlowChildren(id);
-          const modules = db.getAllModules();
-          const moduleMap = new Map(modules.map(m => [m.id, m.fullPath]));
-          jsonResponse(res, {
-            flow: {
-              ...flow,
-              fromModuleName: flow.fromModuleId ? moduleMap.get(flow.fromModuleId) : null,
-              toModuleName: flow.toModuleId ? moduleMap.get(flow.toModuleId) : null,
-            },
-            children: children.map(c => ({
-              ...c,
-              fromModuleName: c.fromModuleId ? moduleMap.get(c.fromModuleId) : null,
-              toModuleName: c.toModuleId ? moduleMap.get(c.toModuleId) : null,
-            })),
-          });
+        const flowWithSteps = db.getFlowWithSteps(id);
+        if (flowWithSteps) {
+          jsonResponse(res, flowWithSteps);
         } else {
           notFound(res, 'Flow not found');
         }
       } else if (path.match(/^\/api\/flows\/(\d+)\/expand$/)) {
         const id = parseInt(path.split('/')[3]);
-        const leafFlows = db.expandFlow(id);
-        const modules = db.getAllModules();
-        const moduleMap = new Map(modules.map(m => [m.id, m.fullPath]));
-        jsonResponse(res, {
-          leafFlows: leafFlows.map(f => ({
-            ...f,
-            fromModuleName: f.fromModuleId ? moduleMap.get(f.fromModuleId) : null,
-            toModuleName: f.toModuleId ? moduleMap.get(f.toModuleId) : null,
-          })),
-        });
+        const expanded = db.expandFlow(id);
+        jsonResponse(res, expanded);
       } else {
         notFound(res, 'Not found');
       }
@@ -345,37 +338,85 @@ function getModulesData(database: IndexDatabase): {
 /**
  * Build the flows data for API response (hierarchical structure)
  */
+function getInteractionsData(database: IndexDatabase): {
+  interactions: Array<{
+    id: number;
+    fromModuleId: number;
+    toModuleId: number;
+    fromModulePath: string;
+    toModulePath: string;
+    direction: string;
+    weight: number;
+    pattern: string | null;
+    symbols: string | null;
+    semantic: string | null;
+  }>;
+  stats: {
+    totalCount: number;
+    businessCount: number;
+    utilityCount: number;
+    biDirectionalCount: number;
+  };
+} {
+  try {
+    const interactions = database.getAllInteractions();
+    const stats = database.getInteractionStats();
+
+    return {
+      interactions: interactions.map(i => ({
+        id: i.id,
+        fromModuleId: i.fromModuleId,
+        toModuleId: i.toModuleId,
+        fromModulePath: i.fromModulePath,
+        toModulePath: i.toModulePath,
+        direction: i.direction,
+        weight: i.weight,
+        pattern: i.pattern,
+        symbols: i.symbols,
+        semantic: i.semantic,
+      })),
+      stats,
+    };
+  } catch {
+    return {
+      interactions: [],
+      stats: {
+        totalCount: 0,
+        businessCount: 0,
+        utilityCount: 0,
+        biDirectionalCount: 0,
+      },
+    };
+  }
+}
+
+/**
+ * Build the flows data for the web UI.
+ * Returns flows with their interaction steps.
+ */
 function getFlowsData(database: IndexDatabase): {
   flows: Array<{
     id: number;
     name: string;
     slug: string;
-    fullPath: string;
+    entryPath: string | null;
+    stakeholder: string | null;
     description: string | null;
-    domain: string | null;
-    depth: number;
-    isLeaf: boolean;
-    fromModuleName: string | null;
-    toModuleName: string | null;
-    semantic: string | null;
     stepCount: number;
     steps: Array<{
-      name: string;
-      fromModule: string | null;
-      toModule: string | null;
+      stepOrder: number;
+      fromModulePath: string;
+      toModulePath: string;
       semantic: string | null;
     }>;
   }>;
   stats: {
     flowCount: number;
-    leafFlowCount: number;
-    rootFlowCount: number;
-    maxDepth: number;
-    totalSteps: number;
-    modulesCovered: number;
+    withEntryPointCount: number;
+    avgStepsPerFlow: number;
   };
   coverage: {
-    totalModuleEdges: number;
+    totalInteractions: number;
     coveredByFlows: number;
     percentage: number;
   };
@@ -385,84 +426,44 @@ function getFlowsData(database: IndexDatabase): {
     const stats = database.getFlowStats();
     const coverage = database.getFlowCoverage();
 
-    // Get module names for enrichment
-    const modules = database.getAllModules();
-    const moduleMap = new Map(modules.map(m => [m.id, m.fullPath]));
-
-    // Build parent-to-children map for step expansion
-    const childrenMap = new Map<number, typeof flows>();
-    for (const flow of flows) {
-      if (flow.parentId !== null) {
-        const siblings = childrenMap.get(flow.parentId) ?? [];
-        siblings.push(flow);
-        childrenMap.set(flow.parentId, siblings);
-      }
-    }
-
-    // Sort children by stepOrder
-    for (const children of childrenMap.values()) {
-      children.sort((a, b) => a.stepOrder - b.stepOrder);
-    }
-
-    // Get leaf flows for a given flow (recursive expansion)
-    function getLeafFlows(flowId: number): typeof flows {
-      const children = childrenMap.get(flowId) ?? [];
-      if (children.length === 0) {
-        // This is a leaf, return the flow itself if it has module transition
-        const flow = flows.find(f => f.id === flowId);
-        return flow && flow.fromModuleId !== null ? [flow] : [];
-      }
-      // Recursively get leaf flows from children
-      return children.flatMap(child => getLeafFlows(child.id));
-    }
-
     return {
       flows: flows.map(flow => {
-        const isLeaf = flow.fromModuleId !== null && flow.toModuleId !== null;
-        const leafFlows = isLeaf ? [flow] : getLeafFlows(flow.id);
+        const flowWithSteps = database.getFlowWithSteps(flow.id);
+        const steps = flowWithSteps?.steps ?? [];
 
         return {
           id: flow.id,
           name: flow.name,
           slug: flow.slug,
-          fullPath: flow.fullPath,
+          entryPath: flow.entryPath,
+          stakeholder: flow.stakeholder,
           description: flow.description,
-          domain: flow.domain,
-          depth: flow.depth,
-          isLeaf,
-          fromModuleName: flow.fromModuleId ? moduleMap.get(flow.fromModuleId) ?? null : null,
-          toModuleName: flow.toModuleId ? moduleMap.get(flow.toModuleId) ?? null : null,
-          semantic: flow.semantic,
-          stepCount: leafFlows.length,
-          steps: leafFlows.map(leaf => ({
-            name: leaf.name,
-            fromModule: leaf.fromModuleId ? moduleMap.get(leaf.fromModuleId) ?? null : null,
-            toModule: leaf.toModuleId ? moduleMap.get(leaf.toModuleId) ?? null : null,
-            semantic: leaf.semantic,
+          stepCount: steps.length,
+          steps: steps.map(step => ({
+            stepOrder: step.stepOrder,
+            fromModulePath: step.interaction.fromModulePath,
+            toModulePath: step.interaction.toModulePath,
+            semantic: step.interaction.semantic,
           })),
         };
       }),
       stats: {
-        ...stats,
-        totalSteps: stats.leafFlowCount,
-        modulesCovered: coverage.coveredByFlows,
+        flowCount: stats.flowCount,
+        withEntryPointCount: stats.withEntryPointCount,
+        avgStepsPerFlow: stats.avgStepsPerFlow,
       },
       coverage,
     };
   } catch {
-    // Tables don't exist - return empty
     return {
       flows: [],
       stats: {
         flowCount: 0,
-        leafFlowCount: 0,
-        rootFlowCount: 0,
-        maxDepth: 0,
-        totalSteps: 0,
-        modulesCovered: 0,
+        withEntryPointCount: 0,
+        avgStepsPerFlow: 0,
       },
       coverage: {
-        totalModuleEdges: 0,
+        totalInteractions: 0,
         coveredByFlows: 0,
         percentage: 0,
       },
@@ -471,8 +472,8 @@ function getFlowsData(database: IndexDatabase): {
 }
 
 /**
- * Build the flows DAG data for the new visualization.
- * Returns modules as nodes, edges from call graph, and root flows with their leaf flows.
+ * Build the flows DAG data for the visualization.
+ * Returns modules as nodes, interactions as edges, and flows with their steps.
  */
 function getFlowsDagData(database: IndexDatabase): {
   modules: Array<{
@@ -488,16 +489,15 @@ function getFlowsDagData(database: IndexDatabase): {
     toModuleId: number;
     weight: number;
   }>;
-  rootFlows: Array<{
+  flows: Array<{
     id: number;
     name: string;
-    domain: string | null;
+    stakeholder: string | null;
     stepCount: number;
-    leafFlows: Array<{
-      id: number;
-      name: string;
-      fromModuleId: number | null;
-      toModuleId: number | null;
+    steps: Array<{
+      interactionId: number;
+      fromModuleId: number;
+      toModuleId: number;
       semantic: string | null;
     }>;
   }>;
@@ -514,7 +514,7 @@ function getFlowsDagData(database: IndexDatabase): {
       memberCount: m.members.length,
     }));
 
-    // Get module call graph edges
+    // Get module call graph edges (or interactions)
     const callGraph = database.getModuleCallGraph();
     const edges = callGraph.map(e => ({
       fromModuleId: e.fromModuleId,
@@ -522,57 +522,29 @@ function getFlowsDagData(database: IndexDatabase): {
       weight: e.weight,
     }));
 
-    // Get all flows and build root flows with their leaf flows
+    // Get all flows with their steps
     const allFlows = database.getAllFlows();
+    const flows = allFlows.map(flow => {
+      const flowWithSteps = database.getFlowWithSteps(flow.id);
+      const steps = flowWithSteps?.steps ?? [];
 
-    // Build parent-to-children map
-    const childrenMap = new Map<number, typeof allFlows>();
-    for (const flow of allFlows) {
-      if (flow.parentId !== null) {
-        const siblings = childrenMap.get(flow.parentId) ?? [];
-        siblings.push(flow);
-        childrenMap.set(flow.parentId, siblings);
-      }
-    }
+      return {
+        id: flow.id,
+        name: flow.name,
+        stakeholder: flow.stakeholder,
+        stepCount: steps.length,
+        steps: steps.map(step => ({
+          interactionId: step.interactionId,
+          fromModuleId: step.interaction.fromModuleId,
+          toModuleId: step.interaction.toModuleId,
+          semantic: step.interaction.semantic,
+        })),
+      };
+    });
 
-    // Sort children by stepOrder
-    for (const children of childrenMap.values()) {
-      children.sort((a, b) => a.stepOrder - b.stepOrder);
-    }
-
-    // Get leaf flows for a given flow (recursive expansion)
-    function getLeafFlows(flowId: number): typeof allFlows {
-      const children = childrenMap.get(flowId) ?? [];
-      if (children.length === 0) {
-        const flow = allFlows.find(f => f.id === flowId);
-        return flow && flow.fromModuleId !== null ? [flow] : [];
-      }
-      return children.flatMap(child => getLeafFlows(child.id));
-    }
-
-    // Get root flows (depth 0) and expand them
-    const rootFlows = allFlows
-      .filter(f => f.depth === 0)
-      .map(flow => {
-        const leafFlows = getLeafFlows(flow.id);
-        return {
-          id: flow.id,
-          name: flow.name,
-          domain: flow.domain,
-          stepCount: leafFlows.length,
-          leafFlows: leafFlows.map(leaf => ({
-            id: leaf.id,
-            name: leaf.name,
-            fromModuleId: leaf.fromModuleId,
-            toModuleId: leaf.toModuleId,
-            semantic: leaf.semantic,
-          })),
-        };
-      });
-
-    return { modules, edges, rootFlows };
+    return { modules, edges, flows };
   } catch {
-    return { modules: [], edges: [], rootFlows: [] };
+    return { modules: [], edges: [], flows: [] };
   }
 }
 

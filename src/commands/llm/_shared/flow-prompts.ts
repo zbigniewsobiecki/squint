@@ -373,7 +373,7 @@ export function formatCoverageStats(stats: FlowCoverageStats): string {
 
   parts.push('## Flow Coverage Statistics');
   parts.push('');
-  parts.push(`Total module edges: ${stats.totalModuleEdges}`);
+  parts.push(`Total interactions: ${stats.totalInteractions}`);
   parts.push(`Covered by flows: ${stats.coveredByFlows} (${stats.percentage.toFixed(1)}%)`);
 
   return parts.join('\n');

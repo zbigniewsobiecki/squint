@@ -77,38 +77,105 @@ export function ensureModulesTables(db: Database.Database): void {
 }
 
 /**
- * Ensure the flows table exists with the hierarchical schema.
+ * Ensure the interactions table exists.
  */
-export function ensureFlowsTables(db: Database.Database): void {
+export function ensureInteractionsTables(db: Database.Database): void {
   const tableExists = db.prepare(`
-    SELECT name FROM sqlite_master WHERE type='table' AND name='flows'
+    SELECT name FROM sqlite_master WHERE type='table' AND name='interactions'
   `).get();
 
   if (!tableExists) {
     db.exec(`
-      CREATE TABLE flows (
+      CREATE TABLE interactions (
         id INTEGER PRIMARY KEY,
-        parent_id INTEGER REFERENCES flows(id) ON DELETE CASCADE,
-        step_order INTEGER NOT NULL DEFAULT 0,
-        name TEXT NOT NULL,
-        slug TEXT NOT NULL,
-        full_path TEXT NOT NULL UNIQUE,
-        description TEXT,
-        from_module_id INTEGER REFERENCES modules(id),
-        to_module_id INTEGER REFERENCES modules(id),
+        from_module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+        to_module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+        direction TEXT NOT NULL DEFAULT 'uni',
+        weight INTEGER NOT NULL DEFAULT 1,
+        pattern TEXT,
+        symbols TEXT,
         semantic TEXT,
-        depth INTEGER NOT NULL DEFAULT 0,
-        domain TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(parent_id, slug),
-        UNIQUE(parent_id, step_order)
+        UNIQUE(from_module_id, to_module_id)
       );
 
-      CREATE INDEX idx_flows_parent ON flows(parent_id);
-      CREATE INDEX idx_flows_path ON flows(full_path);
-      CREATE INDEX idx_flows_depth ON flows(depth);
-      CREATE INDEX idx_flows_from_module ON flows(from_module_id);
-      CREATE INDEX idx_flows_to_module ON flows(to_module_id);
+      CREATE INDEX idx_interactions_from_module ON interactions(from_module_id);
+      CREATE INDEX idx_interactions_to_module ON interactions(to_module_id);
+      CREATE INDEX idx_interactions_pattern ON interactions(pattern);
+    `);
+  }
+}
+
+/**
+ * Ensure the flows and flow_steps tables exist.
+ */
+export function ensureFlowsTables(db: Database.Database): void {
+  const flowsTableExists = db.prepare(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='flows'
+  `).get();
+
+  if (!flowsTableExists) {
+    db.exec(`
+      CREATE TABLE flows (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        slug TEXT NOT NULL UNIQUE,
+        entry_point_id INTEGER REFERENCES definitions(id) ON DELETE SET NULL,
+        entry_path TEXT,
+        stakeholder TEXT,
+        description TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX idx_flows_slug ON flows(slug);
+      CREATE INDEX idx_flows_entry_point ON flows(entry_point_id);
+      CREATE INDEX idx_flows_stakeholder ON flows(stakeholder);
+    `);
+  } else {
+    // Check if we need to migrate from old schema to new schema
+    const hasEntryPointId = db.prepare(`
+      SELECT COUNT(*) as count FROM pragma_table_info('flows') WHERE name='entry_point_id'
+    `).get() as { count: number };
+
+    if (hasEntryPointId.count === 0) {
+      // Old schema detected - drop and recreate
+      db.exec(`
+        DROP TABLE IF EXISTS flow_steps;
+        DROP TABLE IF EXISTS flows;
+
+        CREATE TABLE flows (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          slug TEXT NOT NULL UNIQUE,
+          entry_point_id INTEGER REFERENCES definitions(id) ON DELETE SET NULL,
+          entry_path TEXT,
+          stakeholder TEXT,
+          description TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX idx_flows_slug ON flows(slug);
+        CREATE INDEX idx_flows_entry_point ON flows(entry_point_id);
+        CREATE INDEX idx_flows_stakeholder ON flows(stakeholder);
+      `);
+    }
+  }
+
+  // Ensure flow_steps table exists
+  const flowStepsTableExists = db.prepare(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='flow_steps'
+  `).get();
+
+  if (!flowStepsTableExists) {
+    db.exec(`
+      CREATE TABLE flow_steps (
+        flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+        step_order INTEGER NOT NULL,
+        interaction_id INTEGER NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
+        PRIMARY KEY (flow_id, step_order)
+      );
+
+      CREATE INDEX idx_flow_steps_interaction ON flow_steps(interaction_id);
     `);
   }
 }

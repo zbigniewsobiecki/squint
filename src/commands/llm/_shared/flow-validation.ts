@@ -1,26 +1,26 @@
 /**
- * Flow validation logic for hierarchical module-level flows.
+ * Flow and interaction validation logic.
  */
 
 import type { IndexDatabase } from '../../../db/database.js';
-import type { Flow } from '../../../db/schema.js';
+import type { Flow, Interaction, InteractionWithPaths } from '../../../db/schema.js';
 
 // ============================================
 // Validation Types
 // ============================================
 
 export interface ValidationOptions {
-  maxDepth: number;  // Maximum depth of flow hierarchy
+  maxSteps: number;  // Maximum steps per flow
 }
 
 export const DEFAULT_VALIDATION_OPTIONS: ValidationOptions = {
-  maxDepth: 5,
+  maxSteps: 20,
 };
 
 export type FlowValidationErrorType =
-  | 'invalid_module_id'
-  | 'circular_reference'
-  | 'max_depth_exceeded'
+  | 'invalid_entry_point'
+  | 'invalid_interaction_id'
+  | 'max_steps_exceeded'
   | 'duplicate_slug';
 
 export interface FlowValidationError {
@@ -31,8 +31,8 @@ export interface FlowValidationError {
 }
 
 export type FlowValidationWarningType =
-  | 'orphaned_flow'
-  | 'uncovered_edge';
+  | 'no_steps'
+  | 'missing_description';
 
 export interface FlowValidationWarning {
   type: FlowValidationWarningType;
@@ -63,37 +63,58 @@ export class FlowValidator {
     const errors: FlowValidationError[] = [];
     const warnings: FlowValidationWarning[] = [];
 
-    // 1. Check if module IDs are valid for leaf flows
-    if (flow.fromModuleId !== null && flow.toModuleId !== null) {
-      const fromModule = this.db.getModuleById(flow.fromModuleId);
-      const toModule = this.db.getModuleById(flow.toModuleId);
-
-      if (!fromModule) {
+    // 1. Check if entry point is valid
+    if (flow.entryPointId !== null) {
+      const entryPoint = this.db.getDefinitionById(flow.entryPointId);
+      if (!entryPoint) {
         errors.push({
-          type: 'invalid_module_id',
-          message: `From module ID ${flow.fromModuleId} does not exist`,
-          flowId: flow.id,
-          flowName: flow.name,
-        });
-      }
-
-      if (!toModule) {
-        errors.push({
-          type: 'invalid_module_id',
-          message: `To module ID ${flow.toModuleId} does not exist`,
+          type: 'invalid_entry_point',
+          message: `Entry point ID ${flow.entryPointId} does not exist`,
           flowId: flow.id,
           flowName: flow.name,
         });
       }
     }
 
-    // 2. Check depth limit
-    if (flow.depth > this.options.maxDepth) {
+    // 2. Check steps
+    const steps = this.db.getFlowSteps(flow.id);
+
+    if (steps.length === 0) {
+      warnings.push({
+        type: 'no_steps',
+        message: `Flow "${flow.name}" has no interaction steps`,
+        severity: 'medium',
+      });
+    }
+
+    if (steps.length > this.options.maxSteps) {
       errors.push({
-        type: 'max_depth_exceeded',
-        message: `Flow depth ${flow.depth} exceeds maximum ${this.options.maxDepth}`,
+        type: 'max_steps_exceeded',
+        message: `Flow has ${steps.length} steps, exceeds maximum ${this.options.maxSteps}`,
         flowId: flow.id,
         flowName: flow.name,
+      });
+    }
+
+    // 3. Validate each step's interaction exists
+    for (const step of steps) {
+      const interaction = this.db.getInteractionById(step.interactionId);
+      if (!interaction) {
+        errors.push({
+          type: 'invalid_interaction_id',
+          message: `Step ${step.stepOrder} references non-existent interaction ${step.interactionId}`,
+          flowId: flow.id,
+          flowName: flow.name,
+        });
+      }
+    }
+
+    // 4. Check for missing description
+    if (!flow.description) {
+      warnings.push({
+        type: 'missing_description',
+        message: `Flow "${flow.name}" has no description`,
+        severity: 'low',
       });
     }
 
@@ -119,16 +140,64 @@ export class FlowValidator {
   }
 
   /**
-   * Check for orphaned flows (flows with no parent that aren't root).
+   * Find duplicate slugs.
    */
-  findOrphanedFlows(): Flow[] {
+  findDuplicateSlugs(): Array<{ slug: string; flows: Flow[] }> {
     const flows = this.db.getAllFlows();
-    const flowIds = new Set(flows.map(f => f.id));
+    const bySlug = new Map<string, Flow[]>();
 
-    return flows.filter(f =>
-      f.parentId !== null && !flowIds.has(f.parentId)
-    );
+    for (const flow of flows) {
+      const list = bySlug.get(flow.slug) ?? [];
+      list.push(flow);
+      bySlug.set(flow.slug, list);
+    }
+
+    const duplicates: Array<{ slug: string; flows: Flow[] }> = [];
+    for (const [slug, flowList] of bySlug) {
+      if (flowList.length > 1) {
+        duplicates.push({ slug, flows: flowList });
+      }
+    }
+
+    return duplicates;
   }
+}
+
+// ============================================
+// Interaction Validation
+// ============================================
+
+export interface InteractionValidationError {
+  type: 'invalid_module_id';
+  message: string;
+  interactionId: number;
+}
+
+export function validateInteraction(
+  db: IndexDatabase,
+  interaction: Interaction
+): InteractionValidationError[] {
+  const errors: InteractionValidationError[] = [];
+
+  const fromModule = db.getModuleById(interaction.fromModuleId);
+  if (!fromModule) {
+    errors.push({
+      type: 'invalid_module_id',
+      message: `From module ID ${interaction.fromModuleId} does not exist`,
+      interactionId: interaction.id,
+    });
+  }
+
+  const toModule = db.getModuleById(interaction.toModuleId);
+  if (!toModule) {
+    errors.push({
+      type: 'invalid_module_id',
+      message: `To module ID ${interaction.toModuleId} does not exist`,
+      interactionId: interaction.id,
+    });
+  }
+
+  return errors;
 }
 
 // ============================================
@@ -144,25 +213,30 @@ export interface CoverageGap {
 }
 
 /**
- * Find module edges not covered by any flow.
+ * Find interactions not covered by any flow.
  */
-export function findUncoveredEdges(db: IndexDatabase): CoverageGap[] {
-  const moduleEdges = db.getModuleCallGraph();
-  const leafFlows = db.getLeafFlows();
+export function findUncoveredInteractions(db: IndexDatabase): InteractionWithPaths[] {
+  return db.getUncoveredInteractions();
+}
 
-  // Build set of covered edges
-  const coveredEdges = new Set<string>();
-  for (const flow of leafFlows) {
-    if (flow.fromModuleId && flow.toModuleId) {
-      coveredEdges.add(`${flow.fromModuleId}->${flow.toModuleId}`);
-    }
+/**
+ * Find module edges that don't have interactions.
+ */
+export function findMissingInteractions(db: IndexDatabase): CoverageGap[] {
+  const moduleEdges = db.getModuleCallGraph();
+  const interactions = db.getAllInteractions();
+
+  // Build set of interaction edges
+  const interactionEdges = new Set<string>();
+  for (const interaction of interactions) {
+    interactionEdges.add(`${interaction.fromModuleId}->${interaction.toModuleId}`);
   }
 
-  // Find uncovered edges
+  // Find module edges without interactions
   const gaps: CoverageGap[] = [];
   for (const edge of moduleEdges) {
     const key = `${edge.fromModuleId}->${edge.toModuleId}`;
-    if (!coveredEdges.has(key)) {
+    if (!interactionEdges.has(key)) {
       gaps.push({
         fromModuleId: edge.fromModuleId,
         toModuleId: edge.toModuleId,

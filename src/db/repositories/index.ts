@@ -50,6 +50,13 @@ export type {
   IncomingEdge,
 } from './module-repository.js';
 
+export { InteractionRepository } from './interaction-repository.js';
+export type {
+  InteractionInsertOptions,
+  InteractionUpdateOptions,
+  InteractionStats,
+} from './interaction-repository.js';
+
 export { FlowRepository } from './flow-repository.js';
 export type {
   FlowInsertOptions,

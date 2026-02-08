@@ -1,139 +1,104 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { FlowRepository } from '../../../src/db/repositories/flow-repository.js';
+import { InteractionRepository } from '../../../src/db/repositories/interaction-repository.js';
 import { ModuleRepository } from '../../../src/db/repositories/module-repository.js';
-import { FileRepository } from '../../../src/db/repositories/file-repository.js';
 import { SCHEMA } from '../../../src/db/schema.js';
 
 describe('FlowRepository', () => {
   let db: Database.Database;
   let repo: FlowRepository;
+  let interactionRepo: InteractionRepository;
   let moduleRepo: ModuleRepository;
-  let fileRepo: FileRepository;
   let moduleId1: number;
   let moduleId2: number;
   let moduleId3: number;
+  let interactionId1: number;
+  let interactionId2: number;
 
   beforeEach(() => {
     db = new Database(':memory:');
     db.exec(SCHEMA);
     repo = new FlowRepository(db);
+    interactionRepo = new InteractionRepository(db);
     moduleRepo = new ModuleRepository(db);
-    fileRepo = new FileRepository(db);
 
-    // Set up modules for flow testing
+    // Set up modules for testing
     const rootId = moduleRepo.ensureRoot();
     moduleId1 = moduleRepo.insert(rootId, 'auth', 'Authentication');
     moduleId2 = moduleRepo.insert(rootId, 'api', 'API');
     moduleId3 = moduleRepo.insert(rootId, 'db', 'Database');
+
+    // Set up interactions for testing
+    interactionId1 = interactionRepo.insert(moduleId1, moduleId2, {
+      weight: 5,
+      pattern: 'business',
+      symbols: ['authenticate', 'validate'],
+      semantic: 'Auth module calls API',
+    });
+    interactionId2 = interactionRepo.insert(moduleId2, moduleId3, {
+      weight: 3,
+      pattern: 'business',
+      symbols: ['query', 'save'],
+      semantic: 'API calls Database',
+    });
   });
 
   afterEach(() => {
     db.close();
   });
 
-  describe('ensureRoot', () => {
-    it('creates a root flow with given slug', () => {
-      const flow = repo.ensureRoot('user-journey');
-
-      expect(flow.slug).toBe('user-journey');
-      expect(flow.name).toBe('User Journey');
-      expect(flow.fullPath).toBe('user-journey');
-      expect(flow.depth).toBe(0);
-      expect(flow.parentId).toBeNull();
-    });
-
-    it('returns existing root flow on subsequent calls', () => {
-      const flow1 = repo.ensureRoot('user-journey');
-      const flow2 = repo.ensureRoot('user-journey');
-
-      expect(flow1.id).toBe(flow2.id);
-    });
-  });
-
   describe('insert', () => {
-    it('inserts a child flow', () => {
-      const root = repo.ensureRoot('user-journey');
-      const childId = repo.insert(root.id, 'login', 'Login Flow', {
+    it('inserts a new flow', () => {
+      const flowId = repo.insert('Login Flow', 'login-flow', {
+        entryPath: 'POST /api/login',
+        stakeholder: 'user',
         description: 'User login process',
       });
 
-      const child = repo.getById(childId);
-      expect(child).not.toBeNull();
-      expect(child!.slug).toBe('login');
-      expect(child!.fullPath).toBe('user-journey.login');
-      expect(child!.depth).toBe(1);
+      const flow = repo.getById(flowId);
+      expect(flow).not.toBeNull();
+      expect(flow!.name).toBe('Login Flow');
+      expect(flow!.slug).toBe('login-flow');
+      expect(flow!.entryPath).toBe('POST /api/login');
+      expect(flow!.stakeholder).toBe('user');
+      expect(flow!.description).toBe('User login process');
     });
 
-    it('inserts leaf flow with module transition', () => {
-      const root = repo.ensureRoot('user-journey');
-      const flowId = repo.insert(root.id, 'validate-credentials', 'Validate Credentials', {
-        fromModuleId: moduleId1,
-        toModuleId: moduleId2,
-        semantic: 'validates user credentials',
+    it('inserts flow with entry path', () => {
+      const flowId = repo.insert('Login Flow', 'login-flow', {
+        entryPath: 'POST /api/login',
+        stakeholder: 'user',
       });
 
       const flow = repo.getById(flowId);
-      expect(flow!.fromModuleId).toBe(moduleId1);
-      expect(flow!.toModuleId).toBe(moduleId2);
-      expect(flow!.semantic).toBe('validates user credentials');
-    });
-
-    it('auto-increments step_order', () => {
-      const root = repo.ensureRoot('user-journey');
-      const id1 = repo.insert(root.id, 'step1', 'Step 1');
-      const id2 = repo.insert(root.id, 'step2', 'Step 2');
-      const id3 = repo.insert(root.id, 'step3', 'Step 3');
-
-      const flow1 = repo.getById(id1);
-      const flow2 = repo.getById(id2);
-      const flow3 = repo.getById(id3);
-
-      expect(flow1!.stepOrder).toBe(1);
-      expect(flow2!.stepOrder).toBe(2);
-      expect(flow3!.stepOrder).toBe(3);
-    });
-  });
-
-  describe('getByPath', () => {
-    it('returns flow by full path', () => {
-      const root = repo.ensureRoot('user-journey');
-      repo.insert(root.id, 'login', 'Login Flow');
-
-      const flow = repo.getByPath('user-journey.login');
-      expect(flow).not.toBeNull();
-      expect(flow!.name).toBe('Login Flow');
-    });
-
-    it('returns null for non-existent path', () => {
-      repo.ensureRoot('user-journey');
-      const flow = repo.getByPath('user-journey.nonexistent');
-      expect(flow).toBeNull();
+      expect(flow!.entryPath).toBe('POST /api/login');
+      expect(flow!.entryPointId).toBeNull();
     });
   });
 
   describe('getById', () => {
     it('returns flow by ID', () => {
-      const root = repo.ensureRoot('user-journey');
-      const flow = repo.getById(root.id);
+      const flowId = repo.insert('Test Flow', 'test-flow');
+      const flow = repo.getById(flowId);
 
       expect(flow).not.toBeNull();
-      expect(flow!.slug).toBe('user-journey');
+      expect(flow!.name).toBe('Test Flow');
     });
 
-    it('returns null/undefined for non-existent ID', () => {
+    it('returns null for non-existent ID', () => {
       const flow = repo.getById(999);
-      expect(flow).toBeFalsy();
+      expect(flow).toBeNull();
     });
   });
 
   describe('getBySlug', () => {
     it('returns flow by slug', () => {
-      repo.ensureRoot('user-journey');
+      repo.insert('Test Flow', 'test-flow');
 
-      const flow = repo.getBySlug('user-journey');
+      const flow = repo.getBySlug('test-flow');
       expect(flow).not.toBeNull();
-      expect(flow!.name).toBe('User Journey');
+      expect(flow!.name).toBe('Test Flow');
     });
 
     it('returns null for non-existent slug', () => {
@@ -142,230 +107,75 @@ describe('FlowRepository', () => {
     });
   });
 
-  describe('getChildren', () => {
-    it('returns direct children ordered by stepOrder', () => {
-      const root = repo.ensureRoot('user-journey');
-      repo.insert(root.id, 'step1', 'Step 1');
-      repo.insert(root.id, 'step2', 'Step 2');
-      repo.insert(root.id, 'step3', 'Step 3');
-
-      const children = repo.getChildren(root.id);
-      expect(children).toHaveLength(3);
-      expect(children[0].slug).toBe('step1');
-      expect(children[1].slug).toBe('step2');
-      expect(children[2].slug).toBe('step3');
-    });
-  });
-
   describe('getAll', () => {
     it('returns all flows', () => {
-      const root = repo.ensureRoot('user-journey');
-      repo.insert(root.id, 'login', 'Login');
-      repo.insert(root.id, 'logout', 'Logout');
+      repo.insert('Flow 1', 'flow-1');
+      repo.insert('Flow 2', 'flow-2');
+      repo.insert('Flow 3', 'flow-3');
 
       const flows = repo.getAll();
       expect(flows).toHaveLength(3);
     });
   });
 
-  describe('getTree', () => {
-    it('returns flow tree structure', () => {
-      const root = repo.ensureRoot('user-journey');
-      const loginId = repo.insert(root.id, 'login', 'Login');
-      repo.insert(loginId, 'validate', 'Validate', {
-        fromModuleId: moduleId1,
-        toModuleId: moduleId2,
-      });
+  describe('getByStakeholder', () => {
+    it('returns flows by stakeholder type', () => {
+      repo.insert('User Flow 1', 'user-flow-1', { stakeholder: 'user' });
+      repo.insert('User Flow 2', 'user-flow-2', { stakeholder: 'user' });
+      repo.insert('Admin Flow', 'admin-flow', { stakeholder: 'admin' });
 
-      const trees = repo.getTree();
-      expect(trees).toHaveLength(1);
-      expect(trees[0].slug).toBe('user-journey');
-      expect(trees[0].children).toHaveLength(1);
-      expect(trees[0].children[0].children).toHaveLength(1);
-    });
+      const userFlows = repo.getByStakeholder('user');
+      expect(userFlows).toHaveLength(2);
 
-    it('includes module names in tree nodes', () => {
-      const root = repo.ensureRoot('user-journey');
-      repo.insert(root.id, 'validate', 'Validate', {
-        fromModuleId: moduleId1,
-        toModuleId: moduleId2,
-      });
-
-      const trees = repo.getTree();
-      const leafFlow = trees[0].children[0];
-
-      expect(leafFlow.fromModuleName).toBe('project.auth');
-      expect(leafFlow.toModuleName).toBe('project.api');
-    });
-
-    it('returns empty array when no flows', () => {
-      const trees = repo.getTree();
-      expect(trees).toHaveLength(0);
-    });
-  });
-
-  describe('getLeaves', () => {
-    it('returns flows with module transitions', () => {
-      const root = repo.ensureRoot('user-journey');
-      repo.insert(root.id, 'container', 'Container'); // Not a leaf
-      repo.insert(root.id, 'leaf', 'Leaf', {
-        fromModuleId: moduleId1,
-        toModuleId: moduleId2,
-      });
-
-      const leaves = repo.getLeaves();
-      expect(leaves).toHaveLength(1);
-      expect(leaves[0].slug).toBe('leaf');
-    });
-  });
-
-  describe('getForModuleTransition', () => {
-    it('returns flows for specific module transition', () => {
-      const root = repo.ensureRoot('user-journey');
-      repo.insert(root.id, 'flow1', 'Flow 1', {
-        fromModuleId: moduleId1,
-        toModuleId: moduleId2,
-      });
-      repo.insert(root.id, 'flow2', 'Flow 2', {
-        fromModuleId: moduleId1,
-        toModuleId: moduleId2,
-      });
-      repo.insert(root.id, 'flow3', 'Flow 3', {
-        fromModuleId: moduleId2,
-        toModuleId: moduleId3,
-      });
-
-      const flows = repo.getForModuleTransition(moduleId1, moduleId2);
-      expect(flows).toHaveLength(2);
-    });
-  });
-
-  describe('expand', () => {
-    it('expands composite flow to leaf flows', () => {
-      const root = repo.ensureRoot('user-journey');
-      const loginId = repo.insert(root.id, 'login', 'Login');
-      repo.insert(loginId, 'step1', 'Step 1', {
-        fromModuleId: moduleId1,
-        toModuleId: moduleId2,
-      });
-      repo.insert(loginId, 'step2', 'Step 2', {
-        fromModuleId: moduleId2,
-        toModuleId: moduleId3,
-      });
-
-      const expanded = repo.expand(loginId);
-      expect(expanded).toHaveLength(2);
-      expect(expanded[0].slug).toBe('step1');
-      expect(expanded[1].slug).toBe('step2');
-    });
-
-    it('returns empty array for non-existent flow', () => {
-      const expanded = repo.expand(999);
-      expect(expanded).toHaveLength(0);
+      const adminFlows = repo.getByStakeholder('admin');
+      expect(adminFlows).toHaveLength(1);
     });
   });
 
   describe('update', () => {
     it('updates flow metadata', () => {
-      const root = repo.ensureRoot('user-journey');
-      const flowId = repo.insert(root.id, 'login', 'Login');
+      const flowId = repo.insert('Original', 'original');
 
       const updated = repo.update(flowId, {
-        name: 'Updated Login',
-        description: 'Updated description',
-        semantic: 'handles login',
-        domain: 'auth',
+        name: 'Updated',
+        description: 'New description',
+        stakeholder: 'admin',
       });
 
       expect(updated).toBe(true);
 
       const flow = repo.getById(flowId);
-      expect(flow!.name).toBe('Updated Login');
-      expect(flow!.description).toBe('Updated description');
-      expect(flow!.semantic).toBe('handles login');
-      expect(flow!.domain).toBe('auth');
+      expect(flow!.name).toBe('Updated');
+      expect(flow!.description).toBe('New description');
+      expect(flow!.stakeholder).toBe('admin');
     });
 
     it('returns false for empty updates', () => {
-      const root = repo.ensureRoot('user-journey');
-      const flowId = repo.insert(root.id, 'login', 'Login');
-
+      const flowId = repo.insert('Test', 'test');
       const updated = repo.update(flowId, {});
       expect(updated).toBe(false);
     });
   });
 
-  describe('reparent', () => {
-    it('moves flow to new parent', () => {
-      const root = repo.ensureRoot('user-journey');
-      const containerId = repo.insert(root.id, 'container', 'Container');
-      const flowId = repo.insert(root.id, 'orphan', 'Orphan');
-
-      repo.reparent(flowId, containerId);
-
-      const flow = repo.getById(flowId);
-      expect(flow!.parentId).toBe(containerId);
-      expect(flow!.fullPath).toBe('user-journey.container.orphan');
-      expect(flow!.depth).toBe(2);
-    });
-
-    it('updates descendant paths', () => {
-      const root = repo.ensureRoot('user-journey');
-      const parentId = repo.insert(root.id, 'parent', 'Parent');
-      const childId = repo.insert(parentId, 'child', 'Child');
-      const newContainerId = repo.insert(root.id, 'container', 'Container');
-
-      repo.reparent(parentId, newContainerId);
-
-      const child = repo.getById(childId);
-      expect(child!.fullPath).toBe('user-journey.container.parent.child');
-      expect(child!.depth).toBe(3);
-    });
-  });
-
-  describe('reparentMany', () => {
-    it('reparents multiple flows in order', () => {
-      const root = repo.ensureRoot('user-journey');
-      const containerId = repo.insert(root.id, 'container', 'Container');
-      const flow1Id = repo.insert(root.id, 'flow1', 'Flow 1');
-      const flow2Id = repo.insert(root.id, 'flow2', 'Flow 2');
-
-      repo.reparentMany([flow2Id, flow1Id], containerId);
-
-      const flow1 = repo.getById(flow1Id);
-      const flow2 = repo.getById(flow2Id);
-
-      expect(flow1!.parentId).toBe(containerId);
-      expect(flow2!.parentId).toBe(containerId);
-      expect(flow2!.stepOrder).toBe(1);
-      expect(flow1!.stepOrder).toBe(2);
-    });
-  });
-
   describe('delete', () => {
     it('deletes a flow', () => {
-      const root = repo.ensureRoot('user-journey');
-      const flowId = repo.insert(root.id, 'login', 'Login');
+      const flowId = repo.insert('To Delete', 'to-delete');
 
-      const changes = repo.delete(flowId);
-
-      expect(changes).toBe(1);
-      expect(repo.getById(flowId)).toBeFalsy();
+      const deleted = repo.delete(flowId);
+      expect(deleted).toBe(true);
+      expect(repo.getById(flowId)).toBeNull();
     });
   });
 
   describe('clear', () => {
     it('deletes all flows', () => {
-      const root = repo.ensureRoot('user-journey');
-      repo.insert(root.id, 'login', 'Login');
-      repo.insert(root.id, 'logout', 'Logout');
+      repo.insert('Flow 1', 'flow-1');
+      repo.insert('Flow 2', 'flow-2');
 
-      expect(repo.getCount()).toBe(3);
+      expect(repo.getCount()).toBe(2);
 
       const changes = repo.clear();
-
-      // Note: CASCADE DELETE may not count all deleted rows
-      expect(changes).toBeGreaterThanOrEqual(1);
+      expect(changes).toBe(2);
       expect(repo.getCount()).toBe(0);
     });
   });
@@ -374,143 +184,184 @@ describe('FlowRepository', () => {
     it('returns count of flows', () => {
       expect(repo.getCount()).toBe(0);
 
-      const root = repo.ensureRoot('user-journey');
+      repo.insert('Flow 1', 'flow-1');
       expect(repo.getCount()).toBe(1);
 
-      repo.insert(root.id, 'login', 'Login');
+      repo.insert('Flow 2', 'flow-2');
       expect(repo.getCount()).toBe(2);
+    });
+  });
+
+  describe('addStep', () => {
+    it('adds a step to a flow', () => {
+      const flowId = repo.insert('Test Flow', 'test-flow');
+
+      repo.addStep(flowId, interactionId1);
+      repo.addStep(flowId, interactionId2);
+
+      const steps = repo.getSteps(flowId);
+      expect(steps).toHaveLength(2);
+      expect(steps[0].stepOrder).toBe(1);
+      expect(steps[0].interactionId).toBe(interactionId1);
+      expect(steps[1].stepOrder).toBe(2);
+      expect(steps[1].interactionId).toBe(interactionId2);
+    });
+
+    it('adds step with explicit stepOrder', () => {
+      const flowId = repo.insert('Test Flow', 'test-flow');
+
+      repo.addStep(flowId, interactionId1, 5);
+
+      const steps = repo.getSteps(flowId);
+      expect(steps[0].stepOrder).toBe(5);
+    });
+  });
+
+  describe('addSteps', () => {
+    it('adds multiple steps in order', () => {
+      const flowId = repo.insert('Test Flow', 'test-flow');
+
+      repo.addSteps(flowId, [interactionId1, interactionId2]);
+
+      const steps = repo.getSteps(flowId);
+      expect(steps).toHaveLength(2);
+      expect(steps[0].interactionId).toBe(interactionId1);
+      expect(steps[1].interactionId).toBe(interactionId2);
+    });
+  });
+
+  describe('removeStep', () => {
+    it('removes a step from a flow', () => {
+      const flowId = repo.insert('Test Flow', 'test-flow');
+      repo.addSteps(flowId, [interactionId1, interactionId2]);
+
+      const removed = repo.removeStep(flowId, 1);
+      expect(removed).toBe(true);
+
+      const steps = repo.getSteps(flowId);
+      expect(steps).toHaveLength(1);
+      expect(steps[0].interactionId).toBe(interactionId2);
+    });
+  });
+
+  describe('clearSteps', () => {
+    it('clears all steps from a flow', () => {
+      const flowId = repo.insert('Test Flow', 'test-flow');
+      repo.addSteps(flowId, [interactionId1, interactionId2]);
+
+      const cleared = repo.clearSteps(flowId);
+      expect(cleared).toBe(2);
+
+      const steps = repo.getSteps(flowId);
+      expect(steps).toHaveLength(0);
+    });
+  });
+
+  describe('reorderSteps', () => {
+    it('reorders steps in a flow', () => {
+      const flowId = repo.insert('Test Flow', 'test-flow');
+      repo.addSteps(flowId, [interactionId1, interactionId2]);
+
+      // Reorder: swap the order
+      repo.reorderSteps(flowId, [interactionId2, interactionId1]);
+
+      const steps = repo.getSteps(flowId);
+      expect(steps[0].interactionId).toBe(interactionId2);
+      expect(steps[1].interactionId).toBe(interactionId1);
+    });
+  });
+
+  describe('getWithSteps', () => {
+    it('returns flow with interaction details', () => {
+      const flowId = repo.insert('Login Flow', 'login-flow', {
+        stakeholder: 'user',
+      });
+      repo.addSteps(flowId, [interactionId1, interactionId2]);
+
+      const flowWithSteps = repo.getWithSteps(flowId);
+      expect(flowWithSteps).not.toBeNull();
+      expect(flowWithSteps!.name).toBe('Login Flow');
+      expect(flowWithSteps!.steps).toHaveLength(2);
+
+      const step1 = flowWithSteps!.steps[0];
+      expect(step1.stepOrder).toBe(1);
+      expect(step1.interaction.fromModulePath).toBe('project.auth');
+      expect(step1.interaction.toModulePath).toBe('project.api');
+      expect(step1.interaction.semantic).toBe('Auth module calls API');
+    });
+
+    it('returns null for non-existent flow', () => {
+      const flowWithSteps = repo.getWithSteps(999);
+      expect(flowWithSteps).toBeNull();
+    });
+  });
+
+  describe('expand', () => {
+    it('expands flow to ordered interactions', () => {
+      const flowId = repo.insert('Login Flow', 'login-flow');
+      repo.addSteps(flowId, [interactionId1, interactionId2]);
+
+      const expanded = repo.expand(flowId);
+      expect(expanded).not.toBeNull();
+      expect(expanded!.flow.name).toBe('Login Flow');
+      expect(expanded!.interactions).toHaveLength(2);
+      expect(expanded!.interactions[0].fromModulePath).toBe('project.auth');
+    });
+
+    it('returns null for non-existent flow', () => {
+      const expanded = repo.expand(999);
+      expect(expanded).toBeNull();
     });
   });
 
   describe('getStats', () => {
     it('returns flow statistics', () => {
-      const root = repo.ensureRoot('user-journey');
-      repo.insert(root.id, 'container', 'Container');
-      repo.insert(root.id, 'leaf', 'Leaf', {
-        fromModuleId: moduleId1,
-        toModuleId: moduleId2,
-      });
+      repo.insert('User Flow', 'user-flow', { stakeholder: 'user' });
+      repo.insert('Admin Flow', 'admin-flow', { stakeholder: 'admin' });
+      const flowId = repo.insert('System Flow', 'system-flow', { stakeholder: 'system' });
+      repo.addSteps(flowId, [interactionId1, interactionId2]);
 
       const stats = repo.getStats();
 
       expect(stats.flowCount).toBe(3);
-      expect(stats.leafFlowCount).toBe(1);
-      expect(stats.rootFlowCount).toBe(1);
-      expect(stats.maxDepth).toBe(1);
-    });
-  });
-
-  describe('getModuleCallGraph', () => {
-    it('returns module-level call graph', () => {
-      // Set up definitions and calls between modules
-      const fileId = fileRepo.insert({
-        path: '/test/file.ts',
-        language: 'typescript',
-        contentHash: 'abc',
-        sizeBytes: 100,
-        modifiedAt: '2024-01-01T00:00:00.000Z',
-      });
-
-      const defId1 = fileRepo.insertDefinition(fileId, {
-        name: 'ServiceA',
-        kind: 'class',
-        isExported: true,
-        isDefault: false,
-        position: { row: 0, column: 0 },
-        endPosition: { row: 20, column: 1 },
-      });
-
-      const defId2 = fileRepo.insertDefinition(fileId, {
-        name: 'ServiceB',
-        kind: 'class',
-        isExported: true,
-        isDefault: false,
-        position: { row: 25, column: 0 },
-        endPosition: { row: 45, column: 1 },
-      });
-
-      // Assign to different modules
-      moduleRepo.assignSymbol(defId1, moduleId1);
-      moduleRepo.assignSymbol(defId2, moduleId2);
-
-      // Create a call from defId1 to defId2
-      const symId = fileRepo.insertSymbol(null, defId2, {
-        name: 'ServiceB',
-        localName: 'ServiceB',
-        kind: 'class',
-        usages: [],
-      }, fileId);
-
-      fileRepo.insertUsage(symId, {
-        position: { row: 10, column: 5 },
-        context: 'call_expression',
-        callsite: { argumentCount: 0, isMethodCall: false, isConstructorCall: false },
-      });
-
-      const graph = repo.getModuleCallGraph();
-      expect(graph.length).toBeGreaterThan(0);
-
-      const edge = graph.find(e => e.fromModuleId === moduleId1 && e.toModuleId === moduleId2);
-      expect(edge).toBeDefined();
+      expect(stats.byStakeholder['user']).toBe(1);
+      expect(stats.byStakeholder['admin']).toBe(1);
+      expect(stats.byStakeholder['system']).toBe(1);
     });
   });
 
   describe('getCoverage', () => {
     it('returns flow coverage statistics', () => {
-      // Set up module call graph
-      const fileId = fileRepo.insert({
-        path: '/test/file.ts',
-        language: 'typescript',
-        contentHash: 'abc',
-        sizeBytes: 100,
-        modifiedAt: '2024-01-01T00:00:00.000Z',
-      });
-
-      const defId1 = fileRepo.insertDefinition(fileId, {
-        name: 'ServiceA',
-        kind: 'class',
-        isExported: true,
-        isDefault: false,
-        position: { row: 0, column: 0 },
-        endPosition: { row: 20, column: 1 },
-      });
-
-      const defId2 = fileRepo.insertDefinition(fileId, {
-        name: 'ServiceB',
-        kind: 'class',
-        isExported: true,
-        isDefault: false,
-        position: { row: 25, column: 0 },
-        endPosition: { row: 45, column: 1 },
-      });
-
-      moduleRepo.assignSymbol(defId1, moduleId1);
-      moduleRepo.assignSymbol(defId2, moduleId2);
-
-      const symId = fileRepo.insertSymbol(null, defId2, {
-        name: 'ServiceB',
-        localName: 'ServiceB',
-        kind: 'class',
-        usages: [],
-      }, fileId);
-
-      fileRepo.insertUsage(symId, {
-        position: { row: 10, column: 5 },
-        context: 'call_expression',
-        callsite: { argumentCount: 0, isMethodCall: false, isConstructorCall: false },
-      });
-
-      // Create a flow covering this edge
-      const root = repo.ensureRoot('user-journey');
-      repo.insert(root.id, 'flow1', 'Flow 1', {
-        fromModuleId: moduleId1,
-        toModuleId: moduleId2,
-      });
+      const flowId = repo.insert('Test Flow', 'test-flow');
+      repo.addStep(flowId, interactionId1);
 
       const coverage = repo.getCoverage();
-      expect(coverage.totalModuleEdges).toBeGreaterThanOrEqual(0);
-      expect(coverage.coveredByFlows).toBeGreaterThanOrEqual(0);
-      expect(coverage.percentage).toBeGreaterThanOrEqual(0);
+      expect(coverage.totalInteractions).toBe(2);
+      expect(coverage.coveredByFlows).toBe(1);
+      expect(coverage.percentage).toBe(50);
+    });
+  });
+
+  describe('getFlowsWithInteraction', () => {
+    it('returns flows that use a specific interaction', () => {
+      const flow1Id = repo.insert('Flow 1', 'flow-1');
+      const flow2Id = repo.insert('Flow 2', 'flow-2');
+      repo.addStep(flow1Id, interactionId1);
+      repo.addStep(flow2Id, interactionId1);
+
+      const flows = repo.getFlowsWithInteraction(interactionId1);
+      expect(flows).toHaveLength(2);
+    });
+  });
+
+  describe('getUncoveredInteractions', () => {
+    it('returns interactions not in any flow', () => {
+      const flowId = repo.insert('Test Flow', 'test-flow');
+      repo.addStep(flowId, interactionId1);
+
+      const uncovered = repo.getUncoveredInteractions();
+      expect(uncovered).toHaveLength(1);
+      expect(uncovered[0].id).toBe(interactionId2);
     });
   });
 });

@@ -16,11 +16,16 @@ import {
   ModuleTreeNode,
   ModuleWithMembers,
   CallGraphEdge,
+  Interaction,
+  InteractionWithPaths,
   Flow,
-  FlowTreeNode,
+  FlowStep,
+  FlowWithSteps,
+  FlowStakeholder,
   ModuleCallEdge,
   EnrichedModuleCallEdge,
   FlowCoverageStats,
+  ExpandedFlow,
   AnnotatedSymbolInfo,
   AnnotatedEdgeInfo,
   EnhancedRelationshipContext,
@@ -35,6 +40,7 @@ import { DependencyRepository } from './repositories/dependency-repository.js';
 import { RelationshipRepository } from './repositories/relationship-repository.js';
 import { DomainRepository } from './repositories/domain-repository.js';
 import { ModuleRepository } from './repositories/module-repository.js';
+import { InteractionRepository, InteractionInsertOptions } from './repositories/interaction-repository.js';
 import { FlowRepository, FlowInsertOptions } from './repositories/flow-repository.js';
 import { GraphRepository } from './repositories/graph-repository.js';
 
@@ -53,6 +59,7 @@ export class IndexDatabase implements IIndexWriter {
   public readonly relationships: RelationshipRepository;
   public readonly domains: DomainRepository;
   public readonly modules: ModuleRepository;
+  public readonly interactions: InteractionRepository;
   public readonly flows: FlowRepository;
   public readonly graph: GraphRepository;
 
@@ -68,6 +75,7 @@ export class IndexDatabase implements IIndexWriter {
     this.relationships = new RelationshipRepository(this.conn);
     this.domains = new DomainRepository(this.conn);
     this.modules = new ModuleRepository(this.conn);
+    this.interactions = new InteractionRepository(this.conn);
     this.flows = new FlowRepository(this.conn);
     this.graph = new GraphRepository(this.conn);
   }
@@ -499,19 +507,79 @@ export class IndexDatabase implements IIndexWriter {
   }
 
   // ============================================================
+  // Interaction Operations
+  // ============================================================
+
+  insertInteraction(fromModuleId: number, toModuleId: number, options?: InteractionInsertOptions): number {
+    return this.interactions.insert(fromModuleId, toModuleId, options);
+  }
+
+  upsertInteraction(fromModuleId: number, toModuleId: number, options?: InteractionInsertOptions): number {
+    return this.interactions.upsert(fromModuleId, toModuleId, options);
+  }
+
+  getInteractionById(id: number): Interaction | null {
+    return this.interactions.getById(id);
+  }
+
+  getInteractionByModules(fromModuleId: number, toModuleId: number): Interaction | null {
+    return this.interactions.getByModules(fromModuleId, toModuleId);
+  }
+
+  getAllInteractions(): InteractionWithPaths[] {
+    return this.interactions.getAll();
+  }
+
+  getInteractionsByPattern(pattern: 'utility' | 'business'): InteractionWithPaths[] {
+    return this.interactions.getByPattern(pattern);
+  }
+
+  getInteractionsFromModule(moduleId: number): InteractionWithPaths[] {
+    return this.interactions.getFromModule(moduleId);
+  }
+
+  getInteractionsToModule(moduleId: number): InteractionWithPaths[] {
+    return this.interactions.getToModule(moduleId);
+  }
+
+  updateInteraction(id: number, updates: { direction?: 'uni' | 'bi'; pattern?: 'utility' | 'business'; symbols?: string[]; semantic?: string }): boolean {
+    return this.interactions.update(id, updates);
+  }
+
+  deleteInteraction(id: number): boolean {
+    return this.interactions.delete(id);
+  }
+
+  clearInteractions(): number {
+    return this.interactions.clear();
+  }
+
+  getInteractionCount(): number {
+    return this.interactions.getCount();
+  }
+
+  getInteractionStats() {
+    return this.interactions.getStats();
+  }
+
+  getModuleCallGraph(): ModuleCallEdge[] {
+    return this.interactions.getModuleCallGraph();
+  }
+
+  getEnrichedModuleCallGraph(): EnrichedModuleCallEdge[] {
+    return this.interactions.getEnrichedModuleCallGraph();
+  }
+
+  syncInteractionsFromCallGraph(): { created: number; updated: number } {
+    return this.interactions.syncFromCallGraph();
+  }
+
+  // ============================================================
   // Flow Operations
   // ============================================================
 
-  ensureRootFlow(slug: string): Flow {
-    return this.flows.ensureRoot(slug);
-  }
-
-  insertFlow(parentId: number | null, slug: string, name: string, options?: FlowInsertOptions): number {
-    return this.flows.insert(parentId, slug, name, options);
-  }
-
-  getFlowByPath(fullPath: string): Flow | null {
-    return this.flows.getByPath(fullPath);
+  insertFlow(name: string, slug: string, options?: FlowInsertOptions): number {
+    return this.flows.insert(name, slug, options);
   }
 
   getFlowById(flowId: number): Flow | null {
@@ -522,47 +590,27 @@ export class IndexDatabase implements IIndexWriter {
     return this.flows.getBySlug(slug);
   }
 
-  getFlowChildren(flowId: number): Flow[] {
-    return this.flows.getChildren(flowId);
-  }
-
   getAllFlows(): Flow[] {
     return this.flows.getAll();
   }
 
-  getFlows(): Flow[] {
-    return this.flows.getAll();
+  getFlowsByStakeholder(stakeholder: FlowStakeholder): Flow[] {
+    return this.flows.getByStakeholder(stakeholder);
   }
 
-  getFlowTree(): FlowTreeNode[] {
-    return this.flows.getTree();
+  getFlowsByEntryPoint(entryPointId: number): Flow[] {
+    return this.flows.getByEntryPoint(entryPointId);
   }
 
-  getLeafFlows(): Flow[] {
-    return this.flows.getLeaves();
+  getFlowWithSteps(flowId: number): FlowWithSteps | null {
+    return this.flows.getWithSteps(flowId);
   }
 
-  getFlowsForModuleTransition(fromModuleId: number, toModuleId: number): Flow[] {
-    return this.flows.getForModuleTransition(fromModuleId, toModuleId);
-  }
-
-  expandFlow(flowId: number): Flow[] {
-    return this.flows.expand(flowId);
-  }
-
-  updateFlow(flowId: number, updates: { name?: string; description?: string; semantic?: string; domain?: string }): boolean {
+  updateFlow(flowId: number, updates: { name?: string; entryPointId?: number; entryPath?: string; stakeholder?: FlowStakeholder; description?: string }): boolean {
     return this.flows.update(flowId, updates);
   }
 
-  reparentFlow(flowId: number, newParentId: number | null, stepOrder?: number): void {
-    this.flows.reparent(flowId, newParentId, stepOrder);
-  }
-
-  reparentFlows(flowIds: number[], newParentId: number): void {
-    this.flows.reparentMany(flowIds, newParentId);
-  }
-
-  deleteFlow(flowId: number): number {
+  deleteFlow(flowId: number): boolean {
     return this.flows.delete(flowId);
   }
 
@@ -578,20 +626,46 @@ export class IndexDatabase implements IIndexWriter {
     return this.flows.getStats();
   }
 
-  getModuleCallGraph(): ModuleCallEdge[] {
-    return this.flows.getModuleCallGraph();
+  // Flow Steps Operations
+
+  addFlowStep(flowId: number, interactionId: number, stepOrder?: number): void {
+    this.flows.addStep(flowId, interactionId, stepOrder);
   }
 
-  getEnrichedModuleCallGraph(): EnrichedModuleCallEdge[] {
-    return this.flows.getEnrichedModuleCallGraph();
+  addFlowSteps(flowId: number, interactionIds: number[]): void {
+    this.flows.addSteps(flowId, interactionIds);
+  }
+
+  removeFlowStep(flowId: number, stepOrder: number): boolean {
+    return this.flows.removeStep(flowId, stepOrder);
+  }
+
+  clearFlowSteps(flowId: number): number {
+    return this.flows.clearSteps(flowId);
+  }
+
+  getFlowSteps(flowId: number): FlowStep[] {
+    return this.flows.getSteps(flowId);
+  }
+
+  reorderFlowSteps(flowId: number, interactionIds: number[]): void {
+    this.flows.reorderSteps(flowId, interactionIds);
+  }
+
+  expandFlow(flowId: number): ExpandedFlow | null {
+    return this.flows.expand(flowId);
   }
 
   getFlowCoverage(): FlowCoverageStats {
     return this.flows.getCoverage();
   }
 
-  getOrphanFlows(depth: number): Flow[] {
-    return this.flows.getOrphans(depth);
+  getFlowsWithInteraction(interactionId: number): Flow[] {
+    return this.flows.getFlowsWithInteraction(interactionId);
+  }
+
+  getUncoveredInteractions(): InteractionWithPaths[] {
+    return this.flows.getUncoveredInteractions();
   }
 
   // ============================================================
@@ -644,6 +718,8 @@ export class IndexDatabase implements IIndexWriter {
     const flowStats = this.flows.getStats();
     const relationships = this.relationships.getCount();
 
+    const interactionCount = this.interactions.getCount();
+
     return {
       files,
       definitions,
@@ -654,7 +730,7 @@ export class IndexDatabase implements IIndexWriter {
       assignedSymbols: moduleStats.assigned,
       unassignedSymbols: moduleStats.unassigned,
       flows: flowStats.flowCount,
-      leafFlows: flowStats.leafFlowCount,
+      interactions: interactionCount,
       relationships,
     };
   }

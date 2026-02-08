@@ -146,53 +146,31 @@ export interface CallGraphEdge {
 }
 
 // ============================================================
-// Flow Types (Hierarchical Tree Structure)
+// Interaction Types (Module-to-Module Edges)
 // ============================================================
 
 /**
- * Flow: A hierarchical tree structure mirroring modules.
+ * Interaction: Point-to-point module connection.
  *
- * Leaf flows: Single module-to-module transition with semantic description
- * Parent flows: Composition of child flows in ordered sequence
- * Root flows: User-story level flows (depth = 0)
+ * Represents a uni- or bi-directional relationship between two modules,
+ * with details about which symbols are called and the pattern of usage.
  */
-export interface Flow {
+export interface Interaction {
   id: number;
-  parentId: number | null;
-  stepOrder: number;  // Position within parent (1, 2, 3...)
-  name: string;
-  slug: string;
-  fullPath: string;  // e.g., "user-journey.authentication.validate-credentials"
-  description: string | null;
-
-  // For leaf flows only: the module transition
-  fromModuleId: number | null;
-  toModuleId: number | null;
-  semantic: string | null;  // What happens in this transition
-
-  // Metadata
-  depth: number;
-  domain: string | null;
+  fromModuleId: number;
+  toModuleId: number;
+  direction: 'uni' | 'bi';  // uni-directional or bi-directional
+  weight: number;  // Number of symbol-level calls
+  pattern: 'utility' | 'business' | null;  // Classification based on call patterns
+  symbols: string | null;  // JSON array of symbol names
+  semantic: string | null;  // What happens in this interaction
   createdAt: string;
 }
 
 /**
- * Flow tree node for hierarchical display
+ * Enriched interaction with module path information for display
  */
-export interface FlowTreeNode extends Flow {
-  children: FlowTreeNode[];  // Ordered by stepOrder
-  // Enriched for display
-  fromModuleName?: string;
-  toModuleName?: string;
-}
-
-/**
- * Module call graph edge for flow detection
- */
-export interface ModuleCallEdge {
-  fromModuleId: number;
-  toModuleId: number;
-  weight: number;  // Number of symbol-level calls
+export interface InteractionWithPaths extends Interaction {
   fromModulePath: string;
   toModulePath: string;
 }
@@ -207,7 +185,18 @@ export interface CalledSymbolInfo {
 }
 
 /**
- * Enriched module call edge with symbol-level details for better flow detection
+ * Module call graph edge for interaction detection
+ */
+export interface ModuleCallEdge {
+  fromModuleId: number;
+  toModuleId: number;
+  weight: number;  // Number of symbol-level calls
+  fromModulePath: string;
+  toModulePath: string;
+}
+
+/**
+ * Enriched module call edge with symbol-level details for better interaction detection
  */
 export interface EnrichedModuleCallEdge extends ModuleCallEdge {
   calledSymbols: CalledSymbolInfo[];
@@ -218,21 +207,92 @@ export interface EnrichedModuleCallEdge extends ModuleCallEdge {
   minUsageLine: number;  // Earliest line where this call occurs (for ordering)
 }
 
+// ============================================================
+// Flow Types (User Journeys)
+// ============================================================
+
 /**
- * Expanded flow showing flattened leaf flows in order
+ * Stakeholder types for flows
+ */
+export type FlowStakeholder = 'user' | 'admin' | 'system' | 'developer' | 'external';
+
+/**
+ * Flow: A user journey - sequence of interactions triggered by an entry point.
+ *
+ * Represents a complete path from trigger to outcome, documenting how
+ * a feature works end-to-end.
+ */
+export interface Flow {
+  id: number;
+  name: string;
+  slug: string;
+  entryPointId: number | null;  // FK to definitions (the entry point symbol)
+  entryPath: string | null;  // e.g., "POST /api/auth/login"
+  stakeholder: FlowStakeholder | null;  // user, admin, system, developer, external
+  description: string | null;
+  createdAt: string;
+}
+
+/**
+ * Flow step: An ordered interaction within a flow
+ */
+export interface FlowStep {
+  flowId: number;
+  stepOrder: number;  // 1, 2, 3...
+  interactionId: number;
+}
+
+/**
+ * Flow with its steps and interaction details for display
+ */
+export interface FlowWithSteps extends Flow {
+  steps: Array<FlowStep & {
+    interaction: InteractionWithPaths;
+  }>;
+}
+
+/**
+ * Expanded flow showing flattened interactions in order
  */
 export interface ExpandedFlow {
   flow: Flow;
-  leafFlows: Flow[];  // All leaf flows in order
+  interactions: InteractionWithPaths[];  // All interactions in order
 }
 
 /**
  * Flow coverage statistics
  */
 export interface FlowCoverageStats {
-  totalModuleEdges: number;
+  totalInteractions: number;
   coveredByFlows: number;
   percentage: number;
+}
+
+// ============================================================
+// Legacy Types (for backward compatibility during migration)
+// ============================================================
+
+/**
+ * @deprecated Use Interaction instead
+ * Module call graph edge - kept for backward compatibility
+ */
+export interface FlowTreeNode {
+  id: number;
+  name: string;
+  slug: string;
+  fullPath: string;
+  description: string | null;
+  fromModuleId: number | null;
+  toModuleId: number | null;
+  semantic: string | null;
+  depth: number;
+  domain: string | null;
+  parentId: number | null;
+  stepOrder: number;
+  createdAt: string;
+  children: FlowTreeNode[];
+  fromModuleName?: string;
+  toModuleName?: string;
 }
 
 
@@ -477,38 +537,49 @@ CREATE TABLE module_members (
 
 CREATE INDEX idx_module_members_module ON module_members(module_id);
 
--- Flows: hierarchical tree structure mirroring modules, with ordering
--- Leaf flows: module-to-module transitions
--- Parent flows: compositions of child flows
-CREATE TABLE flows (
+-- Interactions: module-to-module edges (flat, not hierarchical)
+CREATE TABLE interactions (
   id INTEGER PRIMARY KEY,
-  parent_id INTEGER REFERENCES flows(id) ON DELETE CASCADE,
-  step_order INTEGER NOT NULL DEFAULT 0,  -- Position within parent (1, 2, 3...)
-  name TEXT NOT NULL,
-  slug TEXT NOT NULL,
-  full_path TEXT NOT NULL UNIQUE,  -- e.g., "user-journey.authentication.validate-credentials"
-  description TEXT,
-
-  -- For leaf flows only: the module transition
-  from_module_id INTEGER REFERENCES modules(id),
-  to_module_id INTEGER REFERENCES modules(id),
-  semantic TEXT,  -- What happens in this transition
-
-  -- Metadata
-  depth INTEGER NOT NULL DEFAULT 0,
-  domain TEXT,
+  from_module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+  to_module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+  direction TEXT NOT NULL DEFAULT 'uni',  -- 'uni' | 'bi'
+  weight INTEGER NOT NULL DEFAULT 1,
+  pattern TEXT,  -- 'utility' | 'business'
+  symbols TEXT,  -- JSON array of symbol names
+  semantic TEXT,  -- What happens in this interaction
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-
-  UNIQUE(parent_id, slug)
-  -- Note: step_order ordering is enforced by application logic, not DB constraint
-  -- to allow flexible reparenting without constraint conflicts
+  UNIQUE(from_module_id, to_module_id)
 );
 
-CREATE INDEX idx_flows_parent ON flows(parent_id);
-CREATE INDEX idx_flows_path ON flows(full_path);
-CREATE INDEX idx_flows_depth ON flows(depth);
-CREATE INDEX idx_flows_from_module ON flows(from_module_id);
-CREATE INDEX idx_flows_to_module ON flows(to_module_id);
+CREATE INDEX idx_interactions_from_module ON interactions(from_module_id);
+CREATE INDEX idx_interactions_to_module ON interactions(to_module_id);
+CREATE INDEX idx_interactions_pattern ON interactions(pattern);
+
+-- Flows: user journeys with entry points
+CREATE TABLE flows (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  entry_point_id INTEGER REFERENCES definitions(id) ON DELETE SET NULL,
+  entry_path TEXT,  -- e.g., "POST /api/auth/login"
+  stakeholder TEXT,  -- 'user' | 'admin' | 'system' | 'developer' | 'external'
+  description TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_flows_slug ON flows(slug);
+CREATE INDEX idx_flows_entry_point ON flows(entry_point_id);
+CREATE INDEX idx_flows_stakeholder ON flows(stakeholder);
+
+-- Flow steps: ordered interactions within a flow
+CREATE TABLE flow_steps (
+  flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+  step_order INTEGER NOT NULL,
+  interaction_id INTEGER NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
+  PRIMARY KEY (flow_id, step_order)
+);
+
+CREATE INDEX idx_flow_steps_interaction ON flow_steps(interaction_id);
 `;
 
 // ============================================================
