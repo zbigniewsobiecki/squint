@@ -1,5 +1,37 @@
 import type Database from 'better-sqlite3';
-import type { RelationshipAnnotation, RelationshipWithDetails, EnhancedRelationshipContext } from '../schema.js';
+import type {
+  RelationshipType,
+  RelationshipAnnotation,
+  RelationshipWithDetails,
+  EnhancedRelationshipContext,
+} from '../schema.js';
+import { ensureRelationshipTypeColumn } from '../schema-manager.js';
+
+export interface UnannotatedInheritance {
+  id: number;
+  fromId: number;
+  fromName: string;
+  fromKind: string;
+  fromFilePath: string;
+  toId: number;
+  toName: string;
+  toKind: string;
+  toFilePath: string;
+  relationshipType: 'extends' | 'implements';
+}
+
+export interface UnannotatedRelationship {
+  fromDefinitionId: number;
+  fromName: string;
+  fromKind: string;
+  fromFilePath: string;
+  fromLine: number;
+  toDefinitionId: number;
+  toName: string;
+  toKind: string;
+  toFilePath: string;
+  toLine: number;
+}
 
 /**
  * Repository for relationship annotation operations.
@@ -11,21 +43,28 @@ export class RelationshipRepository {
   /**
    * Set (insert or update) a semantic annotation for a relationship between two definitions.
    */
-  setRelationshipAnnotation(fromDefinitionId: number, toDefinitionId: number, semantic: string): void {
+  set(
+    fromDefinitionId: number,
+    toDefinitionId: number,
+    semantic: string,
+    relationshipType: RelationshipType = 'uses'
+  ): void {
+    ensureRelationshipTypeColumn(this.db);
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO relationship_annotations (from_definition_id, to_definition_id, semantic, created_at)
-      VALUES (?, ?, ?, datetime('now'))
+      INSERT OR REPLACE INTO relationship_annotations (from_definition_id, to_definition_id, relationship_type, semantic, created_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
     `);
-    stmt.run(fromDefinitionId, toDefinitionId, semantic);
+    stmt.run(fromDefinitionId, toDefinitionId, relationshipType, semantic);
   }
 
   /**
    * Get a relationship annotation between two definitions.
    */
-  getRelationshipAnnotation(fromDefinitionId: number, toDefinitionId: number): RelationshipAnnotation | null {
+  get(fromDefinitionId: number, toDefinitionId: number): RelationshipAnnotation | null {
+    ensureRelationshipTypeColumn(this.db);
     const stmt = this.db.prepare(`
       SELECT id, from_definition_id as fromDefinitionId, to_definition_id as toDefinitionId,
-             semantic, created_at as createdAt
+             relationship_type as relationshipType, semantic, created_at as createdAt
       FROM relationship_annotations
       WHERE from_definition_id = ? AND to_definition_id = ?
     `);
@@ -36,7 +75,7 @@ export class RelationshipRepository {
   /**
    * Remove a relationship annotation.
    */
-  removeRelationshipAnnotation(fromDefinitionId: number, toDefinitionId: number): boolean {
+  remove(fromDefinitionId: number, toDefinitionId: number): boolean {
     const stmt = this.db.prepare(`
       DELETE FROM relationship_annotations
       WHERE from_definition_id = ? AND to_definition_id = ?
@@ -48,7 +87,8 @@ export class RelationshipRepository {
   /**
    * Get all relationship annotations from a specific definition.
    */
-  getRelationshipsFrom(fromDefinitionId: number): RelationshipWithDetails[] {
+  getFrom(fromDefinitionId: number): RelationshipWithDetails[] {
+    ensureRelationshipTypeColumn(this.db);
     const stmt = this.db.prepare(`
       SELECT
         ra.id,
@@ -62,6 +102,7 @@ export class RelationshipRepository {
         td.kind as toKind,
         tf.path as toFilePath,
         td.line as toLine,
+        ra.relationship_type as relationshipType,
         ra.semantic
       FROM relationship_annotations ra
       JOIN definitions fd ON ra.from_definition_id = fd.id
@@ -77,7 +118,8 @@ export class RelationshipRepository {
   /**
    * Get all relationship annotations to a specific definition.
    */
-  getRelationshipsTo(toDefinitionId: number): RelationshipWithDetails[] {
+  getTo(toDefinitionId: number): RelationshipWithDetails[] {
+    ensureRelationshipTypeColumn(this.db);
     const stmt = this.db.prepare(`
       SELECT
         ra.id,
@@ -91,6 +133,7 @@ export class RelationshipRepository {
         td.kind as toKind,
         tf.path as toFilePath,
         td.line as toLine,
+        ra.relationship_type as relationshipType,
         ra.semantic
       FROM relationship_annotations ra
       JOIN definitions fd ON ra.from_definition_id = fd.id
@@ -106,7 +149,8 @@ export class RelationshipRepository {
   /**
    * Get all relationship annotations.
    */
-  getAllRelationshipAnnotations(options?: { limit?: number }): RelationshipWithDetails[] {
+  getAll(options?: { limit?: number }): RelationshipWithDetails[] {
+    ensureRelationshipTypeColumn(this.db);
     const limit = options?.limit ?? 100;
     const stmt = this.db.prepare(`
       SELECT
@@ -121,6 +165,7 @@ export class RelationshipRepository {
         td.kind as toKind,
         tf.path as toFilePath,
         td.line as toLine,
+        ra.relationship_type as relationshipType,
         ra.semantic
       FROM relationship_annotations ra
       JOIN definitions fd ON ra.from_definition_id = fd.id
@@ -136,28 +181,61 @@ export class RelationshipRepository {
   /**
    * Get count of relationship annotations.
    */
-  getRelationshipAnnotationCount(): number {
+  getCount(): number {
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM relationship_annotations');
     const row = stmt.get() as { count: number };
     return row.count;
   }
 
   /**
-   * Get definitions that have calls to other definitions but no annotation.
-   * Finds "call" edges without semantic annotations.
+   * Get unannotated inheritance relationships (extends/implements with placeholder semantic).
    */
-  getUnannotatedRelationships(options?: { limit?: number; fromDefinitionId?: number }): Array<{
-    fromDefinitionId: number;
-    fromName: string;
-    fromKind: string;
-    fromFilePath: string;
-    fromLine: number;
-    toDefinitionId: number;
-    toName: string;
-    toKind: string;
-    toFilePath: string;
-    toLine: number;
-  }> {
+  getUnannotatedInheritance(limit: number = 50): UnannotatedInheritance[] {
+    ensureRelationshipTypeColumn(this.db);
+    const stmt = this.db.prepare(`
+      SELECT
+        ra.id,
+        ra.from_definition_id as fromId,
+        fd.name as fromName,
+        fd.kind as fromKind,
+        ff.path as fromFilePath,
+        ra.to_definition_id as toId,
+        td.name as toName,
+        td.kind as toKind,
+        tf.path as toFilePath,
+        ra.relationship_type as relationshipType
+      FROM relationship_annotations ra
+      JOIN definitions fd ON ra.from_definition_id = fd.id
+      JOIN files ff ON fd.file_id = ff.id
+      JOIN definitions td ON ra.to_definition_id = td.id
+      JOIN files tf ON td.file_id = tf.id
+      WHERE ra.semantic = 'PENDING_LLM_ANNOTATION'
+        AND ra.relationship_type IN ('extends', 'implements')
+      ORDER BY ff.path, fd.line
+      LIMIT ?
+    `);
+    return stmt.all(limit) as UnannotatedInheritance[];
+  }
+
+  /**
+   * Get count of unannotated inheritance relationships.
+   */
+  getUnannotatedInheritanceCount(): number {
+    ensureRelationshipTypeColumn(this.db);
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM relationship_annotations
+      WHERE semantic = 'PENDING_LLM_ANNOTATION'
+        AND relationship_type IN ('extends', 'implements')
+    `);
+    const row = stmt.get() as { count: number };
+    return row.count;
+  }
+
+  /**
+   * Get definitions that have calls to other definitions but no annotation.
+   */
+  getUnannotated(options?: { limit?: number; fromDefinitionId?: number }): UnannotatedRelationship[] {
     const limit = options?.limit ?? 20;
 
     let whereClause = '';
@@ -201,24 +279,13 @@ export class RelationshipRepository {
     params.push(limit);
 
     const stmt = this.db.prepare(sql);
-    return stmt.all(...params) as Array<{
-      fromDefinitionId: number;
-      fromName: string;
-      fromKind: string;
-      fromFilePath: string;
-      fromLine: number;
-      toDefinitionId: number;
-      toName: string;
-      toKind: string;
-      toFilePath: string;
-      toLine: number;
-    }>;
+    return stmt.all(...params) as UnannotatedRelationship[];
   }
 
   /**
    * Get count of unannotated relationships.
    */
-  getUnannotatedRelationshipCount(fromDefinitionId?: number): number {
+  getUnannotatedCount(fromDefinitionId?: number): number {
     let whereClause = '';
     const params: number[] = [];
 
@@ -251,14 +318,11 @@ export class RelationshipRepository {
 
   /**
    * Get the next relationship(s) that need annotation with rich context.
-   * Returns relationships ordered by: symbols with most dependencies first,
-   * then by file path and line number.
    */
-  getNextRelationshipToAnnotate(
+  getNextToAnnotate(
     options: { limit?: number; fromDefinitionId?: number } | undefined,
     getDefinitionMetadata: (id: number) => Record<string, string>,
-    getRelationshipsFrom: (id: number) => RelationshipWithDetails[],
-    getRelationshipsTo: (id: number) => RelationshipWithDetails[]
+    getDefinitionDependencies: (id: number) => Array<{ dependencyId: number; name: string }>
   ): EnhancedRelationshipContext[] {
     const limit = options?.limit ?? 1;
 
@@ -323,28 +387,25 @@ export class RelationshipRepository {
       usageLine: number;
     }>;
 
-    // Enhance with metadata and other relationships
-    return rows.map(row => {
-      const fromMetadata = getDefinitionMetadata(row.fromDefinitionId);
-      const toMetadata = getDefinitionMetadata(row.toDefinitionId);
+    // Enhance each relationship with metadata and context
+    const results: EnhancedRelationshipContext[] = [];
 
-      // Get other relationships for context
-      const fromRelationships = getRelationshipsFrom(row.fromDefinitionId);
-      const toRelationships = getRelationshipsTo(row.toDefinitionId);
+    for (const row of rows) {
+      // Get metadata for both symbols
+      const fromMeta = getDefinitionMetadata(row.fromDefinitionId);
+      const toMeta = getDefinitionMetadata(row.toDefinitionId);
 
-      // Parse domains for shared domain calculation
+      // Parse domains
       let fromDomains: string[] | null = null;
       let toDomains: string[] | null = null;
-
       try {
-        if (fromMetadata['domain']) {
-          fromDomains = JSON.parse(fromMetadata['domain']) as string[];
+        if (fromMeta['domain']) {
+          fromDomains = JSON.parse(fromMeta['domain']) as string[];
         }
       } catch { /* ignore */ }
-
       try {
-        if (toMetadata['domain']) {
-          toDomains = JSON.parse(toMetadata['domain']) as string[];
+        if (toMeta['domain']) {
+          toDomains = JSON.parse(toMeta['domain']) as string[];
         }
       } catch { /* ignore */ }
 
@@ -358,25 +419,57 @@ export class RelationshipRepository {
         }
       }
 
-      // Determine relationship type
-      let relationshipType: 'call' | 'import' | 'extends' | 'implements' = 'call';
-      // For now, we'll assume 'call' as the default since we're finding usage-based relationships
+      // Get other relationships from source (what else does source call?)
+      const otherFromRels = getDefinitionDependencies(row.fromDefinitionId)
+        .filter(d => d.dependencyId !== row.toDefinitionId)
+        .map(d => d.name);
 
-      return {
-        ...row,
-        fromPurpose: fromMetadata['purpose'] || null,
+      // Get other relationships to target (what else calls target?)
+      const otherToRelsStmt = this.db.prepare(`
+        SELECT DISTINCT source.name
+        FROM definitions source
+        JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+        JOIN symbols s ON u.symbol_id = s.id
+        WHERE s.definition_id = ?
+          AND source.id != ?
+          AND (
+            s.reference_id IN (SELECT id FROM imports WHERE from_file_id = source.file_id)
+            OR s.file_id = source.file_id
+          )
+        ORDER BY source.name
+        LIMIT 10
+      `);
+      const otherToRels = otherToRelsStmt.all(row.toDefinitionId, row.fromDefinitionId) as Array<{ name: string }>;
+
+      results.push({
+        fromDefinitionId: row.fromDefinitionId,
+        fromName: row.fromName,
+        fromKind: row.fromKind,
+        fromFilePath: row.fromFilePath,
+        fromLine: row.fromLine,
+        fromEndLine: row.fromEndLine,
+        toDefinitionId: row.toDefinitionId,
+        toName: row.toName,
+        toKind: row.toKind,
+        toFilePath: row.toFilePath,
+        toLine: row.toLine,
+        toEndLine: row.toEndLine,
+        fromPurpose: fromMeta['purpose'] ?? null,
         fromDomains,
-        fromRole: fromMetadata['role'] || null,
-        fromPure: fromMetadata['pure'] ? fromMetadata['pure'] === 'true' : null,
-        toPurpose: toMetadata['purpose'] || null,
+        fromRole: fromMeta['role'] ?? null,
+        fromPure: fromMeta['pure'] ? fromMeta['pure'] === 'true' : null,
+        toPurpose: toMeta['purpose'] ?? null,
         toDomains,
-        toRole: toMetadata['role'] || null,
-        toPure: toMetadata['pure'] ? toMetadata['pure'] === 'true' : null,
-        relationshipType,
-        otherFromRelationships: fromRelationships.map(r => `${r.toName}: ${r.semantic}`),
-        otherToRelationships: toRelationships.map(r => `${r.fromName}: ${r.semantic}`),
+        toRole: toMeta['role'] ?? null,
+        toPure: toMeta['pure'] ? toMeta['pure'] === 'true' : null,
+        relationshipType: 'call', // Default to call for now
+        usageLine: row.usageLine,
+        otherFromRelationships: otherFromRels.slice(0, 10),
+        otherToRelationships: otherToRels.map(r => r.name),
         sharedDomains,
-      };
-    });
+      });
+    }
+
+    return results;
   }
 }

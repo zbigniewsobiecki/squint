@@ -83,6 +83,8 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
       } else if (path === '/api/flows/coverage') {
         const coverage = db.getFlowCoverage();
         jsonResponse(res, coverage);
+      } else if (path === '/api/flows/dag') {
+        jsonResponse(res, getFlowsDagData(db));
       } else if (path.match(/^\/api\/flows\/(\d+)$/)) {
         const id = parseInt(path.split('/')[3]);
         const flow = db.getFlowById(id);
@@ -465,6 +467,112 @@ function getFlowsData(database: IndexDatabase): {
         percentage: 0,
       },
     };
+  }
+}
+
+/**
+ * Build the flows DAG data for the new visualization.
+ * Returns modules as nodes, edges from call graph, and root flows with their leaf flows.
+ */
+function getFlowsDagData(database: IndexDatabase): {
+  modules: Array<{
+    id: number;
+    parentId: number | null;
+    name: string;
+    fullPath: string;
+    depth: number;
+    memberCount: number;
+  }>;
+  edges: Array<{
+    fromModuleId: number;
+    toModuleId: number;
+    weight: number;
+  }>;
+  rootFlows: Array<{
+    id: number;
+    name: string;
+    domain: string | null;
+    stepCount: number;
+    leafFlows: Array<{
+      id: number;
+      name: string;
+      fromModuleId: number | null;
+      toModuleId: number | null;
+      semantic: string | null;
+    }>;
+  }>;
+} {
+  try {
+    // Get all modules
+    const modulesWithMembers = database.getAllModulesWithMembers();
+    const modules = modulesWithMembers.map(m => ({
+      id: m.id,
+      parentId: m.parentId,
+      name: m.name,
+      fullPath: m.fullPath,
+      depth: m.depth,
+      memberCount: m.members.length,
+    }));
+
+    // Get module call graph edges
+    const callGraph = database.getModuleCallGraph();
+    const edges = callGraph.map(e => ({
+      fromModuleId: e.fromModuleId,
+      toModuleId: e.toModuleId,
+      weight: e.weight,
+    }));
+
+    // Get all flows and build root flows with their leaf flows
+    const allFlows = database.getAllFlows();
+
+    // Build parent-to-children map
+    const childrenMap = new Map<number, typeof allFlows>();
+    for (const flow of allFlows) {
+      if (flow.parentId !== null) {
+        const siblings = childrenMap.get(flow.parentId) ?? [];
+        siblings.push(flow);
+        childrenMap.set(flow.parentId, siblings);
+      }
+    }
+
+    // Sort children by stepOrder
+    for (const children of childrenMap.values()) {
+      children.sort((a, b) => a.stepOrder - b.stepOrder);
+    }
+
+    // Get leaf flows for a given flow (recursive expansion)
+    function getLeafFlows(flowId: number): typeof allFlows {
+      const children = childrenMap.get(flowId) ?? [];
+      if (children.length === 0) {
+        const flow = allFlows.find(f => f.id === flowId);
+        return flow && flow.fromModuleId !== null ? [flow] : [];
+      }
+      return children.flatMap(child => getLeafFlows(child.id));
+    }
+
+    // Get root flows (depth 0) and expand them
+    const rootFlows = allFlows
+      .filter(f => f.depth === 0)
+      .map(flow => {
+        const leafFlows = getLeafFlows(flow.id);
+        return {
+          id: flow.id,
+          name: flow.name,
+          domain: flow.domain,
+          stepCount: leafFlows.length,
+          leafFlows: leafFlows.map(leaf => ({
+            id: leaf.id,
+            name: leaf.name,
+            fromModuleId: leaf.fromModuleId,
+            toModuleId: leaf.toModuleId,
+            semantic: leaf.semantic,
+          })),
+        };
+      });
+
+    return { modules, edges, rootFlows };
+  } catch {
+    return { modules: [], edges: [], rootFlows: [] };
   }
 }
 
@@ -1334,6 +1442,307 @@ function getEmbeddedHTML(): string {
       margin-left: auto;
       font-size: 10px;
     }
+
+    /* Flows DAG View - Main Container */
+    .flows-dag-container {
+      display: flex;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    /* Flows DAG Sidebar */
+    .flows-sidebar {
+      width: 280px;
+      min-width: 280px;
+      background: #252526;
+      border-right: 1px solid #3c3c3c;
+      display: flex;
+      flex-direction: column;
+      transition: margin-left 0.3s ease;
+      overflow: hidden;
+    }
+
+    .flows-sidebar.collapsed {
+      margin-left: -280px;
+    }
+
+    .flows-sidebar-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #3c3c3c;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .flows-sidebar-header h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e0e0e0;
+      margin: 0;
+      flex: 1;
+    }
+
+    .sidebar-toggle-btn {
+      background: #3c3c3c;
+      border: none;
+      color: #858585;
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .sidebar-toggle-btn:hover {
+      background: #4a4a4a;
+      color: #d4d4d4;
+    }
+
+    .flows-sidebar-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    /* Domain Groups */
+    .flow-domain-group {
+      margin-bottom: 8px;
+    }
+
+    .flow-domain-header {
+      padding: 8px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #858585;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: #1e1e1e;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .flow-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .flow-item:hover {
+      background: #2d2d2d;
+    }
+
+    .flow-item.selected {
+      background: #2a3540;
+    }
+
+    .flow-checkbox {
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+      accent-color: #4fc1ff;
+    }
+
+    .flow-color-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .flow-name {
+      font-size: 12px;
+      color: #d4d4d4;
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .flow-step-count {
+      font-size: 10px;
+      color: #666;
+      padding: 2px 6px;
+      background: #3c3c3c;
+      border-radius: 10px;
+    }
+
+    /* Main DAG Area */
+    .flows-dag-main {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #1e1e1e;
+    }
+
+    .flows-dag-main svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Collapsed sidebar toggle button */
+    .sidebar-expand-btn {
+      position: absolute;
+      left: 8px;
+      top: 8px;
+      background: #3c3c3c;
+      border: none;
+      color: #858585;
+      width: 28px;
+      height: 28px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+
+    .sidebar-expand-btn:hover {
+      background: #4a4a4a;
+      color: #d4d4d4;
+    }
+
+    .flows-sidebar.collapsed + .flows-dag-main .sidebar-expand-btn {
+      display: flex;
+    }
+
+    /* Nested Module Boxes */
+    .module-box {
+      cursor: pointer;
+    }
+
+    .module-box > rect {
+      rx: 8;
+      ry: 8;
+      transition: stroke 0.2s, stroke-width 0.2s;
+    }
+
+    .module-box:hover > rect {
+      stroke-width: 3;
+    }
+
+    .module-box.highlighted > rect {
+      stroke-width: 3;
+      filter: brightness(1.2);
+    }
+
+    /* Depth-based colors for nested boxes */
+    .module-box.depth-0 > rect { fill: #1a2332; stroke: #3d5a80; }
+    .module-box.depth-1 > rect { fill: #1e2a38; stroke: #4a6fa5; }
+    .module-box.depth-2 > rect { fill: #232f3e; stroke: #5885af; }
+    .module-box.depth-3 > rect { fill: #283544; stroke: #6699cc; }
+    .module-box.depth-4 > rect { fill: #2d3b4a; stroke: #77aadd; }
+
+    .module-box-header {
+      font-size: 12px;
+      fill: #d4d4d4;
+      font-weight: 600;
+      pointer-events: none;
+    }
+
+    .module-box-header.depth-0 { font-size: 16px; fill: #e0e0e0; }
+    .module-box-header.depth-1 { font-size: 14px; fill: #d4d4d4; }
+    .module-box-header.depth-2 { font-size: 12px; fill: #c0c0c0; }
+    .module-box-header.depth-3 { font-size: 11px; fill: #b0b0b0; }
+
+    .module-box-count {
+      font-size: 9px;
+      fill: #858585;
+      pointer-events: none;
+    }
+
+    /* Leaf module (no children) - smaller, more compact */
+    .module-box.leaf > rect {
+      fill: #2d3b4a;
+      stroke: #5885af;
+    }
+
+    .module-box.leaf .module-box-header {
+      font-size: 10px;
+      fill: #b0b0b0;
+    }
+
+    /* Flow Arrows */
+    .flow-arrow {
+      fill: none;
+      stroke-width: 3;
+      stroke-opacity: 0.8;
+      pointer-events: stroke;
+      cursor: pointer;
+      transition: stroke-opacity 0.2s, stroke-width 0.2s;
+    }
+
+    .flow-arrow:hover {
+      stroke-opacity: 1;
+      stroke-width: 4;
+    }
+
+    .flow-arrow-label {
+      font-size: 10px;
+      fill: #d4d4d4;
+      pointer-events: none;
+      text-shadow: 0 0 3px #1e1e1e, 0 0 3px #1e1e1e;
+    }
+
+    /* Flow arrow tooltip */
+    .flow-arrow-tooltip {
+      position: absolute;
+      background: #3c3c3c;
+      border: 1px solid #4a4a4a;
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-size: 12px;
+      pointer-events: none;
+      z-index: 1000;
+      max-width: 300px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+
+    .flow-arrow-tooltip .arrow-title {
+      font-weight: 600;
+      color: #e0e0e0;
+      margin-bottom: 4px;
+    }
+
+    .flow-arrow-tooltip .arrow-semantic {
+      color: #ce9178;
+      font-style: italic;
+      font-size: 11px;
+    }
+
+    .flow-arrow-tooltip .arrow-modules {
+      color: #858585;
+      font-size: 10px;
+      margin-top: 4px;
+    }
+
+    /* Keyboard hint */
+    .keyboard-hint {
+      position: absolute;
+      bottom: 12px;
+      right: 12px;
+      font-size: 10px;
+      color: #666;
+      background: rgba(37, 37, 38, 0.9);
+      padding: 6px 10px;
+      border-radius: 4px;
+      border: 1px solid #3c3c3c;
+    }
+
+    .keyboard-hint kbd {
+      background: #3c3c3c;
+      padding: 2px 5px;
+      border-radius: 3px;
+      margin: 0 2px;
+    }
   </style>
 </head>
 <body>
@@ -1418,6 +1827,12 @@ function getEmbeddedHTML(): string {
     let graphData = null;
     let modulesData = null;
     let flowsData = null;
+    let flowsDagData = null;  // DAG view data
+    let selectedFlows = new Set();  // Currently selected flow IDs
+    let modulePositions = new Map();  // Module ID -> {x, y} for arrow rendering
+
+    // Flow colors palette
+    const flowColors = ['#4fc1ff', '#ce9178', '#6a9955', '#c586c0', '#dcdcaa', '#9cdcfe', '#d7ba7d', '#b5cea8'];
 
     // Selected hierarchy grouping type ('structure' for file-based, or a relationship type)
     let selectedGrouping = 'structure';
@@ -2297,7 +2712,7 @@ function getEmbeddedHTML(): string {
       });
     }
 
-    // Render Flows View
+    // Render Flows View - New DAG-based visualization
     async function renderFlowsView() {
       const container = document.getElementById('graph-container');
 
@@ -2307,127 +2722,548 @@ function getEmbeddedHTML(): string {
         simulation = null;
       }
 
-      // Fetch flows data if not cached
-      if (!flowsData) {
+      // Fetch flows DAG data
+      if (!flowsDagData) {
         try {
-          flowsData = await fetchJSON('/api/flows');
+          flowsDagData = await fetchJSON('/api/flows/dag');
         } catch (error) {
-          console.error('Failed to load flows:', error);
+          console.error('Failed to load flows DAG:', error);
           container.innerHTML = '<div class="empty-state"><h2>Failed to load flows</h2></div>';
           return;
         }
       }
 
       // Update stats header
-      document.getElementById('stat-symbols').textContent = flowsData.stats.totalSteps + ' steps';
-      document.getElementById('stat-annotated').textContent = flowsData.stats.flowCount + ' flows';
-      document.getElementById('stat-relationships').textContent = flowsData.stats.modulesCovered + ' modules';
+      const totalSteps = flowsDagData.rootFlows.reduce((sum, f) => sum + f.stepCount, 0);
+      document.getElementById('stat-symbols').textContent = totalSteps + ' steps';
+      document.getElementById('stat-annotated').textContent = flowsDagData.rootFlows.length + ' flows';
+      document.getElementById('stat-relationships').textContent = flowsDagData.modules.length + ' modules';
 
-      if (flowsData.flows.length === 0) {
+      if (flowsDagData.modules.length === 0) {
         container.innerHTML = \`
           <div class="empty-state">
-            <h2>No flows found</h2>
-            <p>Run 'ats llm flows' to detect execution flows</p>
+            <h2>No modules found</h2>
+            <p>Run 'ats llm modules' to detect modules first</p>
           </div>
         \`;
         return;
       }
 
-      renderFlowsCardsView();
+      renderFlowsDagView();
     }
 
-    // Render the cards view for flows
-    function renderFlowsCardsView() {
+    // Render the new DAG view with sidebar
+    function renderFlowsDagView() {
       const container = document.getElementById('graph-container');
-      // Show only root flows (depth 0) - they contain the full hierarchy expanded
-      const rootFlows = flowsData.flows.filter(f => f.depth === 0);
-      const sortedFlows = [...rootFlows].sort((a, b) => b.stepCount - a.stepCount);
+
+      // Group flows by domain
+      const flowsByDomain = new Map();
+      for (const flow of flowsDagData.rootFlows) {
+        const domain = flow.domain || 'Uncategorized';
+        if (!flowsByDomain.has(domain)) {
+          flowsByDomain.set(domain, []);
+        }
+        flowsByDomain.get(domain).push(flow);
+      }
+
+      // Sort domains alphabetically
+      const sortedDomains = [...flowsByDomain.keys()].sort();
+
+      // Build sidebar HTML
+      let sidebarHtml = '';
+      let flowIndex = 0;
+      for (const domain of sortedDomains) {
+        const flows = flowsByDomain.get(domain);
+        sidebarHtml += \`
+          <div class="flow-domain-group">
+            <div class="flow-domain-header">\${domain}</div>
+            \${flows.map(flow => {
+              const color = flowColors[flowIndex % flowColors.length];
+              flowIndex++;
+              return \`
+                <div class="flow-item" data-flow-id="\${flow.id}">
+                  <input type="checkbox" class="flow-checkbox" data-flow-id="\${flow.id}">
+                  <span class="flow-color-dot" style="background: \${color};"></span>
+                  <span class="flow-name" title="\${flow.name}">\${flow.name}</span>
+                  <span class="flow-step-count">\${flow.stepCount}</span>
+                </div>
+              \`;
+            }).join('')}
+          </div>
+        \`;
+      }
 
       container.innerHTML = \`
-        <div class="list-view">
-          <h2>
-            Execution Flows
-            <span class="view-stats">\${sortedFlows.length} user journeys, \${flowsData.stats.totalSteps} steps across \${flowsData.stats.flowCount} flows</span>
-          </h2>
-          <div class="card-grid" id="flows-grid"></div>
+        <div class="flows-dag-container">
+          <div class="flows-sidebar" id="flows-sidebar">
+            <div class="flows-sidebar-header">
+              <h3>Flows</h3>
+              <button class="sidebar-toggle-btn" id="sidebar-collapse-btn" title="Collapse sidebar (Ctrl+S)">◀</button>
+            </div>
+            <div class="flows-sidebar-content">
+              \${sidebarHtml || '<div style="padding: 16px; color: #858585;">No flows found</div>'}
+            </div>
+          </div>
+          <div class="flows-dag-main" id="flows-dag-main">
+            <button class="sidebar-expand-btn" id="sidebar-expand-btn" title="Expand sidebar (Ctrl+S)">▶</button>
+            <svg id="flows-dag-svg"></svg>
+            <div class="keyboard-hint">
+              <kbd>Ctrl</kbd>+<kbd>S</kbd> Toggle sidebar
+              <kbd>Esc</kbd> Deselect all
+            </div>
+          </div>
         </div>
       \`;
 
-      const grid = document.getElementById('flows-grid');
+      // Initialize the module DAG
+      initializeModuleDAG();
 
-      for (const flow of sortedFlows) {
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.dataset.flowId = flow.id;
+      // Setup sidebar interactions
+      setupSidebarInteractions();
 
-        // Build steps HTML - show module transitions
-        const stepsHtml = flow.steps.length > 0
-          ? flow.steps.map((step, idx) => \`
-              <div class="member-item">
-                <span class="step-number">\${idx + 1}</span>
-                <span class="member-name">\${step.name}</span>
-              </div>
-              <div class="step-transition" style="font-size: 11px; color: #888; margin-left: 24px; margin-bottom: 8px;">
-                \${step.fromModule ? step.fromModule.split('.').pop() : '?'} → \${step.toModule ? step.toModule.split('.').pop() : '?'}
-                \${step.semantic ? \`<div style="color: #aaa; font-style: italic; margin-top: 2px;">\${step.semantic}</div>\` : ''}
-              </div>
-            \`).join('')
-          : '<div class="member-item"><span class="member-name" style="color: #888;">No steps</span></div>';
+      // Setup keyboard shortcuts
+      setupFlowsKeyboardShortcuts();
+    }
 
-        // Get unique modules from steps
-        const modules = new Set();
-        flow.steps.forEach(s => {
-          if (s.fromModule) modules.add(s.fromModule.split('.').pop());
-          if (s.toModule) modules.add(s.toModule.split('.').pop());
-        });
-        const modulesHtml = modules.size > 0
-          ? \`<div class="modules-crossed">\${[...modules].map(m => \`<span class="module-tag">\${m}</span>\`).join('')}</div>\`
-          : '';
+    // Initialize the module visualization with nested boxes
+    function initializeModuleDAG() {
+      const mainContainer = document.getElementById('flows-dag-main');
+      const svg = d3.select('#flows-dag-svg');
+      const width = mainContainer.clientWidth;
+      const height = mainContainer.clientHeight;
 
-        // Determine flow type badge
-        const typeBadge = flow.isLeaf
-          ? '<span class="card-badge" style="background: #2d4a3e;">leaf</span>'
-          : flow.depth === 0
-            ? '<span class="card-badge" style="background: #4a2d4a;">root</span>'
-            : '<span class="card-badge" style="background: #2d3a4a;">parent</span>';
+      svg.selectAll('*').remove();
 
-        card.innerHTML = \`
-          <div class="card-header">
-            <span class="card-title">\${flow.name}</span>
-            \${typeBadge}
-            \${flow.domain ? \`<span class="card-badge layer-service">\${flow.domain}</span>\` : ''}
-          </div>
-          \${flow.description ? \`<div class="card-description">\${flow.description}</div>\` : ''}
-          \${flow.semantic ? \`<div class="card-description" style="font-style: italic;">\${flow.semantic}</div>\` : ''}
-          <div class="card-meta">
-            <div class="card-meta-item">
-              Depth: <span class="card-meta-value">\${flow.depth}</span>
-            </div>
-            <div class="card-meta-item">
-              Steps: <span class="card-meta-value">\${flow.stepCount}</span>
-            </div>
-          </div>
-          \${modulesHtml}
-          \${flow.steps.length > 0 ? \`
-            <div class="card-members">
-              <h4>Steps (\${flow.stepCount})</h4>
-              <div class="member-list">\${stepsHtml}</div>
-            </div>
-          \` : ''}
-        \`;
+      const modules = flowsDagData.modules;
+      if (modules.length === 0) return;
 
-        card.addEventListener('click', () => {
-          // Toggle expanded state
-          const wasExpanded = card.classList.contains('expanded');
-          // Collapse all others
-          document.querySelectorAll('.card.expanded').forEach(c => c.classList.remove('expanded'));
-          if (!wasExpanded) {
-            card.classList.add('expanded');
+      // Build tree structure from flat module list
+      const moduleById = new Map(modules.map(m => [m.id, { ...m, children: [] }]));
+      let rootModule = null;
+
+      for (const m of modules) {
+        const node = moduleById.get(m.id);
+        if (m.parentId === null) {
+          rootModule = node;
+        } else {
+          const parent = moduleById.get(m.parentId);
+          if (parent) {
+            parent.children.push(node);
           }
+        }
+      }
+
+      if (!rootModule) {
+        // Fallback: use first module as root
+        rootModule = moduleById.get(modules[0].id);
+      }
+
+      // Layout constants
+      const HEADER_HEIGHT = 28;
+      const PADDING = 12;
+      const MIN_LEAF_WIDTH = 100;
+      const MIN_LEAF_HEIGHT = 50;
+      const GAP = 8;
+
+      // Calculate sizes recursively (bottom-up)
+      function calculateSize(node) {
+        if (node.children.length === 0) {
+          // Leaf node - size based on name length and member count
+          const textWidth = Math.max(MIN_LEAF_WIDTH, node.name.length * 7 + 20);
+          node._width = textWidth;
+          node._height = MIN_LEAF_HEIGHT;
+          node._isLeaf = true;
+          return;
+        }
+
+        // Calculate children sizes first
+        node.children.forEach(child => calculateSize(child));
+
+        // Layout children in rows (horizontal flow with wrapping)
+        const maxRowWidth = Math.min(800, width - 100);
+        let rows = [];
+        let currentRow = [];
+        let currentRowWidth = 0;
+
+        // Sort children: non-leaves first (larger), then leaves
+        const sortedChildren = [...node.children].sort((a, b) => {
+          if (a._isLeaf && !b._isLeaf) return 1;
+          if (!a._isLeaf && b._isLeaf) return -1;
+          return b._width - a._width;
         });
 
-        grid.appendChild(card);
+        for (const child of sortedChildren) {
+          if (currentRow.length > 0 && currentRowWidth + child._width + GAP > maxRowWidth) {
+            rows.push({ children: currentRow, width: currentRowWidth });
+            currentRow = [];
+            currentRowWidth = 0;
+          }
+          currentRow.push(child);
+          currentRowWidth += child._width + (currentRow.length > 1 ? GAP : 0);
+        }
+        if (currentRow.length > 0) {
+          rows.push({ children: currentRow, width: currentRowWidth });
+        }
+
+        node._rows = rows;
+
+        // Calculate total size
+        const contentWidth = Math.max(...rows.map(r => r.width));
+        const contentHeight = rows.reduce((sum, row) => {
+          const rowHeight = Math.max(...row.children.map(c => c._height));
+          return sum + rowHeight + GAP;
+        }, -GAP);
+
+        node._width = contentWidth + PADDING * 2;
+        node._height = contentHeight + HEADER_HEIGHT + PADDING * 2;
+        node._isLeaf = false;
       }
+
+      calculateSize(rootModule);
+
+      // Position nodes recursively (top-down)
+      function positionNode(node, x, y) {
+        node._x = x;
+        node._y = y;
+
+        if (node._isLeaf) {
+          // Store center position for flow arrows
+          modulePositions.set(node.id, {
+            x: x,
+            y: y,
+            width: node._width,
+            height: node._height,
+            cx: x + node._width / 2,
+            cy: y + node._height / 2,
+            node: node
+          });
+          return;
+        }
+
+        // Position children in rows
+        let currentY = y + HEADER_HEIGHT + PADDING;
+
+        for (const row of node._rows) {
+          const rowHeight = Math.max(...row.children.map(c => c._height));
+          // Center the row horizontally within the parent
+          let currentX = x + PADDING + (node._width - PADDING * 2 - row.width) / 2;
+
+          for (const child of row.children) {
+            // Center child vertically in row
+            const childY = currentY + (rowHeight - child._height) / 2;
+            positionNode(child, currentX, childY);
+            currentX += child._width + GAP;
+          }
+          currentY += rowHeight + GAP;
+        }
+
+        // Store position for non-leaf modules too
+        modulePositions.set(node.id, {
+          x: x,
+          y: y,
+          width: node._width,
+          height: node._height,
+          cx: x + node._width / 2,
+          cy: y + HEADER_HEIGHT / 2,
+          node: node
+        });
+      }
+
+      modulePositions.clear();
+      positionNode(rootModule, 20, 20);
+
+      // Define arrow markers
+      const defs = svg.append('defs');
+
+      flowColors.forEach((color, idx) => {
+        defs.append('marker')
+          .attr('id', \`flow-arrow-\${idx}\`)
+          .attr('viewBox', '-0 -5 10 10')
+          .attr('refX', 8)
+          .attr('refY', 0)
+          .attr('orient', 'auto')
+          .attr('markerWidth', 8)
+          .attr('markerHeight', 8)
+          .append('path')
+          .attr('d', 'M 0,-4 L 8,0 L 0,4')
+          .attr('fill', color);
+      });
+
+      // Create main group with zoom
+      const g = svg.append('g').attr('id', 'dag-main-group');
+
+      // Set up zoom behavior
+      const zoom = d3.zoom()
+        .scaleExtent([0.1, 3])
+        .on('zoom', (event) => {
+          g.attr('transform', event.transform);
+        });
+
+      svg.call(zoom);
+
+      // Draw nested boxes recursively
+      const tooltip = d3.select('#tooltip');
+
+      function drawModule(parent, node) {
+        const isLeaf = node._isLeaf;
+        const group = parent.append('g')
+          .attr('class', \`module-box depth-\${node.depth}\${isLeaf ? ' leaf' : ''}\`)
+          .attr('data-module-id', node.id);
+
+        // Draw rectangle
+        group.append('rect')
+          .attr('x', node._x)
+          .attr('y', node._y)
+          .attr('width', node._width)
+          .attr('height', node._height)
+          .attr('stroke-width', 2);
+
+        // Draw header text
+        group.append('text')
+          .attr('class', \`module-box-header depth-\${node.depth}\`)
+          .attr('x', node._x + PADDING)
+          .attr('y', node._y + (isLeaf ? node._height / 2 + 4 : HEADER_HEIGHT / 2 + 5))
+          .text(node.name);
+
+        // Draw member count for leaf nodes
+        if (isLeaf && node.memberCount > 0) {
+          group.append('text')
+            .attr('class', 'module-box-count')
+            .attr('x', node._x + node._width - PADDING)
+            .attr('y', node._y + node._height / 2 + 4)
+            .attr('text-anchor', 'end')
+            .text(\`\${node.memberCount}\`);
+        }
+
+        // Tooltip and click handlers
+        group.on('mouseover', (event) => {
+          event.stopPropagation();
+          tooltip.style('display', 'block')
+            .html(\`
+              <div class="name">\${node.name}</div>
+              <div class="location">\${node.fullPath}</div>
+              <div style="margin-top: 4px; color: #858585;">
+                \${node.memberCount} symbols\${node.children.length > 0 ? \`, \${node.children.length} sub-modules\` : ''}
+              </div>
+            \`);
+        })
+        .on('mousemove', (event) => {
+          tooltip.style('left', (event.pageX + 10) + 'px')
+            .style('top', (event.pageY - 10) + 'px');
+        })
+        .on('mouseout', (event) => {
+          tooltip.style('display', 'none');
+        })
+        .on('click', (event) => {
+          event.stopPropagation();
+          d3.selectAll('.module-box').classed('highlighted', false);
+          group.classed('highlighted', true);
+        });
+
+        // Draw children recursively
+        for (const child of node.children) {
+          drawModule(parent, child);
+        }
+      }
+
+      // Create group for modules (below flow arrows)
+      const modulesGroup = g.append('g').attr('id', 'module-boxes');
+      drawModule(modulesGroup, rootModule);
+
+      // Create group for flow arrows (on top)
+      g.append('g').attr('id', 'flow-arrows');
+
+      // Fit to view
+      const contentWidth = rootModule._width + 40;
+      const contentHeight = rootModule._height + 40;
+
+      const scale = Math.min(
+        (width - 40) / contentWidth,
+        (height - 40) / contentHeight,
+        1
+      );
+
+      const translateX = (width - contentWidth * scale) / 2;
+      const translateY = (height - contentHeight * scale) / 2;
+
+      svg.call(zoom.transform, d3.zoomIdentity
+        .translate(translateX, translateY)
+        .scale(scale));
+    }
+
+    // Setup sidebar interactions
+    function setupSidebarInteractions() {
+      // Toggle sidebar collapse
+      const sidebar = document.getElementById('flows-sidebar');
+      const collapseBtn = document.getElementById('sidebar-collapse-btn');
+      const expandBtn = document.getElementById('sidebar-expand-btn');
+
+      collapseBtn?.addEventListener('click', () => {
+        sidebar.classList.add('collapsed');
+      });
+
+      expandBtn?.addEventListener('click', () => {
+        sidebar.classList.remove('collapsed');
+      });
+
+      // Flow checkbox handlers
+      document.querySelectorAll('.flow-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+          const flowId = parseInt(e.target.dataset.flowId);
+          const flowItem = e.target.closest('.flow-item');
+
+          if (e.target.checked) {
+            selectedFlows.add(flowId);
+            flowItem.classList.add('selected');
+          } else {
+            selectedFlows.delete(flowId);
+            flowItem.classList.remove('selected');
+          }
+
+          renderFlowArrows();
+        });
+      });
+
+      // Click on flow item toggles checkbox
+      document.querySelectorAll('.flow-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          if (e.target.classList.contains('flow-checkbox')) return;
+          const checkbox = item.querySelector('.flow-checkbox');
+          checkbox.checked = !checkbox.checked;
+          checkbox.dispatchEvent(new Event('change'));
+        });
+      });
+    }
+
+    // Render flow arrows for selected flows (connecting nested boxes)
+    function renderFlowArrows() {
+      const arrowGroup = d3.select('#flow-arrows');
+      arrowGroup.selectAll('*').remove();
+
+      if (selectedFlows.size === 0) return;
+
+      const tooltip = d3.select('#tooltip');
+
+      // Get selected flows data
+      const flowColorMap = new Map();
+
+      // First pass: assign colors to flows (based on their order in sidebar)
+      let idx = 0;
+      for (const flow of flowsDagData.rootFlows) {
+        if (selectedFlows.has(flow.id)) {
+          flowColorMap.set(flow.id, flowColors[idx % flowColors.length]);
+        }
+        idx++;
+      }
+
+      // Draw arrows for each selected flow
+      for (const flow of flowsDagData.rootFlows) {
+        if (!selectedFlows.has(flow.id)) continue;
+
+        const color = flowColorMap.get(flow.id);
+        const colorIdx = flowColors.indexOf(color);
+
+        // Draw each leaf flow as an arrow
+        flow.leafFlows.forEach((leaf, stepIdx) => {
+          if (!leaf.fromModuleId || !leaf.toModuleId) return;
+          if (!modulePositions.has(leaf.fromModuleId) || !modulePositions.has(leaf.toModuleId)) return;
+
+          const from = modulePositions.get(leaf.fromModuleId);
+          const to = modulePositions.get(leaf.toModuleId);
+
+          // Use center points for arrows
+          const startX = from.cx;
+          const startY = from.cy;
+          const endX = to.cx;
+          const endY = to.cy;
+
+          // Calculate offset based on flow color to avoid overlapping
+          const flowOffset = (colorIdx - flowColors.length / 2) * 6;
+
+          // Calculate control point for curved arrow
+          // Use perpendicular offset from the midpoint
+          const midX = (startX + endX) / 2;
+          const midY = (startY + endY) / 2;
+
+          // Calculate perpendicular direction
+          const dx = endX - startX;
+          const dy = endY - startY;
+          const len = Math.sqrt(dx * dx + dy * dy);
+
+          // Offset perpendicular to the line, scaled by distance
+          const perpX = len > 0 ? (-dy / len) * (30 + flowOffset) : flowOffset;
+          const perpY = len > 0 ? (dx / len) * (30 + flowOffset) : 0;
+
+          const ctrlX = midX + perpX;
+          const ctrlY = midY + perpY;
+
+          const path = arrowGroup.append('path')
+            .attr('class', 'flow-arrow')
+            .attr('d', \`M \${startX} \${startY} Q \${ctrlX} \${ctrlY} \${endX} \${endY}\`)
+            .attr('stroke', color)
+            .attr('marker-end', \`url(#flow-arrow-\${colorIdx})\`)
+            .attr('data-flow-id', flow.id)
+            .attr('data-leaf-id', leaf.id);
+
+          // Add step number label at the control point
+          arrowGroup.append('text')
+            .attr('class', 'flow-arrow-label')
+            .attr('x', ctrlX)
+            .attr('y', ctrlY - 6)
+            .attr('text-anchor', 'middle')
+            .text(stepIdx + 1);
+
+          // Tooltip for arrow
+          path.on('mouseover', (event) => {
+            const fromModule = modulePositions.get(leaf.fromModuleId)?.node;
+            const toModule = modulePositions.get(leaf.toModuleId)?.node;
+
+            tooltip.style('display', 'block')
+              .html(\`
+                <div class="arrow-title">\${leaf.name}</div>
+                \${leaf.semantic ? \`<div class="arrow-semantic">\${leaf.semantic}</div>\` : ''}
+                <div class="arrow-modules">\${fromModule?.name || '?'} → \${toModule?.name || '?'}</div>
+              \`);
+          })
+          .on('mousemove', (event) => {
+            tooltip.style('left', (event.pageX + 10) + 'px')
+              .style('top', (event.pageY - 10) + 'px');
+          })
+          .on('mouseout', () => {
+            tooltip.style('display', 'none');
+          });
+        });
+      }
+    }
+
+    // Keyboard shortcuts for flows view
+    function setupFlowsKeyboardShortcuts() {
+      const handleKeydown = (e) => {
+        if (currentView !== 'flows') return;
+
+        // Ctrl+S: Toggle sidebar
+        if (e.ctrlKey && e.key === 's') {
+          e.preventDefault();
+          const sidebar = document.getElementById('flows-sidebar');
+          sidebar.classList.toggle('collapsed');
+        }
+
+        // Escape: Deselect all flows
+        if (e.key === 'Escape') {
+          selectedFlows.clear();
+          document.querySelectorAll('.flow-checkbox').forEach(cb => {
+            cb.checked = false;
+          });
+          document.querySelectorAll('.flow-item').forEach(item => {
+            item.classList.remove('selected');
+          });
+          renderFlowArrows();
+        }
+      };
+
+      // Remove existing listener if any
+      document.removeEventListener('keydown', handleKeydown);
+      document.addEventListener('keydown', handleKeydown);
     }
 
     // Render a flow DAG within its card container

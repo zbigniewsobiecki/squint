@@ -1,5 +1,31 @@
 import type Database from 'better-sqlite3';
 
+export interface AspectCoverage {
+  aspect: string;
+  covered: number;
+  total: number;
+  percentage: number;
+}
+
+export interface SymbolWithDomain {
+  id: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  line: number;
+  domains: string[];
+  purpose: string | null;
+}
+
+export interface SymbolWithPurity {
+  id: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  line: number;
+  purpose: string | null;
+}
+
 /**
  * Repository for definition metadata operations.
  * Handles CRUD operations for the definition_metadata table.
@@ -10,7 +36,7 @@ export class MetadataRepository {
   /**
    * Set metadata on a definition (insert or replace)
    */
-  setDefinitionMetadata(definitionId: number, key: string, value: string): void {
+  set(definitionId: number, key: string, value: string): void {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO definition_metadata (definition_id, key, value)
       VALUES (?, ?, ?)
@@ -21,7 +47,7 @@ export class MetadataRepository {
   /**
    * Remove a metadata key from a definition
    */
-  removeDefinitionMetadata(definitionId: number, key: string): boolean {
+  remove(definitionId: number, key: string): boolean {
     const stmt = this.db.prepare(`
       DELETE FROM definition_metadata
       WHERE definition_id = ? AND key = ?
@@ -33,7 +59,7 @@ export class MetadataRepository {
   /**
    * Get all metadata for a definition
    */
-  getDefinitionMetadata(definitionId: number): Record<string, string> {
+  get(definitionId: number): Record<string, string> {
     const stmt = this.db.prepare(`
       SELECT key, value FROM definition_metadata
       WHERE definition_id = ?
@@ -47,9 +73,21 @@ export class MetadataRepository {
   }
 
   /**
+   * Get a single metadata value for a definition
+   */
+  getValue(definitionId: number, key: string): string | null {
+    const stmt = this.db.prepare(`
+      SELECT value FROM definition_metadata
+      WHERE definition_id = ? AND key = ?
+    `);
+    const row = stmt.get(definitionId, key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  /**
    * Get definition IDs that have a specific metadata key set
    */
-  getDefinitionsWithMetadata(key: string): number[] {
+  getDefinitionsWith(key: string): number[] {
     const stmt = this.db.prepare(`
       SELECT definition_id FROM definition_metadata
       WHERE key = ?
@@ -61,7 +99,7 @@ export class MetadataRepository {
   /**
    * Get definition IDs that do NOT have a specific metadata key set
    */
-  getDefinitionsWithoutMetadata(key: string): number[] {
+  getDefinitionsWithout(key: string): number[] {
     const stmt = this.db.prepare(`
       SELECT d.id FROM definitions d
       WHERE NOT EXISTS (
@@ -76,13 +114,108 @@ export class MetadataRepository {
   /**
    * Get all unique metadata keys (aspects) in use
    */
-  getMetadataKeys(): string[] {
+  getKeys(): string[] {
     const stmt = this.db.prepare(`
       SELECT DISTINCT key FROM definition_metadata
       ORDER BY key
     `);
     const rows = stmt.all() as Array<{ key: string }>;
     return rows.map(row => row.key);
+  }
+
+  /**
+   * Get count of definitions matching filters
+   */
+  getFilteredCount(filters?: { kind?: string; filePattern?: string }): number {
+    let sql = `
+      SELECT COUNT(*) as count FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      WHERE 1=1
+    `;
+    const params: string[] = [];
+
+    if (filters?.kind) {
+      sql += ' AND d.kind = ?';
+      params.push(filters.kind);
+    }
+    if (filters?.filePattern) {
+      sql += ' AND f.path LIKE ?';
+      params.push(`%${filters.filePattern}%`);
+    }
+
+    const stmt = this.db.prepare(sql);
+    const row = stmt.get(...params) as { count: number };
+    return row.count;
+  }
+
+  /**
+   * Get coverage stats for aspects (metadata keys).
+   * Returns the number of definitions that have each aspect defined.
+   */
+  getAspectCoverage(filters?: { kind?: string; filePattern?: string }): AspectCoverage[] {
+    // Build the base query for counting total definitions
+    let totalSql = `
+      SELECT COUNT(*) as count FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      WHERE 1=1
+    `;
+    const totalParams: string[] = [];
+
+    if (filters?.kind) {
+      totalSql += ' AND d.kind = ?';
+      totalParams.push(filters.kind);
+    }
+    if (filters?.filePattern) {
+      totalSql += ' AND f.path LIKE ?';
+      totalParams.push(`%${filters.filePattern}%`);
+    }
+
+    const totalStmt = this.db.prepare(totalSql);
+    const totalRow = totalStmt.get(...totalParams) as { count: number };
+    const total = totalRow.count;
+
+    if (total === 0) {
+      return [];
+    }
+
+    // Get all unique metadata keys
+    const keys = this.getKeys();
+
+    // For each key, count how many of the filtered definitions have it set
+    const results: AspectCoverage[] = [];
+
+    for (const key of keys) {
+      let coveredSql = `
+        SELECT COUNT(DISTINCT d.id) as count
+        FROM definitions d
+        JOIN files f ON d.file_id = f.id
+        JOIN definition_metadata dm ON dm.definition_id = d.id
+        WHERE dm.key = ?
+      `;
+      const coveredParams: string[] = [key];
+
+      if (filters?.kind) {
+        coveredSql += ' AND d.kind = ?';
+        coveredParams.push(filters.kind);
+      }
+      if (filters?.filePattern) {
+        coveredSql += ' AND f.path LIKE ?';
+        coveredParams.push(`%${filters.filePattern}%`);
+      }
+
+      const coveredStmt = this.db.prepare(coveredSql);
+      const coveredRow = coveredStmt.get(...coveredParams) as { count: number };
+      const covered = coveredRow.count;
+
+      results.push({
+        aspect: key,
+        covered,
+        total,
+        percentage: Math.round((covered / total) * 1000) / 10, // One decimal place
+      });
+    }
+
+    return results;
   }
 
   /**
@@ -113,15 +246,7 @@ export class MetadataRepository {
    * Get symbols that have a specific domain tag.
    * Domain is stored as a JSON array in the 'domain' metadata key.
    */
-  getSymbolsByDomain(domain: string): Array<{
-    id: number;
-    name: string;
-    kind: string;
-    filePath: string;
-    line: number;
-    domains: string[];
-    purpose: string | null;
-  }> {
+  getSymbolsByDomain(domain: string): SymbolWithDomain[] {
     // Use LIKE with JSON pattern to find domain in the array
     const pattern = `%"${domain}"%`;
     const stmt = this.db.prepare(`
@@ -165,14 +290,7 @@ export class MetadataRepository {
    * Get symbols filtered by purity (pure = no side effects).
    * Returns symbols where 'pure' metadata matches the specified value.
    */
-  getSymbolsByPurity(isPure: boolean): Array<{
-    id: number;
-    name: string;
-    kind: string;
-    filePath: string;
-    line: number;
-    purpose: string | null;
-  }> {
+  getSymbolsByPurity(isPure: boolean): SymbolWithPurity[] {
     const pureValue = isPure ? 'true' : 'false';
     const stmt = this.db.prepare(`
       SELECT
@@ -189,13 +307,6 @@ export class MetadataRepository {
       WHERE dm_pure.value = ?
       ORDER BY f.path, d.line
     `);
-    return stmt.all(pureValue) as Array<{
-      id: number;
-      name: string;
-      kind: string;
-      filePath: string;
-      line: number;
-      purpose: string | null;
-    }>;
+    return stmt.all(pureValue) as SymbolWithPurity[];
   }
 }

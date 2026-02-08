@@ -1,41 +1,25 @@
 import type Database from 'better-sqlite3';
 import type { Domain, DomainWithCount } from '../schema.js';
+import { ensureDomainsTable } from '../schema-manager.js';
+import { MetadataRepository } from './metadata-repository.js';
 
 /**
  * Repository for domain registry operations.
  * Handles CRUD operations for the domains table and domain-related queries.
  */
 export class DomainRepository {
-  constructor(private db: Database.Database) {}
+  private metadata: MetadataRepository;
 
-  /**
-   * Ensure the domains table exists (for existing databases).
-   * Called automatically by domain methods to support legacy databases.
-   */
-  ensureDomainsTable(): void {
-    const tableExists = this.db.prepare(`
-      SELECT name FROM sqlite_master WHERE type='table' AND name='domains'
-    `).get();
-
-    if (!tableExists) {
-      this.db.exec(`
-        CREATE TABLE domains (
-          id INTEGER PRIMARY KEY,
-          name TEXT UNIQUE NOT NULL,
-          description TEXT,
-          created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE INDEX idx_domains_name ON domains(name);
-      `);
-    }
+  constructor(private db: Database.Database) {
+    this.metadata = new MetadataRepository(db);
   }
 
   /**
    * Add a new domain to the registry.
    * @returns The domain ID if created, or null if already exists.
    */
-  addDomain(name: string, description?: string): number | null {
-    this.ensureDomainsTable();
+  add(name: string, description?: string): number | null {
+    ensureDomainsTable(this.db);
     try {
       const stmt = this.db.prepare(`
         INSERT INTO domains (name, description) VALUES (?, ?)
@@ -54,8 +38,8 @@ export class DomainRepository {
   /**
    * Get a domain by name.
    */
-  getDomain(name: string): Domain | null {
-    this.ensureDomainsTable();
+  get(name: string): Domain | null {
+    ensureDomainsTable(this.db);
     const stmt = this.db.prepare(`
       SELECT id, name, description, created_at as createdAt
       FROM domains WHERE name = ?
@@ -67,8 +51,8 @@ export class DomainRepository {
   /**
    * Get all domains from the registry.
    */
-  getDomainsFromRegistry(): Domain[] {
-    this.ensureDomainsTable();
+  getAll(): Domain[] {
+    ensureDomainsTable(this.db);
     const stmt = this.db.prepare(`
       SELECT id, name, description, created_at as createdAt
       FROM domains ORDER BY name
@@ -79,11 +63,11 @@ export class DomainRepository {
   /**
    * Get all domains with their symbol counts.
    */
-  getDomainsWithCounts(): DomainWithCount[] {
-    this.ensureDomainsTable();
+  getAllWithCounts(): DomainWithCount[] {
+    ensureDomainsTable(this.db);
 
     // Get all registered domains
-    const domains = this.getDomainsFromRegistry();
+    const domains = this.getAll();
 
     // Get all domain values from metadata
     const metadataStmt = this.db.prepare(`
@@ -113,8 +97,8 @@ export class DomainRepository {
   /**
    * Update a domain's description.
    */
-  updateDomainDescription(name: string, description: string): boolean {
-    this.ensureDomainsTable();
+  updateDescription(name: string, description: string): boolean {
+    ensureDomainsTable(this.db);
     const stmt = this.db.prepare(`
       UPDATE domains SET description = ? WHERE name = ?
     `);
@@ -126,8 +110,8 @@ export class DomainRepository {
    * Rename a domain in both the registry and all symbol metadata.
    * @returns Number of symbols updated.
    */
-  renameDomain(oldName: string, newName: string): { updated: boolean; symbolsUpdated: number } {
-    this.ensureDomainsTable();
+  rename(oldName: string, newName: string): { updated: boolean; symbolsUpdated: number } {
+    ensureDomainsTable(this.db);
 
     // Update registry
     const updateRegistry = this.db.prepare(`
@@ -171,8 +155,8 @@ export class DomainRepository {
    * and replaced with the target domain.
    * @returns Number of symbols updated.
    */
-  mergeDomains(fromName: string, intoName: string): { symbolsUpdated: number; registryRemoved: boolean } {
-    this.ensureDomainsTable();
+  merge(fromName: string, intoName: string): { symbolsUpdated: number; registryRemoved: boolean } {
+    ensureDomainsTable(this.db);
 
     // Update all symbol metadata
     const getMetadata = this.db.prepare(`
@@ -219,18 +203,13 @@ export class DomainRepository {
   /**
    * Remove a domain from the registry.
    * @param force If true, removes even if symbols still use this domain.
-   * @param getSymbolsByDomain Function to count symbols using this domain.
    * @returns Object with removed status and count of symbols still using the domain.
    */
-  removeDomain(
-    name: string,
-    force: boolean,
-    getSymbolsByDomain: (domain: string) => { length: number }
-  ): { removed: boolean; symbolsUsingDomain: number } {
-    this.ensureDomainsTable();
+  remove(name: string, force = false): { removed: boolean; symbolsUsingDomain: number } {
+    ensureDomainsTable(this.db);
 
     // Count symbols using this domain
-    const symbolsUsingDomain = getSymbolsByDomain(name).length;
+    const symbolsUsingDomain = this.getSymbolsByDomain(name).length;
 
     if (symbolsUsingDomain > 0 && !force) {
       return { removed: false, symbolsUsingDomain };
@@ -251,23 +230,22 @@ export class DomainRepository {
   /**
    * Sync all domains currently in use to the registry.
    * Registers any domain found in symbol metadata that isn't already registered.
-   * @param getAllDomains Function to get all domains from metadata.
    * @returns Array of newly registered domain names.
    */
-  syncDomainsFromMetadata(getAllDomains: () => string[]): string[] {
-    this.ensureDomainsTable();
+  syncFromMetadata(): string[] {
+    ensureDomainsTable(this.db);
 
     // Get all unique domains from metadata
-    const domainsInUse = getAllDomains();
+    const domainsInUse = this.metadata.getAllDomains();
 
     // Get registered domains
-    const registeredDomains = new Set(this.getDomainsFromRegistry().map(d => d.name));
+    const registeredDomains = new Set(this.getAll().map(d => d.name));
 
     // Register any missing domains
     const newlyRegistered: string[] = [];
     for (const domain of domainsInUse) {
       if (!registeredDomains.has(domain)) {
-        const id = this.addDomain(domain);
+        const id = this.add(domain);
         if (id !== null) {
           newlyRegistered.push(domain);
         }
@@ -279,23 +257,52 @@ export class DomainRepository {
 
   /**
    * Get all unregistered domains currently in use.
-   * @param getAllDomains Function to get all domains from metadata.
    */
-  getUnregisteredDomains(getAllDomains: () => string[]): string[] {
-    this.ensureDomainsTable();
-    const domainsInUse = getAllDomains();
-    const registeredDomains = new Set(this.getDomainsFromRegistry().map(d => d.name));
+  getUnregistered(): string[] {
+    ensureDomainsTable(this.db);
+    const domainsInUse = this.metadata.getAllDomains();
+    const registeredDomains = new Set(this.getAll().map(d => d.name));
     return domainsInUse.filter(d => !registeredDomains.has(d));
   }
 
   /**
    * Check if a domain is registered.
    */
-  isDomainRegistered(name: string): boolean {
-    this.ensureDomainsTable();
+  isRegistered(name: string): boolean {
+    ensureDomainsTable(this.db);
     const stmt = this.db.prepare(`
       SELECT 1 FROM domains WHERE name = ?
     `);
     return stmt.get(name) !== undefined;
+  }
+
+  /**
+   * Get symbols that have a specific domain tag.
+   * Domain is stored as a JSON array in the 'domain' metadata key.
+   */
+  getSymbolsByDomain(domain: string): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    line: number;
+    domains: string[];
+    purpose: string | null;
+  }> {
+    return this.metadata.getSymbolsByDomain(domain);
+  }
+
+  /**
+   * Get symbols filtered by purity (pure = no side effects).
+   */
+  getSymbolsByPurity(isPure: boolean): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    line: number;
+    purpose: string | null;
+  }> {
+    return this.metadata.getSymbolsByPurity(isPure);
   }
 }
