@@ -17,7 +17,7 @@ export async function openDatabase(dbPath: string, command: Command): Promise<In
   } catch {
     command.error(
       chalk.red(
-        `Database file "${resolvedPath}" does not exist.\nRun 'ats parse <directory>' first to create an index.`
+        `Database file "${resolvedPath}" does not exist.\nRun 'squint parse <directory>' first to create an index.`
       )
     );
   }

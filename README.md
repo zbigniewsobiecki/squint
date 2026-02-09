@@ -1,8 +1,8 @@
-# ATS - Codebase Understanding Tool
+# Squint — Codebase Understanding Tool
 
-ATS (AST Tool Suite) is a CLI for building semantic understanding of TypeScript and JavaScript codebases. It indexes source code into an SQLite database, then provides tools to systematically annotate symbols and relationships with human-readable descriptions.
+Squint is an AST + LLM driven tool for codebase analysis and visualization. It indexes TypeScript and JavaScript source code into an SQLite database, then provides tools to systematically annotate symbols and relationships with human-readable descriptions.
 
-**Use case**: When an AI agent or human needs to understand a codebase, ATS provides a structured workflow: index the code, identify what needs understanding, annotate symbols with their purpose, and document relationships between components.
+**Use case**: When an AI agent or human needs to understand a codebase, Squint provides a structured workflow: index the code, identify what needs understanding, annotate symbols with their purpose, and document relationships between components.
 
 ## Installation
 
@@ -16,44 +16,44 @@ pnpm run build
 **Full automated pipeline:**
 ```bash
 # Index, annotate, detect modules and flows in one go
-ats parse ./src -o index.db && \
-ats llm annotate -a purpose -a domain -a role && \
-ats llm modules && \
-ats llm flows
+squint parse ./src -o index.db && \
+squint llm annotate -a purpose -a domain -a role && \
+squint llm modules && \
+squint llm flows
 ```
 
 **Manual workflow:**
 ```bash
 # 1. Index your codebase
-ats parse ./src
+squint parse ./src
 
 # 2. Check what needs understanding
-ats symbols understood
+squint symbols understood
 
 # 3. Find symbols ready to annotate (no unmet dependencies)
-ats symbols ready --aspect purpose
+squint symbols ready --aspect purpose
 
 # 4. View the next symbol to understand with its source code
-ats symbols next --aspect purpose
+squint symbols next --aspect purpose
 
 # 5. Annotate the symbol
-ats symbols set purpose "Validates user credentials against the database" --name authenticate
+squint symbols set purpose "Validates user credentials against the database" --name authenticate
 
 # 6. Annotate relationships between symbols
-ats relationships next
-ats relationships set "delegates authentication to service layer" --from loginController --to authService
+squint relationships next
+squint relationships set "delegates authentication to service layer" --from loginController --to authService
 ```
 
 ---
 
 ## Command Reference
 
-### `ats parse` - Index a Codebase
+### `squint parse` - Index a Codebase
 
 Scans TypeScript/JavaScript files and builds an SQLite index of definitions, references, and symbol usages.
 
 ```bash
-ats parse <directory> [-o <output.db>]
+squint parse <directory> [-o <output.db>]
 ```
 
 | Flag | Default | Description |
@@ -62,18 +62,18 @@ ats parse <directory> [-o <output.db>]
 
 **Examples:**
 ```bash
-ats parse ./src
-ats parse ./src -o my-project.db
+squint parse ./src
+squint parse ./src -o my-project.db
 ```
 
 ---
 
-### `ats symbols` - List and Filter Symbols
+### `squint symbols` - List and Filter Symbols
 
 Lists all symbols (functions, classes, variables, etc.) in the index.
 
 ```bash
-ats symbols [flags]
+squint symbols [flags]
 ```
 
 | Flag | Description |
@@ -89,23 +89,23 @@ ats symbols [flags]
 
 **Examples:**
 ```bash
-ats symbols                           # List all symbols
-ats symbols --kind function           # Only functions
-ats symbols --missing purpose         # Symbols without purpose annotation
-ats symbols --has purpose --kind class  # Classes with purpose set
-ats symbols --domain auth             # Symbols tagged with "auth" domain
-ats symbols --domains                 # List all domain tags in use
+squint symbols                           # List all symbols
+squint symbols --kind function           # Only functions
+squint symbols --missing purpose         # Symbols without purpose annotation
+squint symbols --has purpose --kind class  # Classes with purpose set
+squint symbols --domain auth             # Symbols tagged with "auth" domain
+squint symbols --domains                 # List all domain tags in use
 ```
 
 ---
 
-### `ats symbols show` - Inspect a Symbol
+### `squint symbols show` - Inspect a Symbol
 
 Shows detailed information about a specific symbol including its source code, callsites, and metadata.
 
 ```bash
-ats symbols show <name> [flags]
-ats symbols show --id <id> [flags]
+squint symbols show <name> [flags]
+squint symbols show --id <id> [flags]
 ```
 
 | Flag | Description |
@@ -117,21 +117,21 @@ ats symbols show --id <id> [flags]
 
 **Examples:**
 ```bash
-ats symbols show parseFile
-ats symbols show --id 42
-ats symbols show MyClass --file src/models/
-ats symbols show authenticate --json
+squint symbols show parseFile
+squint symbols show --id 42
+squint symbols show MyClass --file src/models/
+squint symbols show authenticate --json
 ```
 
 ---
 
-### `ats symbols set` - Annotate a Symbol
+### `squint symbols set` - Annotate a Symbol
 
 Sets metadata (annotations) on a symbol.
 
 ```bash
-ats symbols set <key> <value> --name <symbol>
-ats symbols set <key> <value> --id <id>
+squint symbols set <key> <value> --name <symbol>
+squint symbols set <key> <value> --id <id>
 ```
 
 | Flag | Description |
@@ -152,41 +152,41 @@ ats symbols set <key> <value> --id <id>
 **Examples:**
 ```bash
 # Set purpose
-ats symbols set purpose "Parses TypeScript AST and extracts definitions" --name parseFile
+squint symbols set purpose "Parses TypeScript AST and extracts definitions" --name parseFile
 
 # Set domain tags
-ats symbols set domain '["auth", "security"]' --name validateToken
+squint symbols set domain '["auth", "security"]' --name validateToken
 
 # Set architectural role
-ats symbols set role "HTTP controller handling user requests" --name UserController
+squint symbols set role "HTTP controller handling user requests" --name UserController
 
 # Mark as pure (no side effects)
-ats symbols set pure true --name calculateTotal
+squint symbols set pure true --name calculateTotal
 
 # Batch mode
 echo '[{"name":"add","value":"Adds two numbers"},{"name":"sub","value":"Subtracts"}]' | \
-  ats symbols set purpose --batch
+  squint symbols set purpose --batch
 ```
 
 ---
 
-### `ats symbols unset` - Remove Annotation
+### `squint symbols unset` - Remove Annotation
 
 Removes a metadata key from a symbol.
 
 ```bash
-ats symbols unset <key> --name <symbol>
-ats symbols unset <key> --id <id>
+squint symbols unset <key> --name <symbol>
+squint symbols unset <key> --id <id>
 ```
 
 ---
 
-### `ats symbols ready` - Find Symbols Ready to Understand
+### `squint symbols ready` - Find Symbols Ready to Understand
 
 Lists symbols that are ready to annotate because all their dependencies already have the specified aspect annotated.
 
 ```bash
-ats symbols ready --aspect <key> [flags]
+squint symbols ready --aspect <key> [flags]
 ```
 
 | Flag | Description |
@@ -200,20 +200,20 @@ ats symbols ready --aspect <key> [flags]
 
 **Examples:**
 ```bash
-ats symbols ready --aspect purpose                    # What's ready to annotate?
-ats symbols ready --aspect purpose --kind function    # Only functions
-ats symbols ready --aspect purpose --file src/parser/ # Only in parser/
-ats symbols ready --aspect purpose --verbose          # Show dependency info
+squint symbols ready --aspect purpose                    # What's ready to annotate?
+squint symbols ready --aspect purpose --kind function    # Only functions
+squint symbols ready --aspect purpose --file src/parser/ # Only in parser/
+squint symbols ready --aspect purpose --verbose          # Show dependency info
 ```
 
 ---
 
-### `ats symbols next` - View Next Symbol to Understand
+### `squint symbols next` - View Next Symbol to Understand
 
 Shows the next symbol ready to understand with its full source code. This is the primary command for the annotation workflow.
 
 ```bash
-ats symbols next --aspect <key> [flags]
+squint symbols next --aspect <key> [flags]
 ```
 
 | Flag | Description |
@@ -225,20 +225,20 @@ ats symbols next --aspect <key> [flags]
 
 **Examples:**
 ```bash
-ats symbols next --aspect purpose           # Show next symbol to annotate
-ats symbols next --aspect purpose --count 3 # Show next 3 symbols
-ats symbols next --aspect purpose --json    # JSON output for automation
+squint symbols next --aspect purpose           # Show next symbol to annotate
+squint symbols next --aspect purpose --count 3 # Show next 3 symbols
+squint symbols next --aspect purpose --json    # JSON output for automation
 ```
 
 ---
 
-### `ats symbols deps` - View Symbol Dependencies
+### `squint symbols deps` - View Symbol Dependencies
 
 Shows what other symbols a given symbol depends on, with their annotation status.
 
 ```bash
-ats symbols deps <name> [flags]
-ats symbols deps --id <id> [flags]
+squint symbols deps <name> [flags]
+squint symbols deps --id <id> [flags]
 ```
 
 | Flag | Description |
@@ -248,33 +248,33 @@ ats symbols deps --id <id> [flags]
 
 **Examples:**
 ```bash
-ats symbols deps parseFile                    # What does parseFile depend on?
-ats symbols deps parseFile --aspect purpose   # Show which deps have purpose set
+squint symbols deps parseFile                    # What does parseFile depend on?
+squint symbols deps parseFile --aspect purpose   # Show which deps have purpose set
 ```
 
 ---
 
-### `ats symbols prereqs` - View Prerequisites
+### `squint symbols prereqs` - View Prerequisites
 
 Shows unmet dependencies in topological order - what you need to understand first before understanding a target symbol.
 
 ```bash
-ats symbols prereqs <name> --aspect <key>
+squint symbols prereqs <name> --aspect <key>
 ```
 
 **Examples:**
 ```bash
-ats symbols prereqs IndexDatabase --aspect purpose
+squint symbols prereqs IndexDatabase --aspect purpose
 ```
 
 ---
 
-### `ats symbols understood` - Coverage Report
+### `squint symbols understood` - Coverage Report
 
 Shows understanding coverage statistics per aspect.
 
 ```bash
-ats symbols understood [flags]
+squint symbols understood [flags]
 ```
 
 | Flag | Description |
@@ -286,103 +286,103 @@ ats symbols understood [flags]
 
 **Examples:**
 ```bash
-ats symbols understood                        # Overall coverage
-ats symbols understood --kind function        # Function coverage only
-ats symbols understood --file src/parser/     # Coverage for parser module
+squint symbols understood                        # Overall coverage
+squint symbols understood --kind function        # Function coverage only
+squint symbols understood --file src/parser/     # Coverage for parser module
 ```
 
 ---
 
-### `ats domains` - Manage Domain Tags
+### `squint domains` - Manage Domain Tags
 
 Domains are business/architectural tags that group related symbols (e.g., "auth", "payment", "user").
 
 #### List Domains
 ```bash
-ats domains                  # List registered domains with symbol counts
-ats domains --unregistered   # Show domains in use but not registered
-ats domains --json           # JSON output
+squint domains                  # List registered domains with symbol counts
+squint domains --unregistered   # Show domains in use but not registered
+squint domains --json           # JSON output
 ```
 
 #### Register a Domain
 ```bash
-ats domains add <name> [--description "..."]
+squint domains add <name> [--description "..."]
 ```
 
 #### Rename a Domain
 Renames in registry and updates all symbol metadata:
 ```bash
-ats domains rename <old-name> <new-name>
+squint domains rename <old-name> <new-name>
 ```
 
 #### Merge Domains
 Merges source domain into target, updating all symbols:
 ```bash
-ats domains merge <from-domain> <into-domain>
+squint domains merge <from-domain> <into-domain>
 ```
 
 #### Remove a Domain
 ```bash
-ats domains remove <name>          # Fails if symbols still use it
-ats domains remove <name> --force  # Remove anyway
+squint domains remove <name>          # Fails if symbols still use it
+squint domains remove <name> --force  # Remove anyway
 ```
 
 #### Sync Domains
 Bulk-register all domains currently in use:
 ```bash
-ats domains sync
+squint domains sync
 ```
 
 ---
 
-### `ats relationships` - Manage Relationship Annotations
+### `squint relationships` - Manage Relationship Annotations
 
 Relationships describe *why* one symbol calls/uses another.
 
 #### List Relationships
 ```bash
-ats relationships                    # List all annotated relationships
-ats relationships --from Controller  # Filter by source symbol
-ats relationships --to AuthService   # Filter by target symbol
-ats relationships --count            # Just show count
-ats relationships --json             # JSON output
+squint relationships                    # List all annotated relationships
+squint relationships --from Controller  # Filter by source symbol
+squint relationships --to AuthService   # Filter by target symbol
+squint relationships --count            # Just show count
+squint relationships --json             # JSON output
 ```
 
 #### View Next Relationship to Annotate
 Shows unannotated relationships with rich context including both symbols' metadata, other relationships, and shared domains:
 
 ```bash
-ats relationships next                    # Show next relationship to annotate
-ats relationships next --count 5          # Show next 5
-ats relationships next --from Controller  # Only from this symbol
-ats relationships next --json             # JSON output for automation
+squint relationships next                    # Show next relationship to annotate
+squint relationships next --count 5          # Show next 5
+squint relationships next --from Controller  # Only from this symbol
+squint relationships next --json             # JSON output for automation
 ```
 
 #### Annotate a Relationship
 ```bash
-ats relationships set "<semantic description>" --from <source> --to <target>
-ats relationships set "<semantic description>" --from-id <id> --to-id <id>
+squint relationships set "<semantic description>" --from <source> --to <target>
+squint relationships set "<semantic description>" --from-id <id> --to-id <id>
 ```
 
 **Examples:**
 ```bash
-ats relationships set "delegates credential validation" --from loginController --to authService
-ats relationships set "persists user data to PostgreSQL" --from-id 42 --to-id 15
+squint relationships set "delegates credential validation" --from loginController --to authService
+squint relationships set "persists user data to PostgreSQL" --from-id 42 --to-id 15
 ```
 
 #### Remove a Relationship Annotation
 ```bash
-ats relationships unset --from <source> --to <target>
+squint relationships unset --from <source> --to <target>
 ```
 
 ---
 
-### `ats llm annotate` - Bulk Annotate Symbols with LLM
+### `squint llm annotate` - Bulk Annotate Symbols with LLM
 
 Uses an LLM to automatically annotate symbols with metadata like purpose, domain, and role. Processes symbols in batches, respecting the dependency order (leaves first).
 
 ```bash
-ats llm annotate -a <aspect> [flags]
+squint llm annotate -a <aspect> [flags]
 ```
 
 | Flag | Description |
@@ -402,22 +402,22 @@ ats llm annotate -a <aspect> [flags]
 **Examples:**
 ```bash
 # Annotate all symbols with purpose
-ats llm annotate --aspect purpose
+squint llm annotate --aspect purpose
 
 # Annotate multiple aspects at once
-ats llm annotate --aspect purpose --aspect domain --aspect role
+squint llm annotate --aspect purpose --aspect domain --aspect role
 
 # Use a different model with larger batches
-ats llm annotate --aspect purpose --model gpt4o --batch-size 10
+squint llm annotate --aspect purpose --model gpt4o --batch-size 10
 
 # Only annotate functions, exclude tests
-ats llm annotate --aspect purpose --kind function --exclude "**/*.test.ts"
+squint llm annotate --aspect purpose --kind function --exclude "**/*.test.ts"
 
 # Preview without saving
-ats llm annotate --aspect purpose --dry-run
+squint llm annotate --aspect purpose --dry-run
 
 # Limit iterations for incremental annotation
-ats llm annotate --aspect purpose --max-iterations 5
+squint llm annotate --aspect purpose --max-iterations 5
 ```
 
 **Workflow:**
@@ -425,7 +425,7 @@ The command processes symbols bottom-up (dependencies first), so annotations bui
 
 ---
 
-### `ats llm modules` - Detect Architectural Modules
+### `squint llm modules` - Detect Architectural Modules
 
 Uses a two-phase LLM approach to create a hierarchical module structure:
 
@@ -436,7 +436,7 @@ The LLM analyzes the overall codebase structure (file paths, symbol patterns, do
 Symbols are assigned to leaf modules in batches. The LLM receives symbol metadata (name, kind, purpose, domain, file path) and assigns each to the most appropriate module.
 
 ```bash
-ats llm modules [flags]
+squint llm modules [flags]
 ```
 
 | Flag | Description |
@@ -451,16 +451,16 @@ ats llm modules [flags]
 **Examples:**
 ```bash
 # Detect modules with default settings
-ats llm modules
+squint llm modules
 
 # Dry run to preview detection
-ats llm modules --dry-run
+squint llm modules --dry-run
 
 # Use faster model with larger batches
-ats llm modules --model haiku --batch-size 50
+squint llm modules --model haiku --batch-size 50
 
 # Re-detect and overwrite existing modules
-ats llm modules --force
+squint llm modules --force
 ```
 
 **Module Structure:**
@@ -471,7 +471,7 @@ Modules are organized hierarchically with dot-notation paths:
 - `project.backend.services.auth` - Authentication service (leaf with members)
 
 **Web UI:**
-The web UI (`ats web`) displays modules as an interactive tree with:
+The web UI (`squint web`) displays modules as an interactive tree with:
 - Expandable/collapsible hierarchy
 - Member counts at each level
 - Click to view module members
@@ -479,12 +479,12 @@ The web UI (`ats web`) displays modules as an interactive tree with:
 
 ---
 
-### `ats llm flows` - Detect Execution Flows
+### `squint llm flows` - Detect Execution Flows
 
 Traces execution paths from entry points (controllers, routes, handlers) through the call graph to detect end-to-end flows. Optionally uses LLM to name and describe the flows.
 
 ```bash
-ats llm flows [flags]
+squint llm flows [flags]
 ```
 
 | Flag | Description |
@@ -503,16 +503,16 @@ ats llm flows [flags]
 **Examples:**
 ```bash
 # Detect all flows
-ats llm flows
+squint llm flows
 
 # Preview flows without persisting
-ats llm flows --dry-run --skip-llm
+squint llm flows --dry-run --skip-llm
 
 # Only detect flows starting from sales controllers
-ats llm flows --from sales --domain sales-management
+squint llm flows --from sales --domain sales-management
 
 # Limit traversal depth for simpler flows
-ats llm flows --max-depth 5 --min-steps 3
+squint llm flows --max-depth 5 --min-steps 3
 ```
 
 **Entry Points:**
@@ -539,29 +539,29 @@ Flow: CreateSale
 
 ---
 
-### `ats files` - Explore File Structure
+### `squint files` - Explore File Structure
 
 #### List Files
 ```bash
-ats files                # List all indexed files
-ats files --stats        # Include import statistics
+squint files                # List all indexed files
+squint files --stats        # Include import statistics
 ```
 
 #### View File Imports
 ```bash
-ats files imports <path>      # What does this file import?
-ats files imported-by <path>  # What files import this file?
-ats files orphans             # Find files with no incoming imports
+squint files imports <path>      # What does this file import?
+squint files imported-by <path>  # What files import this file?
+squint files orphans             # Find files with no incoming imports
 ```
 
 ---
 
-### `ats modules` - View Detected Modules
+### `squint modules` - View Detected Modules
 
-Lists modules detected by `ats llm modules`. Modules are organized hierarchically with dot-notation paths (e.g., `project.backend.services.auth`) representing architectural boundaries.
+Lists modules detected by `squint llm modules`. Modules are organized hierarchically with dot-notation paths (e.g., `project.backend.services.auth`) representing architectural boundaries.
 
 ```bash
-ats modules [flags]
+squint modules [flags]
 ```
 
 | Flag | Description |
@@ -572,9 +572,9 @@ ats modules [flags]
 
 **Examples:**
 ```bash
-ats modules                    # List all modules with paths
-ats modules --tree             # Show as hierarchical tree
-ats modules --json             # JSON output for automation
+squint modules                    # List all modules with paths
+squint modules --tree             # Show as hierarchical tree
+squint modules --json             # JSON output for automation
 ```
 
 **Output (tree view):**
@@ -608,19 +608,19 @@ project.backend.services.auth     8        Authentication logic
 ...
 ```
 
-#### `ats modules show` - View Module Details
+#### `squint modules show` - View Module Details
 
 Shows detailed information about a specific module including all its members.
 
 ```bash
-ats modules show <name> [flags]
+squint modules show <name> [flags]
 ```
 
 **Examples:**
 ```bash
-ats modules show auth                        # Show auth module details
-ats modules show project.backend.services    # Show by full path
-ats modules show services --json             # JSON output
+squint modules show auth                        # Show auth module details
+squint modules show project.backend.services    # Show by full path
+squint modules show services --json             # JSON output
 ```
 
 **Output:**
@@ -640,12 +640,12 @@ Members (8):
 
 ---
 
-### `ats flows` - View Detected Flows
+### `squint flows` - View Detected Flows
 
-Lists execution flows detected by `ats llm flows`. Flows trace request paths from entry points through the call graph.
+Lists execution flows detected by `squint llm flows`. Flows trace request paths from entry points through the call graph.
 
 ```bash
-ats flows [flags]
+squint flows [flags]
 ```
 
 | Flag | Description |
@@ -656,9 +656,9 @@ ats flows [flags]
 
 **Examples:**
 ```bash
-ats flows                    # List all flows with step counts
-ats flows --domain user      # Only user-domain flows
-ats flows --json             # JSON output for automation
+squint flows                    # List all flows with step counts
+squint flows --domain user      # Only user-domain flows
+squint flows --json             # JSON output for automation
 ```
 
 **Output:**
@@ -672,18 +672,18 @@ login               handleLogin          6      auth, session
 checkout            processCheckout      12     cart, payment, inventory
 ```
 
-#### `ats flows show` - View Flow Details
+#### `squint flows show` - View Flow Details
 
 Shows detailed information about a specific flow including all its steps.
 
 ```bash
-ats flows show <name> [flags]
+squint flows show <name> [flags]
 ```
 
 **Examples:**
 ```bash
-ats flows show user-registration        # Show flow details
-ats flows show login --json             # JSON output
+squint flows show user-registration        # Show flow details
+squint flows show login --json             # JSON output
 ```
 
 **Output:**
@@ -702,12 +702,12 @@ Steps (8):
   ...
 ```
 
-#### `ats flows trace` - Trace Execution Path
+#### `squint flows trace` - Trace Execution Path
 
 Traces the call graph from a specific entry point, showing reachable symbols as a tree. This is useful for ad-hoc exploration before flows are formally detected.
 
 ```bash
-ats flows trace [flags]
+squint flows trace [flags]
 ```
 
 | Flag | Description |
@@ -721,9 +721,9 @@ ats flows trace [flags]
 
 **Examples:**
 ```bash
-ats flows trace --name handleRegister              # Trace from handleRegister
-ats flows trace --id 42 --depth 5                  # Trace by ID, limit depth
-ats flows trace --name processPayment --json       # JSON output
+squint flows trace --name handleRegister              # Trace from handleRegister
+squint flows trace --id 42 --depth 5                  # Trace by ID, limit depth
+squint flows trace --name processPayment --json       # JSON output
 ```
 
 **Output:**
@@ -743,12 +743,12 @@ handleRegister
 
 ---
 
-### `ats hierarchy` - View Inheritance and Call Hierarchies
+### `squint hierarchy` - View Inheritance and Call Hierarchies
 
 Shows class/interface inheritance trees or call hierarchies between symbols.
 
 ```bash
-ats hierarchy [flags]
+squint hierarchy [flags]
 ```
 
 | Flag | Description |
@@ -763,16 +763,16 @@ ats hierarchy [flags]
 **Examples:**
 ```bash
 # Class inheritance hierarchy
-ats hierarchy                              # Show all extends relationships
-ats hierarchy --type extends               # Same as above
-ats hierarchy --type implements            # Show interface implementations
+squint hierarchy                              # Show all extends relationships
+squint hierarchy --type extends               # Same as above
+squint hierarchy --type implements            # Show interface implementations
 
 # Call hierarchy from a specific function
-ats hierarchy --type calls --root main     # Show what main() calls
-ats hierarchy --type calls --root IndexDatabase --depth 3
+squint hierarchy --type calls --root main     # Show what main() calls
+squint hierarchy --type calls --root IndexDatabase --depth 3
 
 # Annotated relationships
-ats hierarchy --type uses                  # Show uses relationships from annotations
+squint hierarchy --type uses                  # Show uses relationships from annotations
 ```
 
 **Output (extends):**
@@ -808,14 +808,14 @@ main (function)
 
 ---
 
-### `ats browse` - Interactive Code Browser
+### `squint browse` - Interactive Code Browser
 
 Launches a web-based visualization of the codebase.
 
 ```bash
-ats browse                 # Open browser at localhost:3000
-ats browse -p 8080         # Use different port
-ats browse --no-open       # Don't auto-open browser
+squint browse                 # Open browser at localhost:3000
+squint browse -p 8080         # Use different port
+squint browse --no-open       # Don't auto-open browser
 ```
 
 ---
@@ -828,15 +828,15 @@ The recommended process for systematically understanding a codebase:
 
 ```bash
 # Index the codebase
-ats parse ./src
+squint parse ./src
 
 # Get an overview
-ats symbols                    # How many symbols?
-ats symbols --kind function    # How many functions?
-ats files --stats              # File structure
+squint symbols                    # How many symbols?
+squint symbols --kind function    # How many functions?
+squint files --stats              # File structure
 
 # Check current understanding coverage
-ats symbols understood
+squint symbols understood
 ```
 
 ### Phase 2: Annotate Symbols (Bottom-Up)
@@ -846,25 +846,25 @@ The tool enforces a bottom-up approach: you can only annotate a symbol once all 
 **Option A: Automatic LLM annotation**
 ```bash
 # Annotate all symbols with LLM (recommended for initial pass)
-ats llm annotate --aspect purpose --aspect domain --aspect role
+squint llm annotate --aspect purpose --aspect domain --aspect role
 
 # Check coverage
-ats symbols understood
+squint symbols understood
 ```
 
 **Option B: Manual annotation**
 ```bash
 # Find symbols ready to annotate (leaves first)
-ats symbols ready --aspect purpose
+squint symbols ready --aspect purpose
 
 # View the next symbol with source code
-ats symbols next --aspect purpose
+squint symbols next --aspect purpose
 
 # Annotate it
-ats symbols set purpose "Computes SHA-256 hash of file content" --name computeHash
+squint symbols set purpose "Computes SHA-256 hash of file content" --name computeHash
 
 # Repeat until coverage is complete
-ats symbols understood
+squint symbols understood
 ```
 
 ### Phase 3: Organize with Domains
@@ -873,18 +873,18 @@ As patterns emerge, organize symbols into business domains:
 
 ```bash
 # See what domains are in use
-ats symbols --domains
+squint symbols --domains
 
 # Register domains with descriptions
-ats domains add auth "Authentication and authorization"
-ats domains add user "User management and profiles"
+squint domains add auth "Authentication and authorization"
+squint domains add user "User management and profiles"
 
 # Tag symbols with domains
-ats symbols set domain '["auth"]' --name validateToken
-ats symbols set domain '["auth", "user"]' --name loginUser
+squint symbols set domain '["auth"]' --name validateToken
+squint symbols set domain '["auth", "user"]' --name loginUser
 
 # Query by domain
-ats symbols --domain auth
+squint symbols --domain auth
 ```
 
 ### Phase 4: Annotate Relationships
@@ -893,7 +893,7 @@ Once symbols are understood, document why they interact:
 
 ```bash
 # Find relationships needing annotation
-ats relationships next
+squint relationships next
 
 # The output shows:
 # - Both symbols' metadata (purpose, domains, role)
@@ -901,11 +901,11 @@ ats relationships next
 # - Source code around the call site
 
 # Annotate the relationship
-ats relationships set "validates credentials before creating session" \
+squint relationships set "validates credentials before creating session" \
   --from loginController --to authService
 
 # Track progress
-ats relationships --count
+squint relationships --count
 ```
 
 ### Phase 5: Detect Architecture (Modules & Flows)
@@ -914,18 +914,18 @@ Once symbols are annotated with purpose and domain, detect higher-level structur
 
 ```bash
 # Detect hierarchical module tree (two-phase LLM approach)
-ats llm modules --dry-run               # Preview module tree
-ats llm modules                          # Detect and persist
+squint llm modules --dry-run               # Preview module tree
+squint llm modules                          # Detect and persist
 
 # View modules as tree
-ats modules --tree
+squint modules --tree
 
 # Detect execution flows (request paths through the system)
-ats llm flows --dry-run --skip-llm      # Preview
-ats llm flows                           # Detect and persist
+squint llm flows --dry-run --skip-llm      # Preview
+squint llm flows                           # Detect and persist
 
 # View detected modules and flows via the web UI
-ats web
+squint web
 # The Modules view shows an interactive tree
 # API endpoints: /api/modules, /api/flows
 ```
@@ -936,13 +936,13 @@ As the codebase evolves, keep annotations current:
 
 ```bash
 # Re-index to pick up changes
-ats parse ./src
+squint parse ./src
 
 # Find new symbols needing annotation
-ats symbols --missing purpose
+squint symbols --missing purpose
 
 # Check for orphan files (possibly dead code)
-ats files orphans
+squint files orphans
 ```
 
 ---
@@ -962,7 +962,7 @@ cat > annotations.json << 'EOF'
 EOF
 
 # Apply all at once
-ats symbols set purpose -i annotations.json
+squint symbols set purpose -i annotations.json
 ```
 
 ---

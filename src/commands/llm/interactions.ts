@@ -134,7 +134,7 @@ export default class Interactions extends Command {
           this.log(JSON.stringify({ error: 'No module call graph edges found', hint: 'Run llm modules first' }));
         } else {
           this.log(chalk.yellow('No module call graph edges found.'));
-          this.log(chalk.gray('Ensure modules are assigned first with `ats llm modules`'));
+          this.log(chalk.gray('Ensure modules are assigned first with `squint llm modules`'));
         }
         return;
       }

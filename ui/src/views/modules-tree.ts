@@ -21,7 +21,7 @@ function showEmptyState() {
     container.innerHTML = `
       <div class="empty-state">
         <h2>No modules found</h2>
-        <p>Run 'ats llm modules' to detect modules</p>
+        <p>Run 'squint llm modules' to detect modules</p>
       </div>
     `;
   }

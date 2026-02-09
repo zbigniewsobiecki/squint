@@ -23,7 +23,6 @@ import {
 } from './_shared/llm-utils.js';
 import {
   AtomicFlowBuilder,
-  deduplicateByInteractionOverlap,
   EntryPointDetector,
   FlowEnhancer,
   type FlowSuggestion,
@@ -31,6 +30,7 @@ import {
   FlowValidator,
   GapFlowGenerator,
   buildFlowTracingContext,
+  deduplicateByInteractionOverlap,
 } from './flows/index.js';
 import type { EntryPointModuleInfo } from './flows/types.js';
 
@@ -137,7 +137,7 @@ export default class Flows extends Command {
           this.log(JSON.stringify({ error: 'No interactions found', hint: 'Run llm interactions first' }));
         } else {
           this.log(chalk.yellow('No interactions found.'));
-          this.log(chalk.gray('Run `ats llm interactions` first to detect module interactions.'));
+          this.log(chalk.gray('Run `squint llm interactions` first to detect module interactions.'));
         }
         return;
       }

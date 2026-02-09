@@ -8,7 +8,7 @@ describe('connection', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-conn-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squint-conn-test-'));
   });
 
   afterEach(() => {

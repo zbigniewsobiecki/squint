@@ -15,7 +15,7 @@ describe('relationships commands', () => {
 
   beforeEach(() => {
     // Create a temporary directory for test files
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-rel-test-'));
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squint-rel-test-'));
     dbPath = path.join(testDir, 'test.db');
 
     // Create and populate test database

@@ -250,7 +250,7 @@ describe('parseFile', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-parser-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squint-parser-test-'));
   });
 
   afterEach(() => {
@@ -298,7 +298,7 @@ describe('parseFiles', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-parser-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squint-parser-test-'));
   });
 
   afterEach(() => {

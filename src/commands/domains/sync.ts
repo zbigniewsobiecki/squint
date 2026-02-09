@@ -29,7 +29,7 @@ export default class Sync extends Command {
           this.log(`  ${chalk.cyan(domain)}`);
         }
         this.log('');
-        this.log(chalk.gray(`Use 'ats domains' to see all registered domains.`));
+        this.log(chalk.gray(`Use 'squint domains' to see all registered domains.`));
       }
     });
   }

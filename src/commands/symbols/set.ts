@@ -201,7 +201,7 @@ export default class Set extends Command {
         if (unregistered.length > 0) {
           this.log('');
           this.log(chalk.yellow(`Warning: ${unregistered.length} unregistered domain(s): ${unregistered.join(', ')}`));
-          this.log(chalk.gray('Register with: ats domains sync'));
+          this.log(chalk.gray('Register with: squint domains sync'));
         }
       } catch {
         /* skip warnings if db fails */
@@ -234,7 +234,7 @@ export default class Set extends Command {
   private async readStdin(): Promise<string> {
     // Check if stdin is a TTY (interactive terminal)
     if (process.stdin.isTTY) {
-      throw new Error("No input piped to stdin. Use: echo '[...]' | ats symbols set ... --batch");
+      throw new Error("No input piped to stdin. Use: echo '[...]' | squint symbols set ... --batch");
     }
 
     return new Promise((resolve, reject) => {
@@ -271,8 +271,8 @@ export default class Set extends Command {
       if (unregistered.length > 0) {
         this.log('');
         this.log(chalk.yellow(`Warning: ${unregistered.length} unregistered domain(s): ${unregistered.join(', ')}`));
-        this.log(chalk.gray(`Register with: ats domains add <name> "<description>"`));
-        this.log(chalk.gray('Or sync all: ats domains sync'));
+        this.log(chalk.gray(`Register with: squint domains add <name> "<description>"`));
+        this.log(chalk.gray('Or sync all: squint domains sync'));
       }
     } catch {
       // Value is not valid JSON, skip warning

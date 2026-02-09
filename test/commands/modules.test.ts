@@ -12,7 +12,7 @@ describe('modules commands', () => {
 
   beforeEach(() => {
     // Create a temporary directory for test files
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-modules-test-'));
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squint-modules-test-'));
     dbPath = path.join(testDir, 'test.db');
 
     // Create and populate test database

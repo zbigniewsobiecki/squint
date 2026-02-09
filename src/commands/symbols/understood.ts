@@ -104,7 +104,7 @@ export default class Understood extends Command {
         this.log(chalk.yellow('No symbols found matching filters.'));
       } else {
         this.log(chalk.yellow('No aspects defined yet.'));
-        this.log(chalk.gray(`Use 'ats symbols set <key> <value> --name <symbol>' to add metadata.`));
+        this.log(chalk.gray(`Use 'squint symbols set <key> <value> --name <symbol>' to add metadata.`));
       }
       return;
     }

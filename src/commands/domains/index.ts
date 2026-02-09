@@ -39,7 +39,7 @@ export default class Domains extends Command {
             this.log(`  ${chalk.cyan(domain)} (${count} symbol${count !== 1 ? 's' : ''})`);
           }
           this.log('');
-          this.log(chalk.gray(`Run 'ats domains sync' to register all domains in use.`));
+          this.log(chalk.gray(`Run 'squint domains sync' to register all domains in use.`));
         }
         return;
       }
@@ -51,8 +51,8 @@ export default class Domains extends Command {
         this.log(JSON.stringify({ domains: domainsWithCounts }, null, 2));
       } else if (domainsWithCounts.length === 0) {
         this.log(chalk.gray('No domains registered.'));
-        this.log(chalk.gray(`Use 'ats domains add <name> "<description>"' to register a domain.`));
-        this.log(chalk.gray(`Or use 'ats domains sync' to register all domains currently in use.`));
+        this.log(chalk.gray(`Use 'squint domains add <name> "<description>"' to register a domain.`));
+        this.log(chalk.gray(`Or use 'squint domains sync' to register all domains currently in use.`));
       } else {
         // Calculate column widths
         const maxNameLen = Math.max(...domainsWithCounts.map((d) => d.name.length), 10);

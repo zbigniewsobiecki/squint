@@ -21,7 +21,7 @@ describe('hierarchy command', () => {
 
   beforeEach(() => {
     // Create a temporary directory for test files
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-hierarchy-test-'));
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squint-hierarchy-test-'));
     dbPath = path.join(testDir, 'test.db');
 
     // Create and populate test database

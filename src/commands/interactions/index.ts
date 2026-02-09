@@ -51,7 +51,7 @@ export default class Interactions extends Command {
           this.log(JSON.stringify({ interactions: [], stats: { totalCount: 0 } }));
         } else {
           this.log(chalk.gray('No interactions detected yet.'));
-          this.log(chalk.gray('Run `ats llm interactions` to detect interactions from module call graph.'));
+          this.log(chalk.gray('Run `squint llm interactions` to detect interactions from module call graph.'));
         }
         return;
       }

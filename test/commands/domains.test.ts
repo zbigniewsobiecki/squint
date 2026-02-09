@@ -12,7 +12,7 @@ describe('domains commands', () => {
 
   beforeEach(() => {
     // Create a temporary directory for test files
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-domains-test-'));
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squint-domains-test-'));
     dbPath = path.join(testDir, 'test.db');
 
     // Create and populate test database

@@ -198,7 +198,7 @@ export default class Next extends Command {
     this.log('To annotate this relationship:');
     this.log(
       chalk.gray(
-        `  ats relationships set "<semantic description>" --from-id ${rel.fromDefinitionId} --to-id ${rel.toDefinitionId}`
+        `  squint relationships set "<semantic description>" --from-id ${rel.fromDefinitionId} --to-id ${rel.toDefinitionId}`
       )
     );
     this.log('');

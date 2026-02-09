@@ -1,12 +1,12 @@
 {
-  "name": "ats",
+  "name": "squint",
   "version": "1.0.0",
-  "description": "AST Parser CLI - Index TypeScript/JavaScript files into an SQLite database",
+  "description": "Squint — AST + LLM driven codebase analysis and visualization",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
   "bin": {
-    "ats": "./bin/run.js"
+    "squint": "./bin/run.js"
   },
   "scripts": {
     "build": "tsc && pnpm run build:ui",
@@ -29,8 +29,8 @@
     "format": "biome format --write ."
   },
   "oclif": {
-    "bin": "ats",
-    "dirname": "ats",
+    "bin": "squint",
+    "dirname": "squint",
     "commands": {
       "strategy": "pattern",
       "target": "./dist/commands",

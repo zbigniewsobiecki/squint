@@ -121,7 +121,7 @@ export default class Relationships extends Command {
 
       if (relationships.length === 0) {
         this.log(chalk.gray('No annotated relationships found.'));
-        this.log(chalk.gray('Use `ats relationships set` to annotate relationships between symbols.'));
+        this.log(chalk.gray('Use `squint relationships set` to annotate relationships between symbols.'));
       } else {
         for (const rel of relationships) {
           this.log(`${chalk.yellow(rel.fromName)} ${chalk.gray('->')} ${chalk.cyan(rel.toName)}`);

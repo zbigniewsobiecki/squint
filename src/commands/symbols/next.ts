@@ -171,7 +171,7 @@ export default class Next extends Command {
 
     // Hint - use --id for unambiguous reference
     this.log('To mark as understood:');
-    this.log(chalk.gray(`  ats symbols set ${aspect} "<description>" --id ${symbol.id}`));
+    this.log(chalk.gray(`  squint symbols set ${aspect} "<description>" --id ${symbol.id}`));
 
     // Show unannotated relationships if any
     if (symbol.unannotatedRelationships.length > 0) {
@@ -182,7 +182,7 @@ export default class Next extends Command {
       }
       this.log('');
       this.log(chalk.gray('After understanding this symbol, consider annotating relationships:'));
-      this.log(chalk.gray(`  ats relationships next --from-id ${symbol.id}`));
+      this.log(chalk.gray(`  squint relationships next --from-id ${symbol.id}`));
     }
   }
 }

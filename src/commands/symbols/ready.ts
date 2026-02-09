@@ -156,6 +156,6 @@ export default class Ready extends Command {
     this.log(`${totalMsg}, ${chalk.yellow(output.remaining)} remaining`);
 
     // Print hint
-    this.log(chalk.gray(`Hint: Use 'ats symbols set ${output.aspect} <value> --name <symbol>' to mark`));
+    this.log(chalk.gray(`Hint: Use 'squint symbols set ${output.aspect} <value> --name <symbol>' to mark`));
   }
 }

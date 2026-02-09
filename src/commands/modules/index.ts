@@ -48,7 +48,7 @@ export default class Modules extends Command {
 
       outputJsonOrPlain(this, flags.json, jsonData, () => {
         if (allModules.length === 0) {
-          this.log(chalk.gray('No modules found. Use `ats llm modules` to create modules.'));
+          this.log(chalk.gray('No modules found. Use `squint llm modules` to create modules.'));
           return;
         }
 

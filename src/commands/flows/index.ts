@@ -42,7 +42,7 @@ export default class Flows extends Command {
           this.log(JSON.stringify({ flows: [], stats: { flowCount: 0 } }));
         } else {
           this.log(chalk.gray('No flows detected yet.'));
-          this.log(chalk.gray('Run `ats llm flows` to detect user journey flows.'));
+          this.log(chalk.gray('Run `squint llm flows` to detect user journey flows.'));
         }
         return;
       }

@@ -55,7 +55,7 @@ export default class Symbols extends Command {
         if (domains.length === 0) {
           this.log(
             chalk.gray(
-              'No domains found. Use `ats symbols set domain \'["tag1", "tag2"]\' --name SymbolName` to add domains.'
+              'No domains found. Use `squint symbols set domain \'["tag1", "tag2"]\' --name SymbolName` to add domains.'
             )
           );
         } else {

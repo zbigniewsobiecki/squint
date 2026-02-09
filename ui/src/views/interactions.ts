@@ -104,7 +104,7 @@ function showEmptyState() {
     container.innerHTML = `
       <div class="empty-state">
         <h2>No interactions found</h2>
-        <p>Run 'ats llm interactions' to detect interactions first</p>
+        <p>Run 'squint llm interactions' to detect interactions first</p>
       </div>
     `;
   }
