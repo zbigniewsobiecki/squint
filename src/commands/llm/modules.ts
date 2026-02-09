@@ -1,8 +1,9 @@
-import { Command, Flags } from '@oclif/core';
+import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { LLMist } from 'llmist';
 
-import { SharedFlags, openDatabase } from '../_shared/index.js';
+import { LlmFlags, SharedFlags } from '../_shared/index.js';
+import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
 import { type LlmLogOptions, getErrorMessage, logLlmRequest, logLlmResponse } from './_shared/llm-utils.js';
 import { isValidModulePath, parseAssignmentCsv, parseDeepenCsv, parseTreeCsv } from './_shared/module-csv.js';
 import {
@@ -18,7 +19,7 @@ import {
   toSymbolForAssignment,
 } from './_shared/module-prompts.js';
 
-export default class Modules extends Command {
+export default class Modules extends BaseLlmCommand {
   static override description = 'Create module tree structure and assign symbols using LLM';
 
   static override examples = [
@@ -30,6 +31,12 @@ export default class Modules extends Command {
 
   static override flags = {
     database: SharedFlags.database,
+    json: SharedFlags.json,
+    ...LlmFlags,
+    'max-gate-retries': Flags.integer({
+      default: 3,
+      description: 'Maximum retry attempts when assignment gate fails',
+    }),
     phase: Flags.string({
       options: ['all', 'tree', 'assign'],
       default: 'all',
@@ -43,18 +50,6 @@ export default class Modules extends Command {
       default: 100,
       description: 'Maximum LLM iterations for assignment phase',
     }),
-    model: Flags.string({
-      default: 'openrouter:google/gemini-2.5-flash',
-      description: 'LLM model to use',
-    }),
-    'dry-run': Flags.boolean({
-      default: false,
-      description: 'Show proposed changes without persisting',
-    }),
-    force: Flags.boolean({
-      default: false,
-      description: 'Clear existing modules and start fresh',
-    }),
     incremental: Flags.boolean({
       default: false,
       description: 'Only assign unassigned symbols (skip tree generation)',
@@ -67,113 +62,75 @@ export default class Modules extends Command {
       default: 5,
       description: 'Maximum % of symbols allowed to remain unassigned',
     }),
-    'max-gate-retries': Flags.integer({
-      default: 3,
-      description: 'Maximum retry attempts when assignment gate fails',
-    }),
-    json: SharedFlags.json,
-    verbose: Flags.boolean({
-      default: false,
-      description: 'Show detailed progress',
-    }),
-    'show-llm-requests': Flags.boolean({
-      description: 'Show LLM request prompts',
-      default: false,
-    }),
-    'show-llm-responses': Flags.boolean({
-      description: 'Show LLM response text',
-      default: false,
-    }),
   };
 
-  public async run(): Promise<void> {
-    const { flags } = await this.parse(Modules);
-
-    const db = await openDatabase(flags.database, this);
-    const dryRun = flags['dry-run'];
-    const isJson = flags.json;
-    const verbose = flags.verbose;
-    const phase = flags.phase;
-    const incremental = flags.incremental;
+  protected async execute(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
+    const { db, isJson, dryRun, verbose } = ctx;
+    const phase = flags.phase as string;
+    const incremental = flags.incremental as boolean;
     const llmLogOptions: LlmLogOptions = {
-      showRequests: flags['show-llm-requests'],
-      showResponses: flags['show-llm-responses'],
+      showRequests: ctx.llmOptions.showLlmRequests,
+      showResponses: ctx.llmOptions.showLlmResponses,
       isJson,
     };
 
-    try {
-      // Check existing modules
-      const existingModuleCount = db.getModuleCount();
+    // Check existing modules
+    const existingModuleCount = db.getModuleCount();
 
-      if (existingModuleCount > 0 && !flags.force && !incremental) {
-        if (isJson) {
-          this.log(
-            JSON.stringify({
-              error: 'Modules already exist',
-              moduleCount: existingModuleCount,
-              hint: 'Use --force to recreate or --incremental to assign unassigned symbols',
-            })
-          );
-        } else {
-          this.log(chalk.yellow(`${existingModuleCount} modules already exist.`));
-          this.log(chalk.gray('Use --force to recreate or --incremental to assign unassigned symbols.'));
-        }
+    if (!incremental) {
+      if (
+        !this.checkExistingAndClear(ctx, {
+          entityName: 'Modules',
+          existingCount: existingModuleCount,
+          force: flags.force as boolean,
+          clearFn: () => db.clearModules(),
+          forceHint: 'Use --force to recreate or --incremental to assign unassigned symbols',
+        })
+      ) {
         return;
       }
+    }
 
-      // Clear modules if force is specified
-      if (flags.force && existingModuleCount > 0) {
-        if (!dryRun) {
-          db.clearModules();
-          if (!isJson) {
-            this.log(chalk.gray(`Cleared ${existingModuleCount} existing modules.`));
-          }
-        }
-      }
+    // Phase 1: Tree Structure Generation
+    if ((phase === 'all' || phase === 'tree') && !incremental) {
+      await this.runTreePhase(db, flags, dryRun, isJson, verbose, llmLogOptions);
+    }
 
-      // Phase 1: Tree Structure Generation
-      if ((phase === 'all' || phase === 'tree') && !incremental) {
-        await this.runTreePhase(db, flags, dryRun, isJson, verbose, llmLogOptions);
-      }
+    // Phase 2: Symbol Assignment
+    if (phase === 'all' || phase === 'assign') {
+      await this.runAssignmentPhase(db, flags, dryRun, isJson, verbose, llmLogOptions);
 
-      // Phase 2: Symbol Assignment
-      if (phase === 'all' || phase === 'assign') {
-        await this.runAssignmentPhase(db, flags, dryRun, isJson, verbose, llmLogOptions);
-
-        // Coverage gate: check unassigned % and run catch-up passes if needed
-        if (!dryRun) {
-          const maxUnassignedPct = flags['max-unassigned-pct'];
-          const maxGateRetries = flags['max-gate-retries'];
-          await this.runAssignmentCoverageGate(db, flags, maxUnassignedPct, maxGateRetries, isJson, verbose);
-        }
-
-        // Phase 3: Deepening (automatic after assignment, unless disabled)
-        const deepenThreshold = flags['deepen-threshold'];
-        if (deepenThreshold > 0) {
-          await this.runDeepenPhase(db, flags, deepenThreshold, dryRun, isJson, verbose, llmLogOptions);
-        }
-      }
-
-      // Assign color indices for consistent cross-view coloring
+      // Coverage gate: check unassigned % and run catch-up passes if needed
       if (!dryRun) {
-        db.assignColorIndices();
+        const maxUnassignedPct = flags['max-unassigned-pct'] as number;
+        const maxGateRetries = flags['max-gate-retries'] as number;
+        await this.runAssignmentCoverageGate(db, flags, maxUnassignedPct, maxGateRetries, isJson, verbose);
       }
 
-      // Final stats
-      if (!dryRun) {
-        const stats = db.getModuleStats();
-        if (isJson) {
-          this.log(JSON.stringify(stats));
-        } else {
-          this.log('');
-          this.log(chalk.green('Module tree complete.'));
-          this.log(chalk.gray(`  Modules: ${stats.moduleCount}`));
-          this.log(chalk.gray(`  Assigned symbols: ${stats.assigned}`));
-          this.log(chalk.gray(`  Unassigned symbols: ${stats.unassigned}`));
-        }
+      // Phase 3: Deepening (automatic after assignment, unless disabled)
+      const deepenThreshold = flags['deepen-threshold'] as number;
+      if (deepenThreshold > 0) {
+        await this.runDeepenPhase(db, flags, deepenThreshold, dryRun, isJson, verbose, llmLogOptions);
       }
-    } finally {
-      db.close();
+    }
+
+    // Assign color indices for consistent cross-view coloring
+    if (!dryRun) {
+      db.assignColorIndices();
+    }
+
+    // Final stats
+    if (!dryRun) {
+      const stats = db.getModuleStats();
+      if (isJson) {
+        this.log(JSON.stringify(stats));
+      } else {
+        this.log('');
+        this.log(chalk.green('Module tree complete.'));
+        this.log(chalk.gray(`  Modules: ${stats.moduleCount}`));
+        this.log(chalk.gray(`  Assigned symbols: ${stats.assigned}`));
+        this.log(chalk.gray(`  Unassigned symbols: ${stats.unassigned}`));
+      }
     }
   }
 
@@ -181,8 +138,8 @@ export default class Modules extends Command {
    * Phase 1: Generate the module tree structure.
    */
   private async runTreePhase(
-    db: ReturnType<typeof openDatabase> extends Promise<infer T> ? T : never,
-    flags: { model: string; 'dry-run': boolean },
+    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never,
+    flags: Record<string, unknown>,
     dryRun: boolean,
     isJson: boolean,
     verbose: boolean,
@@ -226,7 +183,7 @@ export default class Modules extends Command {
 
     // Call LLM
     const response = await LLMist.complete(userPrompt, {
-      model: flags.model,
+      model: flags.model as string,
       systemPrompt,
       temperature: 0,
     });
@@ -320,8 +277,8 @@ export default class Modules extends Command {
    * Phase 2: Assign symbols to modules.
    */
   private async runAssignmentPhase(
-    db: ReturnType<typeof openDatabase> extends Promise<infer T> ? T : never,
-    flags: { model: string; 'batch-size': number; 'max-iterations': number },
+    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never,
+    flags: Record<string, unknown>,
     dryRun: boolean,
     isJson: boolean,
     verbose: boolean,
@@ -362,8 +319,8 @@ export default class Modules extends Command {
       this.log(chalk.gray(`  Available modules: ${modules.length}`));
     }
 
-    const batchSize = flags['batch-size'];
-    const maxIterations = flags['max-iterations'];
+    const batchSize = flags['batch-size'] as number;
+    const maxIterations = flags['max-iterations'] as number;
     const systemPrompt = buildAssignmentSystemPrompt();
 
     let totalAssigned = 0;
@@ -386,7 +343,7 @@ export default class Modules extends Command {
         logLlmRequest(this, `runAssignmentPhase-batch${iteration}`, systemPrompt, userPrompt, llmLogOptions);
 
         const response = await LLMist.complete(userPrompt, {
-          model: flags.model,
+          model: flags.model as string,
           systemPrompt,
           temperature: 0,
         });
@@ -467,8 +424,8 @@ export default class Modules extends Command {
    * Coverage gate: check unassigned symbol % and run catch-up passes if needed.
    */
   private async runAssignmentCoverageGate(
-    db: ReturnType<typeof openDatabase> extends Promise<infer T> ? T : never,
-    flags: { model: string; 'batch-size': number },
+    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never,
+    flags: Record<string, unknown>,
     maxUnassignedPct: number,
     maxGateRetries: number,
     isJson: boolean,
@@ -493,7 +450,7 @@ export default class Modules extends Command {
 
     const modules = db.getAllModules();
     const moduleByPath = new Map(modules.map((m) => [m.fullPath, m]));
-    const batchSize = flags['batch-size'];
+    const batchSize = flags['batch-size'] as number;
 
     const relaxedSystemPrompt = `You are a software architect assigning symbols to modules.
 Each symbol must be assigned to exactly ONE module path.
@@ -534,7 +491,7 @@ assignment,42,project.frontend.screens.login
 
         try {
           const response = await LLMist.complete(userPrompt, {
-            model: flags.model,
+            model: flags.model as string,
             systemPrompt: relaxedSystemPrompt,
             temperature: 0,
           });
@@ -575,8 +532,8 @@ assignment,42,project.frontend.screens.login
    * Phase 3: Deepen large modules by splitting them into sub-modules.
    */
   private async runDeepenPhase(
-    db: ReturnType<typeof openDatabase> extends Promise<infer T> ? T : never,
-    flags: { model: string },
+    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never,
+    flags: Record<string, unknown>,
     threshold: number,
     dryRun: boolean,
     isJson: boolean,
@@ -635,7 +592,7 @@ assignment,42,project.frontend.screens.login
           logLlmRequest(this, `runDeepenPhase-${mod.fullPath}`, deepenSystemPrompt, deepenUserPrompt, llmLogOptions);
 
           const response = await LLMist.complete(deepenUserPrompt, {
-            model: flags.model,
+            model: flags.model as string,
             systemPrompt: deepenSystemPrompt,
             temperature: 0,
           });
@@ -743,7 +700,7 @@ assignment,42,project.frontend.screens.login
    * Build context for tree generation from database.
    */
   private buildTreeContext(
-    db: ReturnType<typeof openDatabase> extends Promise<infer T> ? T : never
+    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never
   ): TreeGenerationContext {
     // Get all annotated symbols
     const allSymbols = db.getUnassignedSymbols();

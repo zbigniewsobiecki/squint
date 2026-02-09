@@ -1,7 +1,5 @@
 #!/bin/bash
 
-CODEBASE_PATH=$HOME/Code/car-dealership
-DB=$CODEBASE_PATH/index.db
 MODEL=openrouter:google/gemini-2.5-flash
 LOG=ingest.log
 
@@ -12,9 +10,13 @@ while getopts "yd" opt; do
   case $opt in
     y) YES=true ;;
     d) DEBUG=true ;;
-    *) echo "Usage: $0 [-y] [-d]" >&2; exit 1 ;;
+    *) echo "Usage: $0 [-y] [-d] <codebase_path>" >&2; exit 1 ;;
   esac
 done
+shift $((OPTIND - 1))
+
+CODEBASE_PATH="${1:?Usage: $0 [-y] [-d] <codebase_path>}"
+DB=$CODEBASE_PATH/index.db
 
 DEBUG_FLAGS=""
 if $DEBUG; then

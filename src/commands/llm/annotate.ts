@@ -1,8 +1,9 @@
-import { Command, Flags } from '@oclif/core';
+import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { LLMist } from 'llmist';
 import type { IndexDatabase, ReadySymbolInfo } from '../../db/database.js';
-import { SharedFlags, openDatabase, readSourceAsString } from '../_shared/index.js';
+import { LlmFlags, SharedFlags, readSourceAsString } from '../_shared/index.js';
+import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
 import {
   type AnnotationResult,
   type IterationSummary,
@@ -93,7 +94,7 @@ interface IterationJsonOutput {
   relationshipCoverage: RelationshipCoverageInfo;
 }
 
-export default class Annotate extends Command {
+export default class Annotate extends BaseLlmCommand {
   static override description = 'Annotate symbols using an LLM in iterative batches';
 
   static override examples = [
@@ -106,16 +107,17 @@ export default class Annotate extends Command {
 
   static override flags = {
     database: SharedFlags.database,
+    json: SharedFlags.json,
+    ...LlmFlags,
+    force: Flags.boolean({
+      description: 'Annotate symbols even if dependencies are not annotated',
+      default: false,
+    }),
     aspect: Flags.string({
       char: 'a',
       description: 'Metadata key to annotate (can be repeated)',
       required: true,
       multiple: true,
-    }),
-    model: Flags.string({
-      char: 'm',
-      description: 'LLM model alias',
-      default: 'openrouter:google/gemini-2.5-flash',
     }),
     'batch-size': Flags.integer({
       char: 'b',
@@ -126,10 +128,6 @@ export default class Annotate extends Command {
       description: 'Maximum iterations (0 = unlimited)',
       default: 0,
     }),
-    'dry-run': Flags.boolean({
-      description: 'Parse LLM output but do not persist',
-      default: false,
-    }),
     kind: Flags.string({
       char: 'k',
       description: 'Filter by symbol kind',
@@ -137,19 +135,6 @@ export default class Annotate extends Command {
     file: Flags.string({
       char: 'f',
       description: 'Filter by file path pattern',
-    }),
-    json: SharedFlags.json,
-    'show-llm-requests': Flags.boolean({
-      description: 'Show full LLM requests (system + user prompts)',
-      default: false,
-    }),
-    'show-llm-responses': Flags.boolean({
-      description: 'Show full LLM responses',
-      default: false,
-    }),
-    force: Flags.boolean({
-      description: 'Annotate symbols even if dependencies are not annotated',
-      default: false,
     }),
     exclude: Flags.string({
       char: 'x',
@@ -161,23 +146,18 @@ export default class Annotate extends Command {
     }),
   };
 
-  public async run(): Promise<void> {
-    const { flags } = await this.parse(Annotate);
+  protected async execute(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
+    const { db, isJson, dryRun, model } = ctx;
 
-    // Open database
-    const db = await openDatabase(flags.database, this);
-
-    const aspects = flags.aspect;
+    const aspects = flags.aspect as string[];
     const primaryAspect = aspects[0]; // Use first aspect for readiness check
-    const batchSize = flags['batch-size'];
-    const maxIterations = flags['max-iterations'];
-    const dryRun = flags['dry-run'];
-    const isJson = flags.json;
-    const showLlmRequests = flags['show-llm-requests'];
-    const showLlmResponses = flags['show-llm-responses'];
-    const forceMode = flags.force;
-    const excludePattern = flags.exclude;
-    const relationshipLimit = flags['relationship-limit'];
+    const batchSize = flags['batch-size'] as number;
+    const maxIterations = flags['max-iterations'] as number;
+    const showLlmRequests = ctx.llmOptions.showLlmRequests;
+    const showLlmResponses = ctx.llmOptions.showLlmResponses;
+    const forceMode = flags.force as boolean;
+    const excludePattern = flags.exclude as string | undefined;
+    const relationshipLimit = flags['relationship-limit'] as number;
 
     // Build system prompt once
     const systemPrompt = buildSystemPrompt(aspects);
@@ -202,9 +182,10 @@ export default class Annotate extends Command {
       },
     };
 
+    // Annotate has unique header logic (includes aspects, batch size)
     if (!isJson) {
       this.log(chalk.bold(`LLM Annotation: ${aspects.join(', ')}`));
-      this.log(chalk.gray(`Model: ${flags.model}, Batch size: ${batchSize}`));
+      this.log(chalk.gray(`Model: ${model}, Batch size: ${batchSize}`));
       if (forceMode) {
         this.log(chalk.yellow('FORCE MODE - ignoring dependency ordering'));
       }
@@ -217,533 +198,532 @@ export default class Annotate extends Command {
       this.log('');
     }
 
-    try {
-      while (true) {
-        iteration++;
+    while (true) {
+      iteration++;
 
-        // Check max iterations
-        if (maxIterations > 0 && iteration > maxIterations) {
+      // Check max iterations
+      if (maxIterations > 0 && iteration > maxIterations) {
+        if (!isJson) {
+          this.log(chalk.yellow(`Reached maximum iterations (${maxIterations})`));
+        }
+        break;
+      }
+
+      // Get batch of symbols to annotate
+      let symbols: ReadySymbolInfo[];
+      let totalRemaining: number;
+      let blockedCount: number;
+
+      if (forceMode) {
+        // Force mode: get all unannotated symbols regardless of dependencies
+        const result = db.getAllUnannotatedSymbols(primaryAspect, {
+          limit: batchSize,
+          kind: flags.kind as string | undefined,
+          filePattern: flags.file as string | undefined,
+          excludePattern: excludePattern,
+        });
+        symbols = result.symbols;
+        totalRemaining = result.total;
+        blockedCount = 0; // No blocking in force mode
+      } else {
+        // Normal mode: only get symbols with all dependencies annotated
+        const result = db.getReadyToUnderstandSymbols(primaryAspect, {
+          limit: batchSize,
+          kind: flags.kind as string | undefined,
+          filePattern: flags.file as string | undefined,
+        });
+        symbols = result.symbols;
+        totalRemaining = result.totalReady + result.remaining;
+        blockedCount = result.remaining;
+      }
+
+      if (symbols.length === 0) {
+        if (totalRemaining === 0) {
           if (!isJson) {
-            this.log(chalk.yellow(`Reached maximum iterations (${maxIterations})`));
+            this.log(chalk.green(`All symbols have '${primaryAspect}' annotated!`));
           }
           break;
         }
+        if (blockedCount > 0 && !forceMode) {
+          // Check for circular dependencies
+          const cycles = db.findCycles(primaryAspect);
 
-        // Get batch of symbols to annotate
-        let symbols: ReadySymbolInfo[];
-        let totalRemaining: number;
-        let blockedCount: number;
-
-        if (forceMode) {
-          // Force mode: get all unannotated symbols regardless of dependencies
-          const result = db.getAllUnannotatedSymbols(primaryAspect, {
-            limit: batchSize,
-            kind: flags.kind,
-            filePattern: flags.file,
-            excludePattern: excludePattern,
-          });
-          symbols = result.symbols;
-          totalRemaining = result.total;
-          blockedCount = 0; // No blocking in force mode
-        } else {
-          // Normal mode: only get symbols with all dependencies annotated
-          const result = db.getReadyToUnderstandSymbols(primaryAspect, {
-            limit: batchSize,
-            kind: flags.kind,
-            filePattern: flags.file,
-          });
-          symbols = result.symbols;
-          totalRemaining = result.totalReady + result.remaining;
-          blockedCount = result.remaining;
-        }
-
-        if (symbols.length === 0) {
-          if (totalRemaining === 0) {
+          if (cycles.length === 0) {
+            // No cycles found - truly blocked
             if (!isJson) {
-              this.log(chalk.green(`All symbols have '${primaryAspect}' annotated!`));
+              this.log(chalk.yellow('No symbols ready for annotation.'));
+              this.log(chalk.gray(`${blockedCount} symbols have unmet dependencies.`));
+              this.log(chalk.gray('Use --force to annotate them anyway.'));
             }
             break;
           }
-          if (blockedCount > 0 && !forceMode) {
-            // Check for circular dependencies
-            const cycles = db.findCycles(primaryAspect);
 
-            if (cycles.length === 0) {
-              // No cycles found - truly blocked
-              if (!isJson) {
-                this.log(chalk.yellow('No symbols ready for annotation.'));
-                this.log(chalk.gray(`${blockedCount} symbols have unmet dependencies.`));
-                this.log(chalk.gray('Use --force to annotate them anyway.'));
-              }
-              break;
-            }
+          // Process circular dependency groups
+          if (!isJson) {
+            this.log('');
+            this.log(chalk.bold(`Found ${cycles.length} circular dependency group(s). Processing as batches...`));
+          }
 
-            // Process circular dependency groups
-            if (!isJson) {
-              this.log('');
-              this.log(chalk.bold(`Found ${cycles.length} circular dependency group(s). Processing as batches...`));
-            }
-
-            for (const cycle of cycles) {
-              // Get full symbol info for cycle members
-              const cycleSymbols: ReadySymbolInfo[] = cycle
-                .map((id) => db.getDefinitionById(id))
-                .filter((def): def is NonNullable<typeof def> => def !== null)
-                .map((def) => ({
-                  id: def.id,
-                  name: def.name,
-                  kind: def.kind,
-                  filePath: def.filePath,
-                  line: def.line,
-                  endLine: def.endLine,
-                  dependencyCount: 0,
-                }));
-
-              if (cycleSymbols.length === 0) continue;
-
-              const cycleNames = cycleSymbols.map((s) => s.name).join(', ');
-              if (!isJson) {
-                this.log(chalk.gray(`  Processing cycle: ${cycleNames} (${cycleSymbols.length} symbols)`));
-              }
-
-              // Enhance symbols with source code
-              const enhancedCycleSymbols = await this.enhanceSymbols(db, cycleSymbols, aspects, relationshipLimit);
-
-              // Get current coverage for the prompt
-              const cycleCoverage = db.getAspectCoverage({
-                kind: flags.kind,
-                filePattern: flags.file,
-              });
-              const cycleTotalSymbols = db.getFilteredDefinitionCount({
-                kind: flags.kind,
-                filePattern: flags.file,
-              });
-              const coverage = filterCoverageForAspects(cycleCoverage, aspects, cycleTotalSymbols);
-
-              // Build prompt with cycle context
-              const symbolContexts: SymbolContextEnhanced[] = enhancedCycleSymbols.map((s) => ({
-                id: s.id,
-                name: s.name,
-                kind: s.kind,
-                filePath: s.filePath,
-                line: s.line,
-                endLine: s.endLine,
-                sourceCode: s.sourceCode,
-                isExported: s.isExported,
-                dependencies: s.dependencies,
-                relationshipsToAnnotate: s.relationshipsToAnnotate,
-                incomingDependencies: s.incomingDependencies,
-                incomingDependencyCount: s.incomingDependencyCount,
+          for (const cycle of cycles) {
+            // Get full symbol info for cycle members
+            const cycleSymbols: ReadySymbolInfo[] = cycle
+              .map((id) => db.getDefinitionById(id))
+              .filter((def): def is NonNullable<typeof def> => def !== null)
+              .map((def) => ({
+                id: def.id,
+                name: def.name,
+                kind: def.kind,
+                filePath: def.filePath,
+                line: def.line,
+                endLine: def.endLine,
+                dependencyCount: 0,
               }));
 
-              // Build user prompt with cycle note
-              const basePrompt = buildUserPromptEnhanced(symbolContexts, aspects, coverage);
-              const cycleNote =
-                '\nNote: These symbols have circular dependencies - they reference each other. Annotate them based on their collective purpose and individual contributions.\n';
-              const userPrompt = cycleNote + basePrompt;
+            if (cycleSymbols.length === 0) continue;
 
-              // Call LLM
-              let response: string;
-              try {
-                response = await LLMist.complete(userPrompt, {
-                  model: flags.model,
-                  systemPrompt,
-                  temperature: 0,
-                });
-              } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                if (!isJson) {
-                  this.log(chalk.red(`    LLM error for cycle: ${message}`));
-                }
+            const cycleNames = cycleSymbols.map((s) => s.name).join(', ');
+            if (!isJson) {
+              this.log(chalk.gray(`  Processing cycle: ${cycleNames} (${cycleSymbols.length} symbols)`));
+            }
+
+            // Enhance symbols with source code
+            const enhancedCycleSymbols = await this.enhanceSymbols(db, cycleSymbols, aspects, relationshipLimit);
+
+            // Get current coverage for the prompt
+            const cycleCoverage = db.getAspectCoverage({
+              kind: flags.kind as string | undefined,
+              filePattern: flags.file as string | undefined,
+            });
+            const cycleTotalSymbols = db.getFilteredDefinitionCount({
+              kind: flags.kind as string | undefined,
+              filePattern: flags.file as string | undefined,
+            });
+            const coverage = filterCoverageForAspects(cycleCoverage, aspects, cycleTotalSymbols);
+
+            // Build prompt with cycle context
+            const symbolContexts: SymbolContextEnhanced[] = enhancedCycleSymbols.map((s) => ({
+              id: s.id,
+              name: s.name,
+              kind: s.kind,
+              filePath: s.filePath,
+              line: s.line,
+              endLine: s.endLine,
+              sourceCode: s.sourceCode,
+              isExported: s.isExported,
+              dependencies: s.dependencies,
+              relationshipsToAnnotate: s.relationshipsToAnnotate,
+              incomingDependencies: s.incomingDependencies,
+              incomingDependencyCount: s.incomingDependencyCount,
+            }));
+
+            // Build user prompt with cycle note
+            const basePrompt = buildUserPromptEnhanced(symbolContexts, aspects, coverage);
+            const cycleNote =
+              '\nNote: These symbols have circular dependencies - they reference each other. Annotate them based on their collective purpose and individual contributions.\n';
+            const userPrompt = cycleNote + basePrompt;
+
+            // Call LLM
+            let response: string;
+            try {
+              response = await LLMist.complete(userPrompt, {
+                model,
+                systemPrompt,
+                temperature: 0,
+              });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              if (!isJson) {
+                this.log(chalk.red(`    LLM error for cycle: ${message}`));
+              }
+              totalErrors++;
+              continue;
+            }
+
+            // Parse and persist results
+            const parseResult = parseCombinedCsv(response);
+            const validSymbolIds = new Set(enhancedCycleSymbols.map((s) => s.id));
+
+            // Build valid relationship map for cycle symbols
+            const cycleValidRelationships = new Map<number, Set<number>>();
+            for (const s of enhancedCycleSymbols) {
+              const toIds = new Set<number>();
+              for (const rel of s.relationshipsToAnnotate) {
+                toIds.add(rel.toId);
+              }
+              cycleValidRelationships.set(s.id, toIds);
+            }
+
+            let cycleAnnotations = 0;
+            let cycleRelAnnotations = 0;
+
+            // Process symbol annotations
+            for (const row of parseResult.symbols) {
+              if (!validSymbolIds.has(row.symbolId)) continue;
+              if (!aspects.includes(row.aspect)) continue;
+
+              const validationError = this.validateValue(row.aspect, row.value);
+              if (validationError) {
                 totalErrors++;
                 continue;
               }
 
-              // Parse and persist results
-              const parseResult = parseCombinedCsv(response);
-              const validSymbolIds = new Set(enhancedCycleSymbols.map((s) => s.id));
-
-              // Build valid relationship map for cycle symbols
-              const cycleValidRelationships = new Map<number, Set<number>>();
-              for (const s of enhancedCycleSymbols) {
-                const toIds = new Set<number>();
-                for (const rel of s.relationshipsToAnnotate) {
-                  toIds.add(rel.toId);
-                }
-                cycleValidRelationships.set(s.id, toIds);
+              if (!dryRun) {
+                db.setDefinitionMetadata(row.symbolId, row.aspect, row.value);
               }
-
-              let cycleAnnotations = 0;
-              let cycleRelAnnotations = 0;
-
-              // Process symbol annotations
-              for (const row of parseResult.symbols) {
-                if (!validSymbolIds.has(row.symbolId)) continue;
-                if (!aspects.includes(row.aspect)) continue;
-
-                const validationError = this.validateValue(row.aspect, row.value);
-                if (validationError) {
-                  totalErrors++;
-                  continue;
-                }
-
-                if (!dryRun) {
-                  db.setDefinitionMetadata(row.symbolId, row.aspect, row.value);
-                }
-                cycleAnnotations++;
-                totalAnnotations++;
-              }
-
-              // Process relationship annotations
-              for (const row of parseResult.relationships) {
-                const fromId = row.fromId;
-                const toId = row.toId;
-
-                if (!validSymbolIds.has(fromId)) continue;
-
-                const toIds = cycleValidRelationships.get(fromId);
-                if (!toIds || !toIds.has(toId)) continue;
-
-                if (!row.value || row.value.length < 5) {
-                  totalErrors++;
-                  continue;
-                }
-
-                if (!dryRun) {
-                  db.setRelationshipAnnotation(fromId, toId, row.value);
-                }
-                cycleRelAnnotations++;
-                totalRelationshipAnnotations++;
-              }
-
-              if (!isJson) {
-                this.log(
-                  chalk.green(`    ✓ Annotated ${cycleAnnotations} symbols, ${cycleRelAnnotations} relationships`)
-                );
-              }
+              cycleAnnotations++;
+              totalAnnotations++;
             }
 
-            // Continue the loop to process any newly unblocked symbols
-            continue;
+            // Process relationship annotations
+            for (const row of parseResult.relationships) {
+              const fromId = row.fromId;
+              const toId = row.toId;
+
+              if (!validSymbolIds.has(fromId)) continue;
+
+              const toIds = cycleValidRelationships.get(fromId);
+              if (!toIds || !toIds.has(toId)) continue;
+
+              if (!row.value || row.value.length < 5) {
+                totalErrors++;
+                continue;
+              }
+
+              if (!dryRun) {
+                db.setRelationshipAnnotation(fromId, toId, row.value);
+              }
+              cycleRelAnnotations++;
+              totalRelationshipAnnotations++;
+            }
+
+            if (!isJson) {
+              this.log(
+                chalk.green(`    ✓ Annotated ${cycleAnnotations} symbols, ${cycleRelAnnotations} relationships`)
+              );
+            }
           }
-          break;
+
+          // Continue the loop to process any newly unblocked symbols
+          continue;
         }
+        break;
+      }
 
-        // Enhance symbols with source code and dependency context
-        const enhancedSymbols = await this.enhanceSymbols(db, symbols, aspects, relationshipLimit);
+      // Enhance symbols with source code and dependency context
+      const enhancedSymbols = await this.enhanceSymbols(db, symbols, aspects, relationshipLimit);
 
-        // Get current coverage for the prompt
-        const allCoverage = db.getAspectCoverage({
-          kind: flags.kind,
-          filePattern: flags.file,
+      // Get current coverage for the prompt
+      const allCoverage = db.getAspectCoverage({
+        kind: flags.kind as string | undefined,
+        filePattern: flags.file as string | undefined,
+      });
+      const totalSymbols = db.getFilteredDefinitionCount({
+        kind: flags.kind as string | undefined,
+        filePattern: flags.file as string | undefined,
+      });
+      const coverage = filterCoverageForAspects(allCoverage, aspects, totalSymbols);
+
+      // Build prompt
+      const symbolContexts: SymbolContextEnhanced[] = enhancedSymbols.map((s) => ({
+        id: s.id,
+        name: s.name,
+        kind: s.kind,
+        filePath: s.filePath,
+        line: s.line,
+        endLine: s.endLine,
+        sourceCode: s.sourceCode,
+        isExported: s.isExported,
+        dependencies: s.dependencies,
+        relationshipsToAnnotate: s.relationshipsToAnnotate,
+        incomingDependencies: s.incomingDependencies,
+        incomingDependencyCount: s.incomingDependencyCount,
+      }));
+      const userPrompt = buildUserPromptEnhanced(symbolContexts, aspects, coverage);
+
+      // Show LLM request if requested
+      if (showLlmRequests) {
+        this.log('');
+        this.log(chalk.bold.cyan('═'.repeat(60)));
+        this.log(chalk.bold.cyan('LLM REQUEST'));
+        this.log(chalk.bold.cyan('═'.repeat(60)));
+        this.log('');
+        this.log(chalk.bold('SYSTEM PROMPT:'));
+        this.log(chalk.dim('─'.repeat(40)));
+        this.log(systemPrompt);
+        this.log('');
+        this.log(chalk.bold('USER PROMPT:'));
+        this.log(chalk.dim('─'.repeat(40)));
+        this.log(userPrompt);
+        this.log(chalk.bold.cyan('═'.repeat(60)));
+        this.log('');
+      }
+
+      // Call LLM
+      let response: string;
+      try {
+        response = await LLMist.complete(userPrompt, {
+          model,
+          systemPrompt,
+          temperature: 0,
         });
-        const totalSymbols = db.getFilteredDefinitionCount({
-          kind: flags.kind,
-          filePattern: flags.file,
-        });
-        const coverage = filterCoverageForAspects(allCoverage, aspects, totalSymbols);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.error(chalk.red(`LLM API error: ${message}`));
+      }
 
-        // Build prompt
-        const symbolContexts: SymbolContextEnhanced[] = enhancedSymbols.map((s) => ({
-          id: s.id,
-          name: s.name,
-          kind: s.kind,
-          filePath: s.filePath,
-          line: s.line,
-          endLine: s.endLine,
-          sourceCode: s.sourceCode,
-          isExported: s.isExported,
-          dependencies: s.dependencies,
-          relationshipsToAnnotate: s.relationshipsToAnnotate,
-          incomingDependencies: s.incomingDependencies,
-          incomingDependencyCount: s.incomingDependencyCount,
-        }));
-        const userPrompt = buildUserPromptEnhanced(symbolContexts, aspects, coverage);
+      // Show LLM response if requested
+      if (showLlmResponses) {
+        this.log('');
+        this.log(chalk.bold.green('═'.repeat(60)));
+        this.log(chalk.bold.green('LLM RESPONSE'));
+        this.log(chalk.bold.green('═'.repeat(60)));
+        this.log('');
+        this.log(response);
+        this.log('');
+        this.log(chalk.bold.green('═'.repeat(60)));
+        this.log('');
+      }
 
-        // Show LLM request if requested
-        if (showLlmRequests) {
-          this.log('');
-          this.log(chalk.bold.cyan('═'.repeat(60)));
-          this.log(chalk.bold.cyan('LLM REQUEST'));
-          this.log(chalk.bold.cyan('═'.repeat(60)));
-          this.log('');
-          this.log(chalk.bold('SYSTEM PROMPT:'));
-          this.log(chalk.dim('─'.repeat(40)));
-          this.log(systemPrompt);
-          this.log('');
-          this.log(chalk.bold('USER PROMPT:'));
-          this.log(chalk.dim('─'.repeat(40)));
-          this.log(userPrompt);
-          this.log(chalk.bold.cyan('═'.repeat(60)));
-          this.log('');
+      // Parse combined CSV response
+      const parseResult = parseCombinedCsv(response);
+
+      // Process results
+      const iterationResults: AnnotationResult[] = [];
+      const iterationRelResults: RelationshipAnnotationResult[] = [];
+      const validSymbolIds = new Set(enhancedSymbols.map((s) => s.id));
+      const symbolNameById = new Map(enhancedSymbols.map((s) => [s.id, s.name]));
+
+      // Build valid relationship map (from_id -> Set of valid to_ids)
+      const validRelationships = new Map<number, Map<number, string>>();
+      for (const s of enhancedSymbols) {
+        const toMap = new Map<number, string>();
+        for (const rel of s.relationshipsToAnnotate) {
+          toMap.set(rel.toId, rel.toName);
         }
+        validRelationships.set(s.id, toMap);
+      }
 
-        // Call LLM
-        let response: string;
-        try {
-          response = await LLMist.complete(userPrompt, {
-            model: flags.model,
-            systemPrompt,
-            temperature: 0,
+      // Log parse errors
+      for (const error of parseResult.errors) {
+        if (!isJson) {
+          this.log(chalk.yellow(`  Warning: ${error}`));
+        }
+        totalErrors++;
+      }
+
+      // Process symbol annotation rows
+      for (const row of parseResult.symbols) {
+        const symbolId = row.symbolId;
+
+        // Validate symbol ID
+        if (!validSymbolIds.has(symbolId)) {
+          iterationResults.push({
+            symbolId,
+            symbolName: String(symbolId),
+            aspect: row.aspect,
+            value: row.value,
+            success: false,
+            error: `Invalid symbol ID: ${symbolId}`,
           });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.error(chalk.red(`LLM API error: ${message}`));
-        }
-
-        // Show LLM response if requested
-        if (showLlmResponses) {
-          this.log('');
-          this.log(chalk.bold.green('═'.repeat(60)));
-          this.log(chalk.bold.green('LLM RESPONSE'));
-          this.log(chalk.bold.green('═'.repeat(60)));
-          this.log('');
-          this.log(response);
-          this.log('');
-          this.log(chalk.bold.green('═'.repeat(60)));
-          this.log('');
-        }
-
-        // Parse combined CSV response
-        const parseResult = parseCombinedCsv(response);
-
-        // Process results
-        const iterationResults: AnnotationResult[] = [];
-        const iterationRelResults: RelationshipAnnotationResult[] = [];
-        const validSymbolIds = new Set(enhancedSymbols.map((s) => s.id));
-        const symbolNameById = new Map(enhancedSymbols.map((s) => [s.id, s.name]));
-
-        // Build valid relationship map (from_id -> Set of valid to_ids)
-        const validRelationships = new Map<number, Map<number, string>>();
-        for (const s of enhancedSymbols) {
-          const toMap = new Map<number, string>();
-          for (const rel of s.relationshipsToAnnotate) {
-            toMap.set(rel.toId, rel.toName);
-          }
-          validRelationships.set(s.id, toMap);
-        }
-
-        // Log parse errors
-        for (const error of parseResult.errors) {
-          if (!isJson) {
-            this.log(chalk.yellow(`  Warning: ${error}`));
-          }
           totalErrors++;
+          continue;
         }
 
-        // Process symbol annotation rows
-        for (const row of parseResult.symbols) {
-          const symbolId = row.symbolId;
-
-          // Validate symbol ID
-          if (!validSymbolIds.has(symbolId)) {
-            iterationResults.push({
-              symbolId,
-              symbolName: String(symbolId),
-              aspect: row.aspect,
-              value: row.value,
-              success: false,
-              error: `Invalid symbol ID: ${symbolId}`,
-            });
-            totalErrors++;
-            continue;
-          }
-
-          // Validate aspect
-          if (!aspects.includes(row.aspect)) {
-            iterationResults.push({
-              symbolId,
-              symbolName: symbolNameById.get(symbolId) || String(symbolId),
-              aspect: row.aspect,
-              value: row.value,
-              success: false,
-              error: `Unexpected aspect: ${row.aspect}`,
-            });
-            totalErrors++;
-            continue;
-          }
-
-          // Validate value (aspect-specific)
-          const validationError = this.validateValue(row.aspect, row.value);
-          if (validationError) {
-            iterationResults.push({
-              symbolId,
-              symbolName: symbolNameById.get(symbolId) || String(symbolId),
-              aspect: row.aspect,
-              value: row.value,
-              success: false,
-              error: validationError,
-            });
-            totalErrors++;
-            continue;
-          }
-
-          // Persist (unless dry-run)
-          if (!dryRun) {
-            db.setDefinitionMetadata(symbolId, row.aspect, row.value);
-          }
-
+        // Validate aspect
+        if (!aspects.includes(row.aspect)) {
           iterationResults.push({
             symbolId,
             symbolName: symbolNameById.get(symbolId) || String(symbolId),
             aspect: row.aspect,
             value: row.value,
-            success: true,
+            success: false,
+            error: `Unexpected aspect: ${row.aspect}`,
           });
-          totalAnnotations++;
+          totalErrors++;
+          continue;
         }
 
-        // Process relationship annotation rows
-        for (const row of parseResult.relationships) {
-          const fromId = row.fromId;
-          const toId = row.toId;
+        // Validate value (aspect-specific)
+        const validationError = this.validateValue(row.aspect, row.value);
+        if (validationError) {
+          iterationResults.push({
+            symbolId,
+            symbolName: symbolNameById.get(symbolId) || String(symbolId),
+            aspect: row.aspect,
+            value: row.value,
+            success: false,
+            error: validationError,
+          });
+          totalErrors++;
+          continue;
+        }
 
-          // Validate from_id
-          if (!validSymbolIds.has(fromId)) {
-            iterationRelResults.push({
-              fromId,
-              fromName: String(fromId),
-              toId,
-              toName: String(toId),
-              value: row.value,
-              success: false,
-              error: `Invalid from_id: ${fromId}`,
-            });
-            totalErrors++;
-            continue;
-          }
+        // Persist (unless dry-run)
+        if (!dryRun) {
+          db.setDefinitionMetadata(symbolId, row.aspect, row.value);
+        }
 
-          // Validate relationship exists
-          const toMap = validRelationships.get(fromId);
-          if (!toMap || !toMap.has(toId)) {
-            iterationRelResults.push({
-              fromId,
-              fromName: symbolNameById.get(fromId) || String(fromId),
-              toId,
-              toName: String(toId),
-              value: row.value,
-              success: false,
-              error: `Unexpected relationship: ${fromId} → ${toId}`,
-            });
-            totalErrors++;
-            continue;
-          }
+        iterationResults.push({
+          symbolId,
+          symbolName: symbolNameById.get(symbolId) || String(symbolId),
+          aspect: row.aspect,
+          value: row.value,
+          success: true,
+        });
+        totalAnnotations++;
+      }
 
-          // Validate value is not empty
-          if (!row.value || row.value.length < 5) {
-            const errorMsg = 'Relationship description must be at least 5 characters';
-            iterationRelResults.push({
-              fromId,
-              fromName: symbolNameById.get(fromId) || String(fromId),
-              toId,
-              toName: toMap.get(toId) || String(toId),
-              value: row.value,
-              success: false,
-              error: errorMsg,
-            });
-            retryQueue.add(fromId, toId, errorMsg);
-            totalErrors++;
-            continue;
-          }
+      // Process relationship annotation rows
+      for (const row of parseResult.relationships) {
+        const fromId = row.fromId;
+        const toId = row.toId;
 
-          // Persist (unless dry-run)
-          if (!dryRun) {
-            db.setRelationshipAnnotation(fromId, toId, row.value);
-          }
+        // Validate from_id
+        if (!validSymbolIds.has(fromId)) {
+          iterationRelResults.push({
+            fromId,
+            fromName: String(fromId),
+            toId,
+            toName: String(toId),
+            value: row.value,
+            success: false,
+            error: `Invalid from_id: ${fromId}`,
+          });
+          totalErrors++;
+          continue;
+        }
 
+        // Validate relationship exists
+        const toMap = validRelationships.get(fromId);
+        if (!toMap || !toMap.has(toId)) {
+          iterationRelResults.push({
+            fromId,
+            fromName: symbolNameById.get(fromId) || String(fromId),
+            toId,
+            toName: String(toId),
+            value: row.value,
+            success: false,
+            error: `Unexpected relationship: ${fromId} → ${toId}`,
+          });
+          totalErrors++;
+          continue;
+        }
+
+        // Validate value is not empty
+        if (!row.value || row.value.length < 5) {
+          const errorMsg = 'Relationship description must be at least 5 characters';
           iterationRelResults.push({
             fromId,
             fromName: symbolNameById.get(fromId) || String(fromId),
             toId,
             toName: toMap.get(toId) || String(toId),
             value: row.value,
-            success: true,
+            success: false,
+            error: errorMsg,
           });
-          totalRelationshipAnnotations++;
+          retryQueue.add(fromId, toId, errorMsg);
+          totalErrors++;
+          continue;
         }
 
-        // Get updated coverage
-        const updatedCoverage = db.getAspectCoverage({
-          kind: flags.kind,
-          filePattern: flags.file,
-        });
-        const finalCoverage = filterCoverageForAspects(updatedCoverage, aspects, totalSymbols);
-
-        // Get relationship coverage (handle missing table in older databases)
-        let annotatedRels = 0;
-        let unannotatedRels = 0;
-        try {
-          annotatedRels = db.getRelationshipAnnotationCount();
-          unannotatedRels = db.getUnannotatedRelationshipCount();
-        } catch {
-          // Table doesn't exist - continue with zeros
+        // Persist (unless dry-run)
+        if (!dryRun) {
+          db.setRelationshipAnnotation(fromId, toId, row.value);
         }
-        const totalRels = annotatedRels + unannotatedRels;
-        const relCoverage: RelationshipCoverageInfo = {
-          annotated: annotatedRels,
-          total: totalRels,
-          percentage: totalRels > 0 ? (annotatedRels / totalRels) * 100 : 0,
-        };
 
-        // Get ready/blocked counts
-        const updatedResult = db.getReadyToUnderstandSymbols(primaryAspect, {
-          limit: 1,
-          kind: flags.kind,
-          filePattern: flags.file,
+        iterationRelResults.push({
+          fromId,
+          fromName: symbolNameById.get(fromId) || String(fromId),
+          toId,
+          toName: toMap.get(toId) || String(toId),
+          value: row.value,
+          success: true,
         });
+        totalRelationshipAnnotations++;
+      }
 
-        const summary: IterationSummary = {
+      // Get updated coverage
+      const updatedCoverage = db.getAspectCoverage({
+        kind: flags.kind as string | undefined,
+        filePattern: flags.file as string | undefined,
+      });
+      const finalCoverage = filterCoverageForAspects(updatedCoverage, aspects, totalSymbols);
+
+      // Get relationship coverage (handle missing table in older databases)
+      let annotatedRels = 0;
+      let unannotatedRels = 0;
+      try {
+        annotatedRels = db.getRelationshipAnnotationCount();
+        unannotatedRels = db.getUnannotatedRelationshipCount();
+      } catch {
+        // Table doesn't exist - continue with zeros
+      }
+      const totalRels = annotatedRels + unannotatedRels;
+      const relCoverage: RelationshipCoverageInfo = {
+        annotated: annotatedRels,
+        total: totalRels,
+        percentage: totalRels > 0 ? (annotatedRels / totalRels) * 100 : 0,
+      };
+
+      // Get ready/blocked counts
+      const updatedResult = db.getReadyToUnderstandSymbols(primaryAspect, {
+        limit: 1,
+        kind: flags.kind as string | undefined,
+        filePattern: flags.file as string | undefined,
+      });
+
+      const summary: IterationSummary = {
+        iteration,
+        results: iterationResults,
+        relationshipResults: iterationRelResults,
+        coverage: finalCoverage,
+        relationshipCoverage: relCoverage,
+        readyCount: updatedResult.totalReady,
+        blockedCount: updatedResult.remaining,
+      };
+
+      // Output iteration results
+      if (isJson) {
+        jsonOutput.iterations.push({
           iteration,
+          symbolsProcessed: enhancedSymbols.length,
           results: iterationResults,
           relationshipResults: iterationRelResults,
           coverage: finalCoverage,
           relationshipCoverage: relCoverage,
-          readyCount: updatedResult.totalReady,
-          blockedCount: updatedResult.remaining,
-        };
-
-        // Output iteration results
-        if (isJson) {
-          jsonOutput.iterations.push({
-            iteration,
-            symbolsProcessed: enhancedSymbols.length,
-            results: iterationResults,
-            relationshipResults: iterationRelResults,
-            coverage: finalCoverage,
-            relationshipCoverage: relCoverage,
-          });
-        } else {
-          for (const line of formatIterationResults(summary)) {
-            this.log(line);
-          }
+        });
+      } else {
+        for (const line of formatIterationResults(summary)) {
+          this.log(line);
         }
       }
+    }
 
-      // Retry failed relationship annotations (single pass)
-      const retryable = retryQueue.getRetryable(3);
-      if (retryable.length > 0 && !dryRun) {
-        if (!isJson) {
-          this.log('');
-          this.log(chalk.bold(`Retrying ${retryable.length} failed relationship annotations...`));
-        }
+    // Retry failed relationship annotations (single pass)
+    const retryable = retryQueue.getRetryable(3);
+    if (retryable.length > 0 && !dryRun) {
+      if (!isJson) {
+        this.log('');
+        this.log(chalk.bold(`Retrying ${retryable.length} failed relationship annotations...`));
+      }
 
-        // Build focused prompt for failed relationships only
-        // Group by fromId for context
-        const byFromId = new Map<number, number[]>();
-        for (const { fromId, toId } of retryable) {
-          if (!byFromId.has(fromId)) byFromId.set(fromId, []);
-          byFromId.get(fromId)!.push(toId);
-        }
+      // Build focused prompt for failed relationships only
+      // Group by fromId for context
+      const byFromId = new Map<number, number[]>();
+      for (const { fromId, toId } of retryable) {
+        if (!byFromId.has(fromId)) byFromId.set(fromId, []);
+        byFromId.get(fromId)!.push(toId);
+      }
 
-        let retrySuccessCount = 0;
-        for (const [fromId, toIds] of byFromId) {
-          const def = db.getDefinitionById(fromId);
-          if (!def) continue;
+      let retrySuccessCount = 0;
+      for (const [fromId, toIds] of byFromId) {
+        const def = db.getDefinitionById(fromId);
+        if (!def) continue;
 
-          const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
+        const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
 
-          // Build minimal retry prompt
-          const retryPrompt = `Please provide relationship annotations for these specific relationships. Be thorough and descriptive (minimum 5 characters).
+        // Build minimal retry prompt
+        const retryPrompt = `Please provide relationship annotations for these specific relationships. Be thorough and descriptive (minimum 5 characters).
 
 Symbol: ${def.name} (${def.kind})
 File: ${def.filePath}:${def.line}
@@ -767,91 +747,88 @@ from_id,to_id,relationship_annotation
 ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this dependency>"`).join('\n')}
 \`\`\``;
 
-          try {
-            const response = await LLMist.complete(retryPrompt, {
-              model: flags.model,
-              systemPrompt:
-                'You are annotating code relationships. Provide clear, concise descriptions of how symbols are related.',
-              temperature: 0,
-            });
+        try {
+          const response = await LLMist.complete(retryPrompt, {
+            model,
+            systemPrompt:
+              'You are annotating code relationships. Provide clear, concise descriptions of how symbols are related.',
+            temperature: 0,
+          });
 
-            // Parse response for relationship annotations
-            const lines = response.split('\n');
-            for (const line of lines) {
-              const match = line.match(/^(\d+),(\d+),["']?(.+?)["']?$/);
-              if (match) {
-                const retryFromId = Number.parseInt(match[1], 10);
-                const retryToId = Number.parseInt(match[2], 10);
-                const value = match[3].trim();
+          // Parse response for relationship annotations
+          const lines = response.split('\n');
+          for (const line of lines) {
+            const match = line.match(/^(\d+),(\d+),["']?(.+?)["']?$/);
+            if (match) {
+              const retryFromId = Number.parseInt(match[1], 10);
+              const retryToId = Number.parseInt(match[2], 10);
+              const value = match[3].trim();
 
-                if (retryFromId === fromId && toIds.includes(retryToId) && value.length >= 5) {
-                  db.setRelationshipAnnotation(retryFromId, retryToId, value);
-                  retrySuccessCount++;
-                  totalRelationshipAnnotations++;
-                }
+              if (retryFromId === fromId && toIds.includes(retryToId) && value.length >= 5) {
+                db.setRelationshipAnnotation(retryFromId, retryToId, value);
+                retrySuccessCount++;
+                totalRelationshipAnnotations++;
               }
             }
-          } catch {
-            // Retry failed, continue
           }
-        }
-
-        if (!isJson && retrySuccessCount > 0) {
-          this.log(chalk.green(`  Successfully retried ${retrySuccessCount} relationships`));
+        } catch {
+          // Retry failed, continue
         }
       }
 
-      // Final summary
-      const finalCoverageData = db.getAspectCoverage({
-        kind: flags.kind,
-        filePattern: flags.file,
-      });
-      const totalSymbols = db.getFilteredDefinitionCount({
-        kind: flags.kind,
-        filePattern: flags.file,
-      });
-      const coverage = filterCoverageForAspects(finalCoverageData, aspects, totalSymbols);
-
-      // Get final relationship coverage (handle missing table in older databases)
-      let finalAnnotatedRels = 0;
-      let finalUnannotatedRels = 0;
-      try {
-        finalAnnotatedRels = db.getRelationshipAnnotationCount();
-        finalUnannotatedRels = db.getUnannotatedRelationshipCount();
-      } catch {
-        // Table doesn't exist - continue with zeros
+      if (!isJson && retrySuccessCount > 0) {
+        this.log(chalk.green(`  Successfully retried ${retrySuccessCount} relationships`));
       }
-      const finalTotalRels = finalAnnotatedRels + finalUnannotatedRels;
-      const finalRelCoverage: RelationshipCoverageInfo = {
-        annotated: finalAnnotatedRels,
-        total: finalTotalRels,
-        percentage: finalTotalRels > 0 ? (finalAnnotatedRels / finalTotalRels) * 100 : 0,
+    }
+
+    // Final summary
+    const finalCoverageData = db.getAspectCoverage({
+      kind: flags.kind as string | undefined,
+      filePattern: flags.file as string | undefined,
+    });
+    const totalSymbols = db.getFilteredDefinitionCount({
+      kind: flags.kind as string | undefined,
+      filePattern: flags.file as string | undefined,
+    });
+    const coverage = filterCoverageForAspects(finalCoverageData, aspects, totalSymbols);
+
+    // Get final relationship coverage (handle missing table in older databases)
+    let finalAnnotatedRels = 0;
+    let finalUnannotatedRels = 0;
+    try {
+      finalAnnotatedRels = db.getRelationshipAnnotationCount();
+      finalUnannotatedRels = db.getUnannotatedRelationshipCount();
+    } catch {
+      // Table doesn't exist - continue with zeros
+    }
+    const finalTotalRels = finalAnnotatedRels + finalUnannotatedRels;
+    const finalRelCoverage: RelationshipCoverageInfo = {
+      annotated: finalAnnotatedRels,
+      total: finalTotalRels,
+      percentage: finalTotalRels > 0 ? (finalAnnotatedRels / finalTotalRels) * 100 : 0,
+    };
+
+    if (isJson) {
+      jsonOutput.summary = {
+        totalIterations: iteration - 1,
+        totalAnnotations,
+        totalRelationshipAnnotations,
+        totalErrors,
+        coverage,
+        relationshipCoverage: finalRelCoverage,
       };
-
-      if (isJson) {
-        jsonOutput.summary = {
-          totalIterations: iteration - 1,
-          totalAnnotations,
-          totalRelationshipAnnotations,
-          totalErrors,
-          coverage,
-          relationshipCoverage: finalRelCoverage,
-        };
-        this.log(JSON.stringify(jsonOutput, null, 2));
-      } else {
-        for (const line of formatFinalSummary(
-          totalAnnotations,
-          totalRelationshipAnnotations,
-          totalErrors,
-          iteration - 1,
-          coverage,
-          finalRelCoverage
-        )) {
-          this.log(line);
-        }
+      this.log(JSON.stringify(jsonOutput, null, 2));
+    } else {
+      for (const line of formatFinalSummary(
+        totalAnnotations,
+        totalRelationshipAnnotations,
+        totalErrors,
+        iteration - 1,
+        coverage,
+        finalRelCoverage
+      )) {
+        this.log(line);
       }
-    } finally {
-      db.close();
     }
   }
 

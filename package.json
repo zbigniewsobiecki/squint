@@ -34,7 +34,7 @@
     "commands": {
       "strategy": "pattern",
       "target": "./dist/commands",
-      "globPatterns": ["**/*.js", "!**/_shared/**", "!**/llm/flows/**"]
+      "globPatterns": ["**/*.js", "!**/_shared/**", "!**/llm/flows/**", "!**/llm/features/**"]
     },
     "default": "parse",
     "topicSeparator": " "

@@ -8,11 +8,12 @@
  * - GapFlowGenerator: Creates flows for uncovered interactions
  */
 
-import { Command, Flags } from '@oclif/core';
+import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 import type { IndexDatabase } from '../../db/database.js';
 import type { InteractionWithPaths } from '../../db/schema.js';
-import { SharedFlags, openDatabase } from '../_shared/index.js';
+import { LlmFlags, SharedFlags } from '../_shared/index.js';
+import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
 import {
   calculatePercentage,
   getErrorMessage,
@@ -34,7 +35,7 @@ import {
 } from './flows/index.js';
 import type { EntryPointModuleInfo } from './flows/types.js';
 
-export default class Flows extends Command {
+export default class Flows extends BaseLlmCommand {
   static override description = 'Detect user journey flows from entry points and trace through interactions';
 
   static override examples = [
@@ -46,36 +47,8 @@ export default class Flows extends Command {
 
   static override flags = {
     database: SharedFlags.database,
-
-    // LLM options
-    model: Flags.string({
-      char: 'm',
-      description: 'LLM model alias',
-      default: 'openrouter:google/gemini-2.5-flash',
-    }),
-
-    // Output options
-    'dry-run': Flags.boolean({
-      description: 'Show results without persisting',
-      default: false,
-    }),
-    force: Flags.boolean({
-      description: 'Re-detect even if flows exist',
-      default: false,
-    }),
     json: SharedFlags.json,
-    verbose: Flags.boolean({
-      description: 'Show detailed progress',
-      default: false,
-    }),
-    'show-llm-requests': Flags.boolean({
-      description: 'Show full LLM requests (system + user prompts)',
-      default: false,
-    }),
-    'show-llm-responses': Flags.boolean({
-      description: 'Show full LLM responses',
-      default: false,
-    }),
+    ...LlmFlags,
     'min-interaction-coverage': Flags.integer({
       description: 'Minimum % of interactions that must appear in flows',
       default: 90,
@@ -98,294 +71,261 @@ export default class Flows extends Command {
     }),
   };
 
-  public async run(): Promise<void> {
-    const { flags } = await this.parse(Flows);
+  protected async execute(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
+    const { db, isJson, dryRun, verbose, model, llmOptions } = ctx;
 
-    const db = await openDatabase(flags.database, this);
-    const isJson = flags.json;
-    const dryRun = flags['dry-run'];
-    const verbose = flags.verbose;
-    const model = flags.model;
-    const llmOptions = {
-      showLlmRequests: flags['show-llm-requests'],
-      showLlmResponses: flags['show-llm-responses'],
+    // Check if flows already exist
+    const existingCount = db.getFlowCount();
+    if (
+      !this.checkExistingAndClear(ctx, {
+        entityName: 'Flows',
+        existingCount,
+        force: flags.force as boolean,
+        clearFn: () => db.clearFlows(),
+        forceHint: 'Use --force to re-detect',
+      })
+    ) {
+      return;
+    }
+
+    // Check if interactions exist
+    const interactionCount = db.getInteractionCount();
+    if (interactionCount === 0) {
+      if (isJson) {
+        this.log(JSON.stringify({ error: 'No interactions found', hint: 'Run llm interactions first' }));
+      } else {
+        this.log(chalk.yellow('No interactions found.'));
+        this.log(chalk.gray('Run `squint llm interactions` first to detect module interactions.'));
+      }
+      return;
+    }
+
+    this.logHeader(ctx, 'Flow Detection');
+
+    // Step 1: Detect entry point modules using LLM classification
+    logStep(this, 1, 'Detecting Entry Point Modules (LLM Classification)', isJson);
+
+    const entryPointDetector = new EntryPointDetector(db, this, isJson, verbose);
+    const entryPointModules = await entryPointDetector.detectEntryPointModules(model, llmOptions);
+
+    logVerbose(this, `Found ${entryPointModules.length} LLM-classified entry point modules`, verbose, isJson);
+
+    if (entryPointModules.length === 0 && !isJson) {
+      this.log(chalk.yellow('No entry point modules detected.'));
+      this.log(chalk.gray('Gap flows will still be created for uncovered interactions.'));
+    }
+
+    // Step 2: Build atomic flows (deterministic, no LLM)
+    logStep(this, 2, 'Building Atomic Flows (Tier 0)', isJson);
+
+    const interactions = db.getAllInteractions();
+    const allModules = db.getAllModules();
+    const allModulesWithMembers = db.getAllModulesWithMembers();
+
+    const atomicFlowBuilder = new AtomicFlowBuilder();
+    const atomicFlows = atomicFlowBuilder.buildAtomicFlows(interactions, allModules);
+
+    const atomicCoverage = new Set(atomicFlows.flatMap((f) => f.interactionIds));
+    const relevantInteractions = interactions.filter((i) => i.pattern !== 'test-internal');
+    const atomicCoverageCount = relevantInteractions.filter((i) => atomicCoverage.has(i.id)).length;
+    logVerbose(
+      this,
+      `Built ${atomicFlows.length} atomic flows covering ${atomicCoverageCount}/${relevantInteractions.length} relevant interactions`,
+      verbose,
+      isJson
+    );
+
+    // Step 3: Trace composite flows from entry points (tier 1)
+    logStep(this, 3, 'Tracing Composite Flows from Entry Points (Tier 1)', isJson);
+
+    const definitionCallGraph = db.getDefinitionCallGraphMap();
+    const tracingContext = buildFlowTracingContext(definitionCallGraph, allModulesWithMembers, interactions);
+    const flowTracer = new FlowTracer(tracingContext);
+    const flowSuggestions = flowTracer.traceFlowsFromEntryPoints(entryPointModules, atomicFlows);
+
+    logVerbose(this, `Traced ${flowSuggestions.length} composite flows`, verbose, isJson);
+
+    // Step 4: Enhance composite flow metadata with LLM (skip tier-0)
+    logStep(this, 4, 'Enhancing Composite Flow Metadata with LLM', isJson);
+
+    const sharedFlowEnhancer = new FlowEnhancer(this, isJson);
+    let enhancedFlows: FlowSuggestion[] = [...atomicFlows];
+    if (flowSuggestions.length > 0) {
+      try {
+        const enhanced = await sharedFlowEnhancer.enhanceFlowsWithLLM(flowSuggestions, interactions, model, llmOptions);
+        enhancedFlows.push(...enhanced);
+        logVerbose(this, `Enhanced ${enhanced.length} composite flows`, verbose, isJson);
+      } catch (error) {
+        const message = getErrorMessage(error);
+        if (!isJson) {
+          this.log(chalk.yellow(`LLM enhancement failed: ${message}`));
+        }
+        enhancedFlows.push(...flowSuggestions);
+      }
+    }
+
+    // Step 5: Create gap flows for uncovered interactions (tier 0)
+    logStep(this, 5, 'Creating Gap Flows for Uncovered Interactions', isJson);
+
+    let coveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
+    const gapFlowGenerator = new GapFlowGenerator();
+    let gapFlows = gapFlowGenerator.createGapFlows(coveredIds, interactions);
+    enhancedFlows.push(...gapFlows);
+
+    logVerbose(this, `Created ${gapFlows.length} gap flows for uncovered interactions`, verbose, isJson);
+
+    // Step 6: Validate flow completeness (LLM review) with auto-retry loop
+    logStep(this, 6, 'Validating Flow Completeness (LLM Review)', isJson);
+
+    const maxGateRetries = flags['max-gate-retries'] as number;
+    const thresholds = {
+      minInteractionCoverage: flags['min-interaction-coverage'] as number,
+      maxGapFlowRatio: flags['max-gap-flow-ratio'] as number,
+      minEntryPointYield: flags['min-entry-point-yield'] as number,
+      minInferredCoverage: flags['min-inferred-coverage'] as number,
     };
 
-    try {
-      // Check if flows already exist
-      const existingCount = db.getFlowCount();
-      if (existingCount > 0 && !flags.force) {
-        if (isJson) {
-          this.log(
-            JSON.stringify({
-              error: 'Flows already exist',
-              count: existingCount,
-              hint: 'Use --force to re-detect',
-            })
+    const flowValidator = new FlowValidator(db, this, isJson, verbose);
+
+    for (let attempt = 0; attempt <= maxGateRetries; attempt++) {
+      try {
+        // Run validator (initial or with gate failure context)
+        const gateResults =
+          attempt > 0 ? this.checkCoverageGates(enhancedFlows, interactions, entryPointModules, thresholds) : null;
+
+        const validatorFlows = await flowValidator.validateAndFillGaps(
+          enhancedFlows,
+          interactions,
+          model,
+          llmOptions,
+          gateResults?.failures,
+          entryPointModules,
+          atomicFlows
+        );
+
+        // Post-validation gate: reject flows whose actionType doesn't exist in entry point definitions
+        const verifiedFlows = this.filterUnverifiedFlows(validatorFlows, entryPointModules);
+        const gateRejects = validatorFlows.length - verifiedFlows.length;
+        if (gateRejects > 0) {
+          logVerbose(
+            this,
+            `  Rejected ${gateRejects} flows: actionType not found in entry point definitions`,
+            verbose,
+            isJson
           );
-        } else {
-          this.log(chalk.yellow(`${existingCount} flows already exist.`));
-          this.log(chalk.gray('Use --force to re-detect flows.'));
         }
-        return;
-      }
 
-      // Check if interactions exist
-      const interactionCount = db.getInteractionCount();
-      if (interactionCount === 0) {
-        if (isJson) {
-          this.log(JSON.stringify({ error: 'No interactions found', hint: 'Run llm interactions first' }));
-        } else {
-          this.log(chalk.yellow('No interactions found.'));
-          this.log(chalk.gray('Run `squint llm interactions` first to detect module interactions.'));
-        }
-        return;
-      }
-
-      if (!isJson) {
-        this.log(chalk.bold('Flow Detection'));
-        this.log(chalk.gray(`Model: ${model}`));
-        this.log('');
-      }
-
-      // Clear existing flows if force
-      if (existingCount > 0 && flags.force && !dryRun) {
-        db.clearFlows();
-        logVerbose(this, `Cleared ${existingCount} existing flows`, verbose, isJson);
-      }
-
-      // Step 1: Detect entry point modules using LLM classification
-      logStep(this, 1, 'Detecting Entry Point Modules (LLM Classification)', isJson);
-
-      const entryPointDetector = new EntryPointDetector(db, this, isJson, verbose);
-      const entryPointModules = await entryPointDetector.detectEntryPointModules(model, llmOptions);
-
-      logVerbose(this, `Found ${entryPointModules.length} LLM-classified entry point modules`, verbose, isJson);
-
-      if (entryPointModules.length === 0 && !isJson) {
-        this.log(chalk.yellow('No entry point modules detected.'));
-        this.log(chalk.gray('Gap flows will still be created for uncovered interactions.'));
-      }
-
-      // Step 2: Build atomic flows (deterministic, no LLM)
-      logStep(this, 2, 'Building Atomic Flows (Tier 0)', isJson);
-
-      const interactions = db.getAllInteractions();
-      const allModules = db.getAllModules();
-      const allModulesWithMembers = db.getAllModulesWithMembers();
-
-      const atomicFlowBuilder = new AtomicFlowBuilder();
-      const atomicFlows = atomicFlowBuilder.buildAtomicFlows(interactions, allModules);
-
-      const atomicCoverage = new Set(atomicFlows.flatMap((f) => f.interactionIds));
-      const relevantInteractions = interactions.filter((i) => i.pattern !== 'test-internal');
-      const atomicCoverageCount = relevantInteractions.filter((i) => atomicCoverage.has(i.id)).length;
-      logVerbose(
-        this,
-        `Built ${atomicFlows.length} atomic flows covering ${atomicCoverageCount}/${relevantInteractions.length} relevant interactions`,
-        verbose,
-        isJson
-      );
-
-      // Step 3: Trace composite flows from entry points (tier 1)
-      logStep(this, 3, 'Tracing Composite Flows from Entry Points (Tier 1)', isJson);
-
-      const definitionCallGraph = db.getDefinitionCallGraphMap();
-      const tracingContext = buildFlowTracingContext(definitionCallGraph, allModulesWithMembers, interactions);
-      const flowTracer = new FlowTracer(tracingContext);
-      const flowSuggestions = flowTracer.traceFlowsFromEntryPoints(entryPointModules, atomicFlows);
-
-      logVerbose(this, `Traced ${flowSuggestions.length} composite flows`, verbose, isJson);
-
-      // Step 4: Enhance composite flow metadata with LLM (skip tier-0)
-      logStep(this, 4, 'Enhancing Composite Flow Metadata with LLM', isJson);
-
-      const sharedFlowEnhancer = new FlowEnhancer(this, isJson);
-      let enhancedFlows: FlowSuggestion[] = [...atomicFlows];
-      if (flowSuggestions.length > 0) {
-        try {
-          const enhanced = await sharedFlowEnhancer.enhanceFlowsWithLLM(
-            flowSuggestions,
-            interactions,
-            model,
-            llmOptions
+        if (verifiedFlows.length > 0) {
+          // Build dedup key set from existing flows
+          const existingKeys = new Set(
+            enhancedFlows
+              .filter((f) => f.actionType && f.targetEntity)
+              .map((f) => `${f.entryPointModuleId}:${f.actionType}:${f.targetEntity}`)
           );
-          enhancedFlows.push(...enhanced);
-          logVerbose(this, `Enhanced ${enhanced.length} composite flows`, verbose, isJson);
-        } catch (error) {
-          const message = getErrorMessage(error);
-          if (!isJson) {
-            this.log(chalk.yellow(`LLM enhancement failed: ${message}`));
-          }
-          enhancedFlows.push(...flowSuggestions);
-        }
-      }
+          const existingSlugs = new Set(enhancedFlows.map((f) => f.slug));
 
-      // Step 5: Create gap flows for uncovered interactions (tier 0)
-      logStep(this, 5, 'Creating Gap Flows for Uncovered Interactions', isJson);
+          const dedup = (flows: FlowSuggestion[]): FlowSuggestion[] =>
+            flows.filter((f) => {
+              if (f.actionType && f.targetEntity) {
+                const key = `${f.entryPointModuleId}:${f.actionType}:${f.targetEntity}`;
+                if (existingKeys.has(key)) return false;
+                existingKeys.add(key);
+                return true;
+              }
+              // Fallback: slug-based dedup for unclassified flows
+              if (existingSlugs.has(f.slug)) return false;
+              existingSlugs.add(f.slug);
+              return true;
+            });
 
-      let coveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
-      const gapFlowGenerator = new GapFlowGenerator();
-      let gapFlows = gapFlowGenerator.createGapFlows(coveredIds, interactions);
-      enhancedFlows.push(...gapFlows);
-
-      logVerbose(this, `Created ${gapFlows.length} gap flows for uncovered interactions`, verbose, isJson);
-
-      // Step 6: Validate flow completeness (LLM review) with auto-retry loop
-      logStep(this, 6, 'Validating Flow Completeness (LLM Review)', isJson);
-
-      const maxGateRetries = flags['max-gate-retries'];
-      const thresholds = {
-        minInteractionCoverage: flags['min-interaction-coverage'],
-        maxGapFlowRatio: flags['max-gap-flow-ratio'],
-        minEntryPointYield: flags['min-entry-point-yield'],
-        minInferredCoverage: flags['min-inferred-coverage'],
-      };
-
-      const flowValidator = new FlowValidator(db, this, isJson, verbose);
-
-      for (let attempt = 0; attempt <= maxGateRetries; attempt++) {
-        try {
-          // Run validator (initial or with gate failure context)
-          const gateResults =
-            attempt > 0 ? this.checkCoverageGates(enhancedFlows, interactions, entryPointModules, thresholds) : null;
-
-          const validatorFlows = await flowValidator.validateAndFillGaps(
-            enhancedFlows,
-            interactions,
-            model,
-            llmOptions,
-            gateResults?.failures,
-            entryPointModules,
-            atomicFlows
-          );
-
-          // Post-validation gate: reject flows whose actionType doesn't exist in entry point definitions
-          const verifiedFlows = this.filterUnverifiedFlows(validatorFlows, entryPointModules);
-          const gateRejects = validatorFlows.length - verifiedFlows.length;
-          if (gateRejects > 0) {
+          // Run through enhancer for consistent naming
+          try {
+            const enhancedValidatorFlows = await sharedFlowEnhancer.enhanceFlowsWithLLM(
+              verifiedFlows,
+              interactions,
+              model,
+              llmOptions
+            );
+            const dedupedFlows = dedup(enhancedValidatorFlows);
+            enhancedFlows.push(...dedupedFlows);
+            const filteredCount = enhancedValidatorFlows.length - dedupedFlows.length;
+            const suffix = filteredCount > 0 ? ` (${filteredCount} duplicates filtered)` : '';
             logVerbose(
               this,
-              `  Rejected ${gateRejects} flows: actionType not found in entry point definitions`,
+              `  Added ${dedupedFlows.length} flows from validation pass ${attempt + 1}${suffix}`,
+              verbose,
+              isJson
+            );
+          } catch {
+            const dedupedFlows = dedup(verifiedFlows);
+            enhancedFlows.push(...dedupedFlows);
+            const filteredCount = verifiedFlows.length - dedupedFlows.length;
+            const suffix = filteredCount > 0 ? ` (${filteredCount} duplicates filtered)` : '';
+            logVerbose(
+              this,
+              `  Added ${dedupedFlows.length} unenhanced flows from validation pass ${attempt + 1}${suffix}`,
               verbose,
               isJson
             );
           }
 
-          if (verifiedFlows.length > 0) {
-            // Build dedup key set from existing flows
-            const existingKeys = new Set(
-              enhancedFlows
-                .filter((f) => f.actionType && f.targetEntity)
-                .map((f) => `${f.entryPointModuleId}:${f.actionType}:${f.targetEntity}`)
-            );
-            const existingSlugs = new Set(enhancedFlows.map((f) => f.slug));
-
-            const dedup = (flows: FlowSuggestion[]): FlowSuggestion[] =>
-              flows.filter((f) => {
-                if (f.actionType && f.targetEntity) {
-                  const key = `${f.entryPointModuleId}:${f.actionType}:${f.targetEntity}`;
-                  if (existingKeys.has(key)) return false;
-                  existingKeys.add(key);
-                  return true;
-                }
-                // Fallback: slug-based dedup for unclassified flows
-                if (existingSlugs.has(f.slug)) return false;
-                existingSlugs.add(f.slug);
-                return true;
-              });
-
-            // Run through enhancer for consistent naming
-            try {
-              const enhancedValidatorFlows = await sharedFlowEnhancer.enhanceFlowsWithLLM(
-                verifiedFlows,
-                interactions,
-                model,
-                llmOptions
-              );
-              const dedupedFlows = dedup(enhancedValidatorFlows);
-              enhancedFlows.push(...dedupedFlows);
-              const filteredCount = enhancedValidatorFlows.length - dedupedFlows.length;
-              const suffix = filteredCount > 0 ? ` (${filteredCount} duplicates filtered)` : '';
-              logVerbose(
-                this,
-                `  Added ${dedupedFlows.length} flows from validation pass ${attempt + 1}${suffix}`,
-                verbose,
-                isJson
-              );
-            } catch {
-              const dedupedFlows = dedup(verifiedFlows);
-              enhancedFlows.push(...dedupedFlows);
-              const filteredCount = verifiedFlows.length - dedupedFlows.length;
-              const suffix = filteredCount > 0 ? ` (${filteredCount} duplicates filtered)` : '';
-              logVerbose(
-                this,
-                `  Added ${dedupedFlows.length} unenhanced flows from validation pass ${attempt + 1}${suffix}`,
-                verbose,
-                isJson
-              );
-            }
-
-            // Regenerate gap flows with updated coverage
-            coveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
-            const oldGapCount = gapFlows.length;
-            // Remove old gap flows
-            enhancedFlows = enhancedFlows.filter((f) => f.entryPointModuleId !== null);
-            gapFlows = gapFlowGenerator.createGapFlows(coveredIds, interactions);
-            enhancedFlows.push(...gapFlows);
-            if (gapFlows.length < oldGapCount) {
-              logVerbose(this, `  Gap flows reduced: ${oldGapCount} → ${gapFlows.length}`, verbose, isJson);
-            }
+          // Regenerate gap flows with updated coverage
+          coveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
+          const oldGapCount = gapFlows.length;
+          // Remove old gap flows
+          enhancedFlows = enhancedFlows.filter((f) => f.entryPointModuleId !== null);
+          gapFlows = gapFlowGenerator.createGapFlows(coveredIds, interactions);
+          enhancedFlows.push(...gapFlows);
+          if (gapFlows.length < oldGapCount) {
+            logVerbose(this, `  Gap flows reduced: ${oldGapCount} → ${gapFlows.length}`, verbose, isJson);
           }
-        } catch (error) {
-          const message = getErrorMessage(error);
-          logVerbose(this, `  Validator pass ${attempt + 1} failed: ${message}`, verbose, isJson);
         }
+      } catch (error) {
+        const message = getErrorMessage(error);
+        logVerbose(this, `  Validator pass ${attempt + 1} failed: ${message}`, verbose, isJson);
+      }
 
-        // Check gates
-        const currentGates = this.checkCoverageGates(enhancedFlows, interactions, entryPointModules, thresholds);
-        if (currentGates.passed) {
-          logVerbose(this, '  All coverage gates passed', verbose, isJson);
-          break;
-        }
+      // Check gates
+      const currentGates = this.checkCoverageGates(enhancedFlows, interactions, entryPointModules, thresholds);
+      if (currentGates.passed) {
+        logVerbose(this, '  All coverage gates passed', verbose, isJson);
+        break;
+      }
 
-        if (attempt === maxGateRetries) {
-          for (const failure of currentGates.failures) {
-            logWarning(
-              this,
-              `Coverage gate: ${failure.gate} (${failure.actual.toFixed(1)}% vs ${failure.threshold}%) - ${failure.details}`,
-              isJson
-            );
-          }
-          logVerbose(
+      if (attempt === maxGateRetries) {
+        for (const failure of currentGates.failures) {
+          logWarning(
             this,
-            `  Coverage gates not met after ${maxGateRetries} retries, proceeding with best results`,
-            verbose,
+            `Coverage gate: ${failure.gate} (${failure.actual.toFixed(1)}% vs ${failure.threshold}%) - ${failure.details}`,
             isJson
           );
         }
+        logVerbose(
+          this,
+          `  Coverage gates not met after ${maxGateRetries} retries, proceeding with best results`,
+          verbose,
+          isJson
+        );
       }
-
-      // Interaction-overlap dedup across all tiers
-      const preDedup = enhancedFlows.length;
-      enhancedFlows = deduplicateByInteractionOverlap(enhancedFlows);
-      const dedupRemoved = preDedup - enhancedFlows.length;
-      if (dedupRemoved > 0) {
-        logVerbose(this, `Interaction-overlap dedup removed ${dedupRemoved} flows`, verbose, isJson);
-      }
-
-      // Step 7: Persist all tiers (atomics first, then composites with subflow refs)
-      logStep(this, 7, 'Persisting Flows', isJson);
-
-      if (!dryRun && enhancedFlows.length > 0) {
-        this.persistFlows(db, enhancedFlows, verbose, isJson);
-      }
-
-      // Output results
-      this.outputResults(db, enhancedFlows, gapFlows, entryPointModules, interactions, dryRun, isJson);
-    } finally {
-      db.close();
     }
+
+    // Interaction-overlap dedup across all tiers
+    const preDedup = enhancedFlows.length;
+    enhancedFlows = deduplicateByInteractionOverlap(enhancedFlows);
+    const dedupRemoved = preDedup - enhancedFlows.length;
+    if (dedupRemoved > 0) {
+      logVerbose(this, `Interaction-overlap dedup removed ${dedupRemoved} flows`, verbose, isJson);
+    }
+
+    // Step 7: Persist all tiers (atomics first, then composites with subflow refs)
+    logStep(this, 7, 'Persisting Flows', isJson);
+
+    if (!dryRun && enhancedFlows.length > 0) {
+      this.persistFlows(db, enhancedFlows, verbose, isJson);
+    }
+
+    // Output results
+    this.outputResults(db, enhancedFlows, gapFlows, entryPointModules, interactions, dryRun, isJson);
   }
 
   /**

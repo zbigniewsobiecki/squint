@@ -1,9 +1,10 @@
-import { Command, Flags } from '@oclif/core';
+import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { LLMist } from 'llmist';
 import type { IndexDatabase } from '../../db/database-facade.js';
 import type { EnrichedModuleCallEdge, Module, ModuleCallEdge } from '../../db/schema.js';
-import { SharedFlags, openDatabase } from '../_shared/index.js';
+import { LlmFlags, SharedFlags } from '../_shared/index.js';
+import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
 import { parseCSVLine } from './_shared/csv-utils.js';
 import { groupModulesByEntity } from './_shared/entity-utils.js';
 import { getErrorMessage } from './_shared/llm-utils.js';
@@ -25,7 +26,7 @@ interface InferredInteraction {
   reason: string;
 }
 
-export default class Interactions extends Command {
+export default class Interactions extends BaseLlmCommand {
   static override description = 'Detect module interactions from call graph and generate semantics using LLM';
 
   static override examples = [
@@ -37,39 +38,11 @@ export default class Interactions extends Command {
 
   static override flags = {
     database: SharedFlags.database,
-
-    // LLM options
-    model: Flags.string({
-      char: 'm',
-      description: 'LLM model alias',
-      default: 'openrouter:google/gemini-2.5-flash',
-    }),
+    json: SharedFlags.json,
+    ...LlmFlags,
     'batch-size': Flags.integer({
       description: 'Module edges per LLM batch for semantic generation',
       default: 10,
-    }),
-
-    // Output options
-    'dry-run': Flags.boolean({
-      description: 'Show results without persisting',
-      default: false,
-    }),
-    force: Flags.boolean({
-      description: 'Re-detect even if interactions exist',
-      default: false,
-    }),
-    json: SharedFlags.json,
-    verbose: Flags.boolean({
-      description: 'Show detailed progress',
-      default: false,
-    }),
-    'show-llm-requests': Flags.boolean({
-      description: 'Show LLM request prompts',
-      default: false,
-    }),
-    'show-llm-responses': Flags.boolean({
-      description: 'Show LLM response text',
-      default: false,
     }),
     'min-relationship-coverage': Flags.integer({
       description: 'Minimum % of cross-module relationships covered by interactions',
@@ -81,292 +54,264 @@ export default class Interactions extends Command {
     }),
   };
 
-  public async run(): Promise<void> {
-    const { flags } = await this.parse(Interactions);
+  protected async execute(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
+    const { db, isJson, dryRun, verbose, model } = ctx;
+    const batchSize = flags['batch-size'] as number;
+    const showLlmRequests = ctx.llmOptions.showLlmRequests;
+    const showLlmResponses = ctx.llmOptions.showLlmResponses;
 
-    const db = await openDatabase(flags.database, this);
-    const isJson = flags.json;
-    const dryRun = flags['dry-run'];
-    const verbose = flags.verbose;
-    const model = flags.model;
-    const batchSize = flags['batch-size'];
-    const showLlmRequests = flags['show-llm-requests'];
-    const showLlmResponses = flags['show-llm-responses'];
+    // Check if interactions already exist
+    const existingCount = db.getInteractionCount();
+    if (
+      !this.checkExistingAndClear(ctx, {
+        entityName: 'Interactions',
+        existingCount,
+        force: flags.force as boolean,
+        clearFn: () => db.clearInteractions(),
+        forceHint: 'Use --force to re-detect',
+      })
+    ) {
+      return;
+    }
 
-    try {
-      // Check if interactions already exist
-      const existingCount = db.getInteractionCount();
-      if (existingCount > 0 && !flags.force) {
-        if (isJson) {
-          this.log(
-            JSON.stringify({
-              error: 'Interactions already exist',
-              count: existingCount,
-              hint: 'Use --force to re-detect',
-            })
-          );
-        } else {
-          this.log(chalk.yellow(`${existingCount} interactions already exist.`));
-          this.log(chalk.gray('Use --force to re-detect interactions.'));
-        }
-        return;
+    this.logHeader(ctx, 'Interaction Detection');
+
+    // Get enriched module call graph
+    const enrichedEdges = db.getEnrichedModuleCallGraph();
+
+    if (enrichedEdges.length === 0) {
+      if (isJson) {
+        this.log(JSON.stringify({ error: 'No module call graph edges found', hint: 'Run llm modules first' }));
+      } else {
+        this.log(chalk.yellow('No module call graph edges found.'));
+        this.log(chalk.gray('Ensure modules are assigned first with `squint llm modules`'));
       }
+      return;
+    }
 
-      if (!isJson) {
-        this.log(chalk.bold('Interaction Detection'));
-        this.log(chalk.gray(`Model: ${model}`));
-        this.log('');
-      }
+    // Count utility vs business edges
+    const utilityCount = enrichedEdges.filter((e) => e.edgePattern === 'utility').length;
+    const businessCount = enrichedEdges.filter((e) => e.edgePattern === 'business').length;
 
-      // Clear existing interactions if force
-      if (existingCount > 0 && flags.force && !dryRun) {
-        db.clearInteractions();
+    if (!isJson && verbose) {
+      this.log(chalk.gray(`Found ${enrichedEdges.length} module-to-module edges`));
+      this.log(chalk.gray(`  Business logic: ${businessCount}, Utility: ${utilityCount}`));
+    }
+
+    // Generate semantics for each edge using LLM
+    const interactions: InteractionSuggestion[] = [];
+
+    for (let i = 0; i < enrichedEdges.length; i += batchSize) {
+      const batch = enrichedEdges.slice(i, i + batchSize);
+
+      try {
+        const suggestions = await this.generateInteractionSemantics(batch, model);
+        interactions.push(...suggestions);
+
         if (!isJson && verbose) {
-          this.log(chalk.gray(`Cleared ${existingCount} existing interactions`));
+          this.log(
+            chalk.gray(`  Batch ${Math.floor(i / batchSize) + 1}: Generated ${suggestions.length} interactions`)
+          );
+        }
+      } catch (error) {
+        const message = getErrorMessage(error);
+        if (!isJson) {
+          this.log(chalk.yellow(`  Batch ${Math.floor(i / batchSize) + 1} failed: ${message}`));
+        }
+        // Fall back to auto-generated semantics
+        for (const edge of batch) {
+          interactions.push(this.createDefaultInteraction(edge));
+        }
+      }
+    }
+
+    // Tag test-internal interactions: if either module is a test module, override pattern
+    const testModuleIds = db.getTestModuleIds();
+    if (testModuleIds.size > 0) {
+      for (const interaction of interactions) {
+        if (testModuleIds.has(interaction.fromModuleId) || testModuleIds.has(interaction.toModuleId)) {
+          interaction.pattern = 'test-internal';
         }
       }
 
-      // Get enriched module call graph
-      const enrichedEdges = db.getEnrichedModuleCallGraph();
-
-      if (enrichedEdges.length === 0) {
-        if (isJson) {
-          this.log(JSON.stringify({ error: 'No module call graph edges found', hint: 'Run llm modules first' }));
-        } else {
-          this.log(chalk.yellow('No module call graph edges found.'));
-          this.log(chalk.gray('Ensure modules are assigned first with `squint llm modules`'));
-        }
-        return;
+      const testInternalCount = interactions.filter((i) => i.pattern === 'test-internal').length;
+      if (!isJson && verbose && testInternalCount > 0) {
+        this.log(chalk.gray(`  Tagged ${testInternalCount} interactions as test-internal`));
       }
+    }
 
-      // Count utility vs business edges
-      const utilityCount = enrichedEdges.filter((e) => e.edgePattern === 'utility').length;
-      const businessCount = enrichedEdges.filter((e) => e.edgePattern === 'business').length;
-
-      if (!isJson && verbose) {
-        this.log(chalk.gray(`Found ${enrichedEdges.length} module-to-module edges`));
-        this.log(chalk.gray(`  Business logic: ${businessCount}, Utility: ${utilityCount}`));
-      }
-
-      // Generate semantics for each edge using LLM
-      const interactions: InteractionSuggestion[] = [];
-
-      for (let i = 0; i < enrichedEdges.length; i += batchSize) {
-        const batch = enrichedEdges.slice(i, i + batchSize);
-
+    // Persist interactions
+    if (!dryRun) {
+      for (const interaction of interactions) {
         try {
-          const suggestions = await this.generateInteractionSemantics(batch, model);
-          interactions.push(...suggestions);
-
-          if (!isJson && verbose) {
-            this.log(
-              chalk.gray(`  Batch ${Math.floor(i / batchSize) + 1}: Generated ${suggestions.length} interactions`)
-            );
-          }
-        } catch (error) {
-          const message = getErrorMessage(error);
-          if (!isJson) {
-            this.log(chalk.yellow(`  Batch ${Math.floor(i / batchSize) + 1} failed: ${message}`));
-          }
-          // Fall back to auto-generated semantics
-          for (const edge of batch) {
-            interactions.push(this.createDefaultInteraction(edge));
+          db.upsertInteraction(interaction.fromModuleId, interaction.toModuleId, {
+            weight: interaction.weight,
+            pattern: interaction.pattern,
+            symbols: interaction.symbols,
+            semantic: interaction.semantic,
+          });
+        } catch {
+          if (verbose && !isJson) {
+            this.log(chalk.yellow(`  Skipping duplicate: ${interaction.fromModulePath} → ${interaction.toModulePath}`));
           }
         }
       }
 
-      // Tag test-internal interactions: if either module is a test module, override pattern
-      const testModuleIds = db.getTestModuleIds();
-      if (testModuleIds.size > 0) {
-        for (const interaction of interactions) {
-          if (testModuleIds.has(interaction.fromModuleId) || testModuleIds.has(interaction.toModuleId)) {
-            interaction.pattern = 'test-internal';
-          }
-        }
+      // Create inheritance-based interactions (extends/implements)
+      // These don't generate call edges but ARE significant architectural dependencies
+      const inheritanceResult = db.syncInheritanceInteractions();
+      if (!isJson && verbose && inheritanceResult.created > 0) {
+        this.log(chalk.gray(`  Inheritance edges: ${inheritanceResult.created}`));
+      }
+    }
 
-        const testInternalCount = interactions.filter((i) => i.pattern === 'test-internal').length;
-        if (!isJson && verbose && testInternalCount > 0) {
-          this.log(chalk.gray(`  Tagged ${testInternalCount} interactions as test-internal`));
+    // Step 3: Infer logical (non-AST) interactions
+    if (!isJson) {
+      this.log('');
+      this.log(chalk.bold('Step 3: Inferring Logical Connections (LLM Analysis)'));
+    }
+
+    // Get existing edges to avoid duplicates
+    const existingEdges = db.getModuleCallGraph();
+
+    const logicalInteractions = await this.inferLogicalInteractions(
+      db,
+      existingEdges,
+      model,
+      showLlmRequests,
+      showLlmResponses
+    );
+
+    let inferredCount = 0;
+    if (!dryRun && logicalInteractions.length > 0) {
+      for (const li of logicalInteractions) {
+        try {
+          db.upsertInteraction(li.fromModuleId, li.toModuleId, {
+            semantic: li.reason,
+            source: 'llm-inferred',
+            weight: 1,
+          });
+          inferredCount++;
+        } catch {
+          // Skip duplicates (edge may already exist from AST detection)
+          if (verbose && !isJson) {
+            const modules = db.getAllModules();
+            const fromMod = modules.find((m) => m.id === li.fromModuleId);
+            const toMod = modules.find((m) => m.id === li.toModuleId);
+            this.log(chalk.gray(`  Skipping: ${fromMod?.fullPath} → ${toMod?.fullPath} (exists)`));
+          }
         }
       }
 
-      // Persist interactions
-      if (!dryRun) {
-        for (const interaction of interactions) {
-          try {
-            db.upsertInteraction(interaction.fromModuleId, interaction.toModuleId, {
-              weight: interaction.weight,
-              pattern: interaction.pattern,
-              symbols: interaction.symbols,
-              semantic: interaction.semantic,
-            });
-          } catch {
-            if (verbose && !isJson) {
-              this.log(
-                chalk.yellow(`  Skipping duplicate: ${interaction.fromModulePath} → ${interaction.toModulePath}`)
-              );
-            }
-          }
-        }
-
-        // Create inheritance-based interactions (extends/implements)
-        // These don't generate call edges but ARE significant architectural dependencies
-        const inheritanceResult = db.syncInheritanceInteractions();
-        if (!isJson && verbose && inheritanceResult.created > 0) {
-          this.log(chalk.gray(`  Inheritance edges: ${inheritanceResult.created}`));
-        }
-      }
-
-      // Step 3: Infer logical (non-AST) interactions
       if (!isJson) {
-        this.log('');
-        this.log(chalk.bold('Step 3: Inferring Logical Connections (LLM Analysis)'));
+        this.log(chalk.green(`  Added ${inferredCount} inferred interactions`));
       }
+    } else if (!isJson) {
+      if (logicalInteractions.length === 0) {
+        this.log(chalk.gray('  No additional logical connections detected'));
+      } else {
+        this.log(chalk.gray(`  Would add ${logicalInteractions.length} inferred interactions (dry run)`));
+      }
+    }
 
-      // Get existing edges to avoid duplicates
-      const existingEdges = db.getModuleCallGraph();
+    // Step 4: Coverage validation - targeted inference for uncovered module pairs
+    if (!dryRun) {
+      const minRelCoverage = flags['min-relationship-coverage'] as number;
+      const maxGateRetries = flags['max-gate-retries'] as number;
 
-      const logicalInteractions = await this.inferLogicalInteractions(
-        db,
-        existingEdges,
-        model,
-        showLlmRequests,
-        showLlmResponses
-      );
+      for (let attempt = 0; attempt < maxGateRetries; attempt++) {
+        const coverageCheck = db.getRelationshipCoverage();
+        const breakdown = db.getRelationshipCoverageBreakdown();
 
-      let inferredCount = 0;
-      if (!dryRun && logicalInteractions.length > 0) {
-        for (const li of logicalInteractions) {
+        if (coverageCheck.coveragePercent >= minRelCoverage || breakdown.noCallEdge === 0) {
+          break;
+        }
+
+        if (!isJson) {
+          if (attempt === 0) {
+            this.log('');
+            this.log(chalk.bold('Step 4: Coverage Validation (Targeted Inference)'));
+          }
+          this.log(
+            chalk.gray(
+              `  Coverage: ${coverageCheck.coveragePercent.toFixed(1)}% (target: ${minRelCoverage}%), ${breakdown.noCallEdge} uncovered pairs`
+            )
+          );
+        }
+
+        const uncoveredPairs = db.getUncoveredModulePairs();
+        if (uncoveredPairs.length === 0) break;
+
+        const targetedResults = await this.inferTargetedInteractions(
+          uncoveredPairs,
+          model,
+          showLlmRequests,
+          showLlmResponses
+        );
+
+        let targetedCount = 0;
+        for (const ti of targetedResults) {
           try {
-            db.upsertInteraction(li.fromModuleId, li.toModuleId, {
-              semantic: li.reason,
+            db.upsertInteraction(ti.fromModuleId, ti.toModuleId, {
+              semantic: ti.reason,
               source: 'llm-inferred',
               weight: 1,
             });
-            inferredCount++;
+            targetedCount++;
           } catch {
-            // Skip duplicates (edge may already exist from AST detection)
-            if (verbose && !isJson) {
-              const modules = db.getAllModules();
-              const fromMod = modules.find((m) => m.id === li.fromModuleId);
-              const toMod = modules.find((m) => m.id === li.toModuleId);
-              this.log(chalk.gray(`  Skipping: ${fromMod?.fullPath} → ${toMod?.fullPath} (exists)`));
-            }
+            // Skip duplicates
           }
         }
 
         if (!isJson) {
-          this.log(chalk.green(`  Added ${inferredCount} inferred interactions`));
+          this.log(chalk.green(`  Pass ${attempt + 1}: Added ${targetedCount} targeted interactions`));
         }
-      } else if (!isJson) {
-        if (logicalInteractions.length === 0) {
-          this.log(chalk.gray('  No additional logical connections detected'));
-        } else {
-          this.log(chalk.gray(`  Would add ${logicalInteractions.length} inferred interactions (dry run)`));
-        }
+
+        if (targetedCount === 0) break;
+      }
+    }
+
+    // Get relationship coverage
+    const relCoverage = db.getRelationshipCoverage();
+
+    // Output results
+    const result = {
+      totalEdges: enrichedEdges.length,
+      interactions: interactions.length,
+      inferredInteractions: inferredCount,
+      businessCount,
+      utilityCount,
+      relationshipCoverage: relCoverage,
+    };
+
+    if (isJson) {
+      this.log(JSON.stringify(result, null, 2));
+    } else {
+      this.log('');
+      this.log(chalk.bold('Results'));
+      this.log(`Total module edges: ${result.totalEdges}`);
+      this.log(`AST interactions created: ${result.interactions}`);
+      this.log(`  Business: ${businessCount}`);
+      this.log(`  Utility: ${utilityCount}`);
+      this.log(`LLM-inferred interactions: ${result.inferredInteractions}`);
+
+      // Display relationship coverage
+      this.log('');
+      this.log(chalk.bold('Relationship → Interaction Coverage'));
+      this.log(`  Total relationships: ${relCoverage.totalRelationships}`);
+      this.log(`  Cross-module: ${relCoverage.crossModuleRelationships}`);
+      this.log(`  Same-module (internal cohesion): ${relCoverage.sameModuleCount}`);
+      this.log(
+        `  Contributing to interactions: ${relCoverage.relationshipsContributingToInteractions}/${relCoverage.crossModuleRelationships} (${relCoverage.coveragePercent.toFixed(1)}%)`
+      );
+      if (relCoverage.orphanedCount > 0) {
+        this.log(chalk.yellow(`  Orphaned (missing module): ${relCoverage.orphanedCount}`));
       }
 
-      // Step 4: Coverage validation - targeted inference for uncovered module pairs
-      if (!dryRun) {
-        const minRelCoverage = flags['min-relationship-coverage'];
-        const maxGateRetries = flags['max-gate-retries'];
-
-        for (let attempt = 0; attempt < maxGateRetries; attempt++) {
-          const coverageCheck = db.getRelationshipCoverage();
-          const breakdown = db.getRelationshipCoverageBreakdown();
-
-          if (coverageCheck.coveragePercent >= minRelCoverage || breakdown.noCallEdge === 0) {
-            break;
-          }
-
-          if (!isJson) {
-            if (attempt === 0) {
-              this.log('');
-              this.log(chalk.bold('Step 4: Coverage Validation (Targeted Inference)'));
-            }
-            this.log(
-              chalk.gray(
-                `  Coverage: ${coverageCheck.coveragePercent.toFixed(1)}% (target: ${minRelCoverage}%), ${breakdown.noCallEdge} uncovered pairs`
-              )
-            );
-          }
-
-          const uncoveredPairs = db.getUncoveredModulePairs();
-          if (uncoveredPairs.length === 0) break;
-
-          const targetedResults = await this.inferTargetedInteractions(
-            uncoveredPairs,
-            model,
-            showLlmRequests,
-            showLlmResponses
-          );
-
-          let targetedCount = 0;
-          for (const ti of targetedResults) {
-            try {
-              db.upsertInteraction(ti.fromModuleId, ti.toModuleId, {
-                semantic: ti.reason,
-                source: 'llm-inferred',
-                weight: 1,
-              });
-              targetedCount++;
-            } catch {
-              // Skip duplicates
-            }
-          }
-
-          if (!isJson) {
-            this.log(chalk.green(`  Pass ${attempt + 1}: Added ${targetedCount} targeted interactions`));
-          }
-
-          if (targetedCount === 0) break;
-        }
-      }
-
-      // Get relationship coverage
-      const relCoverage = db.getRelationshipCoverage();
-
-      // Output results
-      const result = {
-        totalEdges: enrichedEdges.length,
-        interactions: interactions.length,
-        inferredInteractions: inferredCount,
-        businessCount,
-        utilityCount,
-        relationshipCoverage: relCoverage,
-      };
-
-      if (isJson) {
-        this.log(JSON.stringify(result, null, 2));
-      } else {
+      if (dryRun) {
         this.log('');
-        this.log(chalk.bold('Results'));
-        this.log(`Total module edges: ${result.totalEdges}`);
-        this.log(`AST interactions created: ${result.interactions}`);
-        this.log(`  Business: ${businessCount}`);
-        this.log(`  Utility: ${utilityCount}`);
-        this.log(`LLM-inferred interactions: ${result.inferredInteractions}`);
-
-        // Display relationship coverage
-        this.log('');
-        this.log(chalk.bold('Relationship → Interaction Coverage'));
-        this.log(`  Total relationships: ${relCoverage.totalRelationships}`);
-        this.log(`  Cross-module: ${relCoverage.crossModuleRelationships}`);
-        this.log(`  Same-module (internal cohesion): ${relCoverage.sameModuleCount}`);
-        this.log(
-          `  Contributing to interactions: ${relCoverage.relationshipsContributingToInteractions}/${relCoverage.crossModuleRelationships} (${relCoverage.coveragePercent.toFixed(1)}%)`
-        );
-        if (relCoverage.orphanedCount > 0) {
-          this.log(chalk.yellow(`  Orphaned (missing module): ${relCoverage.orphanedCount}`));
-        }
-
-        if (dryRun) {
-          this.log('');
-          this.log(chalk.gray('(Dry run - no changes persisted)'));
-        }
+        this.log(chalk.gray('(Dry run - no changes persisted)'));
       }
-    } finally {
-      db.close();
     }
   }
 

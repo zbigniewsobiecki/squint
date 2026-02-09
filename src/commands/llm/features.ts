@@ -9,14 +9,14 @@
  * 5. Persists features + feature_flows junction to DB
  */
 
-import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import type { IndexDatabase } from '../../db/database.js';
-import { SharedFlags, openDatabase } from '../_shared/index.js';
+import { LlmFlags, SharedFlags } from '../_shared/index.js';
+import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
 import { logSection, logStep, logVerbose, logWarning } from './_shared/llm-utils.js';
 import { FeatureGrouper, type FeatureSuggestion } from './features/index.js';
 
-export default class Features extends Command {
+export default class Features extends BaseLlmCommand {
   static override description = 'Group flows into product-level features using LLM';
 
   static override examples = [
@@ -28,124 +28,68 @@ export default class Features extends Command {
 
   static override flags = {
     database: SharedFlags.database,
-
-    // LLM options
-    model: Flags.string({
-      char: 'm',
-      description: 'LLM model alias',
-      default: 'openrouter:google/gemini-2.5-flash',
-    }),
-
-    // Output options
-    'dry-run': Flags.boolean({
-      description: 'Show results without persisting',
-      default: false,
-    }),
-    force: Flags.boolean({
-      description: 'Re-group even if features exist',
-      default: false,
-    }),
     json: SharedFlags.json,
-    verbose: Flags.boolean({
-      description: 'Show detailed progress',
-      default: false,
-    }),
-    'show-llm-requests': Flags.boolean({
-      description: 'Show full LLM requests (system + user prompts)',
-      default: false,
-    }),
-    'show-llm-responses': Flags.boolean({
-      description: 'Show full LLM responses',
-      default: false,
-    }),
+    ...LlmFlags,
   };
 
-  public async run(): Promise<void> {
-    const { flags } = await this.parse(Features);
+  protected async execute(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
+    const { db, isJson, dryRun, verbose, model, llmOptions } = ctx;
 
-    const db = await openDatabase(flags.database, this);
-    const isJson = flags.json;
-    const dryRun = flags['dry-run'];
-    const verbose = flags.verbose;
-    const model = flags.model;
-    const llmOptions = {
-      showLlmRequests: flags['show-llm-requests'],
-      showLlmResponses: flags['show-llm-responses'],
-    };
-
-    try {
-      // Check if features already exist
-      const existingCount = db.getFeatureCount();
-      if (existingCount > 0 && !flags.force) {
-        if (isJson) {
-          this.log(
-            JSON.stringify({
-              error: 'Features already exist',
-              count: existingCount,
-              hint: 'Use --force to re-group',
-            })
-          );
-        } else {
-          this.log(chalk.yellow(`${existingCount} features already exist.`));
-          this.log(chalk.gray('Use --force to re-group features.'));
-        }
-        return;
-      }
-
-      if (!isJson) {
-        this.log(chalk.bold('Feature Grouping'));
-        this.log(chalk.gray(`Model: ${model}`));
-        this.log('');
-      }
-
-      // Step 1: Read all persisted flows from DB
-      logStep(this, 1, 'Reading Flows from Database', isJson);
-
-      const flows = db.getAllFlows();
-      if (flows.length === 0) {
-        if (isJson) {
-          this.log(JSON.stringify({ error: 'No flows found', hint: 'Run llm flows first' }));
-        } else {
-          this.log(chalk.yellow('No flows found.'));
-          this.log(chalk.gray('Run `squint llm flows` first to detect flows.'));
-        }
-        return;
-      }
-
-      logVerbose(this, `Found ${flows.length} flows`, verbose, isJson);
-
-      // Step 2: Read module tree from DB for architectural context
-      logStep(this, 2, 'Reading Module Tree for Context', isJson);
-
-      const modules = db.getAllModules();
-      logVerbose(this, `Found ${modules.length} modules`, verbose, isJson);
-
-      // Step 3: Group flows into features using LLM
-      logStep(this, 3, 'Grouping Flows into Features (LLM)', isJson);
-
-      const featureGrouper = new FeatureGrouper(this, isJson);
-      const featureSuggestions = await featureGrouper.groupFlowsIntoFeatures(flows, modules, model, llmOptions);
-
-      logVerbose(this, `LLM grouped flows into ${featureSuggestions.length} features`, verbose, isJson);
-
-      // Step 4: Persist features
-      logStep(this, 4, 'Persisting Features', isJson);
-
-      // Clear existing features if force
-      if (existingCount > 0 && flags.force && !dryRun) {
-        db.clearFeatures();
-        logVerbose(this, `Cleared ${existingCount} existing features`, verbose, isJson);
-      }
-
-      if (!dryRun) {
-        this.persistFeatures(db, featureSuggestions, flows, verbose, isJson);
-      }
-
-      // Output results
-      this.outputResults(featureSuggestions, dryRun, isJson);
-    } finally {
-      db.close();
+    // Check if features already exist
+    const existingCount = db.getFeatureCount();
+    if (
+      !this.checkExistingAndClear(ctx, {
+        entityName: 'Features',
+        existingCount,
+        force: flags.force as boolean,
+        clearFn: () => db.clearFeatures(),
+        forceHint: 'Use --force to re-group',
+      })
+    ) {
+      return;
     }
+
+    this.logHeader(ctx, 'Feature Grouping');
+
+    // Step 1: Read all persisted flows from DB
+    logStep(this, 1, 'Reading Flows from Database', isJson);
+
+    const flows = db.getAllFlows();
+    if (flows.length === 0) {
+      if (isJson) {
+        this.log(JSON.stringify({ error: 'No flows found', hint: 'Run llm flows first' }));
+      } else {
+        this.log(chalk.yellow('No flows found.'));
+        this.log(chalk.gray('Run `squint llm flows` first to detect flows.'));
+      }
+      return;
+    }
+
+    logVerbose(this, `Found ${flows.length} flows`, verbose, isJson);
+
+    // Step 2: Read module tree from DB for architectural context
+    logStep(this, 2, 'Reading Module Tree for Context', isJson);
+
+    const modules = db.getAllModules();
+    logVerbose(this, `Found ${modules.length} modules`, verbose, isJson);
+
+    // Step 3: Group flows into features using LLM
+    logStep(this, 3, 'Grouping Flows into Features (LLM)', isJson);
+
+    const featureGrouper = new FeatureGrouper(this, isJson);
+    const featureSuggestions = await featureGrouper.groupFlowsIntoFeatures(flows, modules, model, llmOptions);
+
+    logVerbose(this, `LLM grouped flows into ${featureSuggestions.length} features`, verbose, isJson);
+
+    // Step 4: Persist features
+    logStep(this, 4, 'Persisting Features', isJson);
+
+    if (!dryRun) {
+      this.persistFeatures(db, featureSuggestions, flows, verbose, isJson);
+    }
+
+    // Output results
+    this.outputResults(featureSuggestions, dryRun, isJson);
   }
 
   private persistFeatures(

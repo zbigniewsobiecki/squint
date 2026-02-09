@@ -6,6 +6,8 @@
  * 2. Flow construction with sub-flow references (Phase 2)
  */
 
+import { extractCsvContent, parseRow, splitCsvLines } from './csv-utils.js';
+
 // ============================================
 // Entry Point Classification (Phase 1)
 // ============================================
@@ -354,105 +356,4 @@ export function parseGapFillSuggestions(content: string): GapFillParseResult {
 
 function isValidGapFillType(s: string): s is GapFillSuggestion['type'] {
   return s === 'new_flow' || s === 'add_to_existing' || s === 'new_subflow';
-}
-
-// ============================================
-// Utility Functions
-// ============================================
-
-/**
- * Extract CSV content from LLM response (removes code fences).
- */
-function extractCsvContent(content: string): string {
-  let csv = content.trim();
-  const codeFenceMatch = csv.match(/```(?:csv)?\s*\n([\s\S]*?)\n```/);
-  if (codeFenceMatch) {
-    csv = codeFenceMatch[1].trim();
-  }
-  return csv;
-}
-
-/**
- * Split CSV content into logical lines, handling multi-line quoted values.
- */
-function splitCsvLines(csv: string): string[] {
-  const lines: string[] = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < csv.length; i++) {
-    const char = csv[i];
-
-    if (char === '"') {
-      if (inQuotes && csv[i + 1] === '"') {
-        current += '""';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-        current += char;
-      }
-    } else if (char === '\n' && !inQuotes) {
-      lines.push(current);
-      current = '';
-    } else if (char === '\r' && !inQuotes) {
-    } else {
-      current += char;
-    }
-  }
-
-  if (current) {
-    lines.push(current);
-  }
-
-  return lines;
-}
-
-/**
- * Parse a single CSV row into columns.
- */
-function parseRow(line: string): string[] | null {
-  const columns: string[] = [];
-  let current = '';
-  let inQuotes = false;
-  let i = 0;
-
-  while (i < line.length) {
-    const char = line[i];
-
-    if (char === '"') {
-      if (!inQuotes) {
-        inQuotes = true;
-        i++;
-        continue;
-      }
-
-      if (line[i + 1] === '"') {
-        current += '"';
-        i += 2;
-        continue;
-      }
-
-      inQuotes = false;
-      i++;
-      continue;
-    }
-
-    if (char === ',' && !inQuotes) {
-      columns.push(current);
-      current = '';
-      i++;
-      continue;
-    }
-
-    current += char;
-    i++;
-  }
-
-  columns.push(current);
-
-  if (inQuotes) {
-    return null;
-  }
-
-  return columns;
 }

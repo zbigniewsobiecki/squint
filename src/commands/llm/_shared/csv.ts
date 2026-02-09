@@ -3,6 +3,10 @@
  * Handles quoted fields, escaped quotes, and multi-line values.
  */
 
+import { extractCsvContent, formatCsvValue, parseRow, splitCsvLines } from './csv-utils.js';
+
+export { formatCsvValue };
+
 export interface CsvRow {
   id: string;
   aspect: string;
@@ -47,13 +51,7 @@ export function parseCsv(content: string): ParseResult {
   const rows: CsvRow[] = [];
   const errors: string[] = [];
 
-  // Remove code fence if present
-  let csv = content.trim();
-  const codeFenceMatch = csv.match(/```(?:csv)?\s*\n([\s\S]*?)\n```/);
-  if (codeFenceMatch) {
-    csv = codeFenceMatch[1].trim();
-  }
-
+  const csv = extractCsvContent(content);
   const lines = splitCsvLines(csv);
   if (lines.length === 0) {
     errors.push('Empty CSV content');
@@ -107,108 +105,6 @@ export function parseCsv(content: string): ParseResult {
 }
 
 /**
- * Split CSV content into logical lines, handling multi-line quoted values.
- */
-function splitCsvLines(csv: string): string[] {
-  const lines: string[] = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < csv.length; i++) {
-    const char = csv[i];
-
-    if (char === '"') {
-      // Check for escaped quote
-      if (inQuotes && csv[i + 1] === '"') {
-        current += '""';
-        i++; // Skip next quote
-      } else {
-        inQuotes = !inQuotes;
-        current += char;
-      }
-    } else if (char === '\n' && !inQuotes) {
-      lines.push(current);
-      current = '';
-    } else if (char === '\r' && !inQuotes) {
-    } else {
-      current += char;
-    }
-  }
-
-  if (current) {
-    lines.push(current);
-  }
-
-  return lines;
-}
-
-/**
- * Parse a single CSV row into columns.
- */
-function parseRow(line: string): string[] | null {
-  const columns: string[] = [];
-  let current = '';
-  let inQuotes = false;
-  let i = 0;
-
-  while (i < line.length) {
-    const char = line[i];
-
-    if (char === '"') {
-      if (!inQuotes) {
-        // Start of quoted field
-        inQuotes = true;
-        i++;
-        continue;
-      }
-
-      // Check for escaped quote or end of quoted field
-      if (line[i + 1] === '"') {
-        // Escaped quote
-        current += '"';
-        i += 2;
-        continue;
-      }
-
-      // End of quoted field
-      inQuotes = false;
-      i++;
-      continue;
-    }
-
-    if (char === ',' && !inQuotes) {
-      columns.push(current);
-      current = '';
-      i++;
-      continue;
-    }
-
-    current += char;
-    i++;
-  }
-
-  // Add final column
-  columns.push(current);
-
-  // Check for unclosed quotes
-  if (inQuotes) {
-    return null;
-  }
-
-  return columns;
-}
-
-/**
- * Format a value for CSV output (for testing/debugging).
- */
-export function formatCsvValue(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
-
-/**
  * Parse combined CSV content for symbol and relationship annotations.
  * Expects header row: type,id,field,value
  *
@@ -221,13 +117,7 @@ export function parseCombinedCsv(content: string): CombinedParseResult {
   const relationships: RelationshipAnnotationRow[] = [];
   const errors: string[] = [];
 
-  // Remove code fence if present
-  let csv = content.trim();
-  const codeFenceMatch = csv.match(/```(?:csv)?\s*\n([\s\S]*?)\n```/);
-  if (codeFenceMatch) {
-    csv = codeFenceMatch[1].trim();
-  }
-
+  const csv = extractCsvContent(content);
   const lines = splitCsvLines(csv);
   if (lines.length === 0) {
     errors.push('Empty CSV content');
