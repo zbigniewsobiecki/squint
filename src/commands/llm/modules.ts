@@ -126,6 +126,11 @@ export default class Modules extends Command {
         }
       }
 
+      // Assign color indices for consistent cross-view coloring
+      if (!dryRun) {
+        db.assignColorIndices();
+      }
+
       // Final stats
       if (!dryRun) {
         const stats = db.getModuleStats();

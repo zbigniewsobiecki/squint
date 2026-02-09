@@ -26,7 +26,7 @@ export function getBoxColors(depth: number, branchIndex: number): { fill: string
   if (depth === 0) {
     return { fill: 'hsl(0, 0%, 12%)', stroke: 'hsl(0, 0%, 30%)' };
   }
-  const palette = BRANCH_HUES[branchIndex % BRANCH_HUES.length];
+  const palette = BRANCH_HUES[(branchIndex || 0) % BRANCH_HUES.length];
   const fillLightness = 14 + (depth - 1) * 3;
   const strokeLightness = 32 + (depth - 1) * 3;
   return {
@@ -54,8 +54,9 @@ export function renderModuleDag(
   if (!mainContainer) return null;
 
   const svg = d3.select<SVGSVGElement, unknown>(svgSelector);
-  const width = (mainContainer as HTMLElement).clientWidth;
-  const height = (mainContainer as HTMLElement).clientHeight;
+  const svgEl = document.querySelector(svgSelector) as SVGSVGElement;
+  const width = svgEl.clientWidth;
+  const height = svgEl.clientHeight;
 
   svg.selectAll('*').remove();
 
@@ -88,18 +89,6 @@ export function renderModuleDag(
   // Compute cumulative values
   computeValue(rootModule);
 
-  // Build branch index map: each depth-1 node gets a sibling index, propagated to descendants
-  const branchIndexByModuleId = new Map<number, number>();
-  function assignBranchIndex(node: ModuleTreeNode, branchIndex: number) {
-    branchIndexByModuleId.set(node.id, branchIndex);
-    for (const child of node.children) {
-      assignBranchIndex(child, branchIndex);
-    }
-  }
-  for (let i = 0; i < rootModule.children.length; i++) {
-    assignBranchIndex(rootModule.children[i], i);
-  }
-
   // D3 pack layout
   const size = Math.min(width, height);
   const hierarchy = d3
@@ -111,15 +100,13 @@ export function renderModuleDag(
 
   const root = pack(hierarchy);
 
-  // Color function for circles — all nodes use branch colors
+  // Color function for circles — all nodes use branch colors from data
   function getCircleColor(d: d3.HierarchyCircularNode<ModuleTreeNode>): string {
-    const branchIndex = branchIndexByModuleId.get(d.data.id) ?? 0;
-    return getBoxColors(d.depth, branchIndex).fill;
+    return getBoxColors(d.depth, d.data.colorIndex ?? 0).fill;
   }
 
   function getCircleStroke(d: d3.HierarchyCircularNode<ModuleTreeNode>): string {
-    const branchIndex = branchIndexByModuleId.get(d.data.id) ?? 0;
-    return getBoxColors(d.depth, branchIndex).stroke;
+    return getBoxColors(d.depth, d.data.colorIndex ?? 0).stroke;
   }
 
   // Create zoom group
@@ -233,17 +220,28 @@ export function renderModuleDag(
       });
   }
 
+  // Selection highlight
+  function setSelected(moduleId: number | null) {
+    circleNode.classed('module-selected', (d) => d.data.id === moduleId);
+  }
+
   // Click handlers
   circleNode.on('click', (event, d) => {
     if (d.children && focus !== d) {
+      // Zoom into this node (it has children to reveal)
       zoom(event, d);
+    } else if (!d.children && d.parent && d.parent !== focus) {
+      // Leaf node: zoom to its parent so the intermediate level is shown
+      zoom(event, d.parent);
     }
+    setSelected(d.data.id);
     onSelect?.(d.data.id);
     event.stopPropagation();
   });
 
   svg.on('click', () => {
     zoom(null, root);
+    setSelected(null);
     onSelect?.(null);
   });
 

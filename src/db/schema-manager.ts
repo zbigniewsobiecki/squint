@@ -20,6 +20,7 @@ export function ensureModulesTables(db: Database.Database): void {
         name TEXT NOT NULL,
         description TEXT,
         depth INTEGER NOT NULL DEFAULT 0,
+        color_index INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(parent_id, slug)
       );
@@ -59,6 +60,7 @@ export function ensureModulesTables(db: Database.Database): void {
           name TEXT NOT NULL,
           description TEXT,
           depth INTEGER NOT NULL DEFAULT 0,
+          color_index INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           UNIQUE(parent_id, slug)
         );
@@ -76,6 +78,17 @@ export function ensureModulesTables(db: Database.Database): void {
 
         CREATE INDEX idx_module_members_module ON module_members(module_id);
       `);
+    } else {
+      // Check if we need to add color_index column
+      const hasColorIndex = db
+        .prepare(`
+        SELECT COUNT(*) as count FROM pragma_table_info('modules') WHERE name='color_index'
+      `)
+        .get() as { count: number };
+
+      if (hasColorIndex.count === 0) {
+        db.exec('ALTER TABLE modules ADD COLUMN color_index INTEGER NOT NULL DEFAULT 0');
+      }
     }
   }
 }

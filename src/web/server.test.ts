@@ -489,6 +489,55 @@ describe('server', () => {
         expect(body).toHaveProperty('flows');
       });
 
+      it('GET /api/flows/dag uses definition-level steps when available', async () => {
+        (mockDb.getAllModulesWithMembers as any).mockReturnValue([
+          { id: 1, parentId: null, name: 'api', fullPath: 'api', depth: 0, members: [] },
+          { id: 2, parentId: null, name: 'service', fullPath: 'service', depth: 0, members: [] },
+        ]);
+        (mockDb.getModuleCallGraph as any).mockReturnValue([]);
+        (mockDb.getAllFlows as any).mockReturnValue([
+          { id: 1, name: 'Test Flow', stakeholder: null, description: null },
+        ]);
+        (mockDb.getFlowWithDefinitionSteps as any).mockReturnValue({
+          id: 1,
+          name: 'Test Flow',
+          stakeholder: null,
+          description: null,
+          definitionSteps: [
+            {
+              fromModuleId: 1,
+              toModuleId: 2,
+              fromDefinitionName: 'controller.create',
+              toDefinitionName: 'service.create',
+              fromDefinitionKind: 'function',
+              toDefinitionKind: 'function',
+              fromFilePath: 'api.ts',
+              toFilePath: 'service.ts',
+              fromLine: 10,
+              toLine: 20,
+              fromModulePath: 'api',
+              toModulePath: 'service',
+            },
+          ],
+        });
+
+        const response = await makeRequest(server, '/api/flows/dag');
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.body);
+        expect(body.flows).toHaveLength(1);
+        const flow = body.flows[0];
+        expect(flow.steps).toHaveLength(1);
+        expect(flow.steps[0]).toEqual({
+          interactionId: null,
+          fromModuleId: 1,
+          toModuleId: 2,
+          semantic: null,
+          fromDefName: 'controller.create',
+          toDefName: 'service.create',
+        });
+      });
+
       it('GET /api/flows/:id/expand returns expanded flow', async () => {
         const mockExpanded = [{ id: 1, fromModulePath: 'a', toModulePath: 'b' }];
         (mockDb.expandFlow as any).mockReturnValue(mockExpanded);

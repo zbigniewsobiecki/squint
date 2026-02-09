@@ -1,7 +1,7 @@
 import type { ApiClient } from '../api/client';
 import { renderModuleDag } from '../d3/module-dag';
 import type { Store } from '../state/store';
-import type { Module, ModuleMember } from '../types/api';
+import type { Module } from '../types/api';
 
 export function initModulesTree(store: Store, _api: ApiClient) {
   const state = store.getState();
@@ -63,26 +63,25 @@ function renderModulesView(store: Store) {
     return ids;
   }
 
+  // Find root module for default sidebar content
+  const rootModule = flowsDagData.modules.find((m) => m.parentId === null) ?? flowsDagData.modules[0];
+
   container.innerHTML = `
     <div class="modules-dag-container" id="modules-dag-main">
       <svg id="modules-dag-svg"></svg>
-      <div class="modules-sidebar" id="modules-sidebar">
-        <div class="modules-sidebar-placeholder">Click a module to see details</div>
-      </div>
+      <div class="modules-sidebar hidden" id="modules-sidebar"></div>
       <div class="keyboard-hint">
         <kbd>Click</kbd> circle to zoom in &nbsp; <kbd>Click</kbd> background to zoom out
       </div>
     </div>
   `;
 
-  function onModuleSelect(moduleId: number | null) {
+  function onModuleSelect(selectedId: number | null) {
     const sidebar = document.getElementById('modules-sidebar');
     if (!sidebar) return;
 
-    if (moduleId === null) {
-      sidebar.innerHTML = '<div class="modules-sidebar-placeholder">Click a module to see details</div>';
-      return;
-    }
+    // On background click, show root content instead of hiding
+    const moduleId = selectedId ?? rootModule.id;
 
     const dagModule = flowsDagData!.modules.find((m) => m.id === moduleId);
     if (!dagModule) return;
@@ -90,39 +89,30 @@ function renderModulesView(store: Store) {
     const detail = moduleDetailById.get(moduleId);
     const description = detail?.description ?? null;
 
-    // Collect all members from this module and its descendants
+    // Collect all members from this module and its descendants, grouped by submodule
     const descendantIds = collectDescendantIds(moduleId);
-    const allMembers: (ModuleMember & { fromModule?: string })[] = [];
+    let totalMembers = 0;
+
+    let groupedHtml = '';
     for (const id of descendantIds) {
       const mod = moduleDetailById.get(id);
-      if (mod?.members) {
-        for (const member of mod.members) {
-          allMembers.push({
-            ...member,
-            fromModule: id !== moduleId ? mod.name : undefined,
-          });
-        }
+      if (!mod?.members?.length) continue;
+      const sectionName = id === moduleId ? dagModule.name : mod.name;
+      groupedHtml += `<div class="modules-sidebar-section">${escapeHtml(sectionName)}</div>`;
+      for (const member of mod.members) {
+        groupedHtml += `
+          <div class="modules-sidebar-member">
+            <span class="member-kind">${escapeHtml(member.kind)}</span>
+            <span class="member-name">${escapeHtml(member.name)}</span>
+          </div>`;
+        totalMembers++;
       }
     }
-
-    allMembers.sort((a, b) => a.name.localeCompare(b.name));
+    if (!groupedHtml) {
+      groupedHtml = '<div class="modules-sidebar-empty">No symbols assigned</div>';
+    }
 
     const descHtml = description ? `<div class="modules-sidebar-desc">${escapeHtml(description)}</div>` : '';
-
-    const membersHtml =
-      allMembers.length > 0
-        ? allMembers
-            .map(
-              (m) => `
-          <div class="modules-sidebar-member">
-            <span class="member-kind">${escapeHtml(m.kind)}</span>
-            <span class="member-name">${escapeHtml(m.name)}</span>
-            ${m.fromModule ? `<span class="member-from">${escapeHtml(m.fromModule)}</span>` : ''}
-          </div>
-        `
-            )
-            .join('')
-        : '<div class="modules-sidebar-empty">No symbols assigned</div>';
 
     sidebar.innerHTML = `
       <div class="modules-sidebar-header">
@@ -131,15 +121,19 @@ function renderModulesView(store: Store) {
       </div>
       ${descHtml}
       <div class="modules-sidebar-members">
-        <div class="modules-sidebar-members-title">${allMembers.length} symbol${allMembers.length !== 1 ? 's' : ''}</div>
+        <div class="modules-sidebar-members-title">${totalMembers} symbol${totalMembers !== 1 ? 's' : ''}</div>
         <div class="modules-sidebar-members-list">
-          ${membersHtml}
+          ${groupedHtml}
         </div>
       </div>
     `;
+    sidebar.classList.remove('hidden');
   }
 
   renderModuleDag('#modules-dag-svg', '#modules-dag-main', flowsDagData.modules, onModuleSelect);
+
+  // Show root module content in sidebar on initial load
+  onModuleSelect(rootModule.id);
 }
 
 function escapeHtml(text: string): string {

@@ -351,6 +351,7 @@ function getModulesData(database: IndexDatabase): {
     fullPath: string;
     description: string | null;
     depth: number;
+    colorIndex: number;
     memberCount: number;
     members: Array<{
       definitionId: number;
@@ -379,6 +380,7 @@ function getModulesData(database: IndexDatabase): {
         fullPath: module.fullPath,
         description: module.description,
         depth: module.depth,
+        colorIndex: module.colorIndex,
         memberCount: module.members.length,
         members: module.members,
       })),
@@ -562,6 +564,7 @@ function getFlowsDagData(database: IndexDatabase): {
     name: string;
     fullPath: string;
     depth: number;
+    colorIndex: number;
     memberCount: number;
   }>;
   edges: Array<{
@@ -576,10 +579,12 @@ function getFlowsDagData(database: IndexDatabase): {
     description: string | null;
     stepCount: number;
     steps: Array<{
-      interactionId: number;
+      interactionId: number | null;
       fromModuleId: number;
       toModuleId: number;
       semantic: string | null;
+      fromDefName: string | null;
+      toDefName: string | null;
     }>;
   }>;
 } {
@@ -592,6 +597,7 @@ function getFlowsDagData(database: IndexDatabase): {
       name: m.name,
       fullPath: m.fullPath,
       depth: m.depth,
+      colorIndex: m.colorIndex,
       memberCount: m.members.length,
     }));
 
@@ -606,6 +612,31 @@ function getFlowsDagData(database: IndexDatabase): {
     // Get all flows with their steps
     const allFlows = database.getAllFlows();
     const flows = allFlows.map((flow) => {
+      // Prefer definition-level steps (more granular), fall back to interaction steps
+      const flowWithDefSteps = database.getFlowWithDefinitionSteps(flow.id);
+      const hasDefSteps = flowWithDefSteps && flowWithDefSteps.definitionSteps.length > 0;
+
+      if (hasDefSteps) {
+        const defSteps = flowWithDefSteps.definitionSteps;
+        return {
+          id: flow.id,
+          name: flow.name,
+          stakeholder: flow.stakeholder,
+          description: flow.description,
+          stepCount: defSteps.length,
+          steps: defSteps
+            .filter((step) => step.fromModuleId != null && step.toModuleId != null)
+            .map((step) => ({
+              interactionId: null,
+              fromModuleId: step.fromModuleId as number,
+              toModuleId: step.toModuleId as number,
+              semantic: null,
+              fromDefName: step.fromDefinitionName,
+              toDefName: step.toDefinitionName,
+            })),
+        };
+      }
+
       const flowWithSteps = database.getFlowWithSteps(flow.id);
       const steps = flowWithSteps?.steps ?? [];
 
@@ -620,6 +651,8 @@ function getFlowsDagData(database: IndexDatabase): {
           fromModuleId: step.interaction.fromModuleId,
           toModuleId: step.interaction.toModuleId,
           semantic: step.interaction.semantic,
+          fromDefName: null,
+          toDefName: null,
         })),
       };
     });

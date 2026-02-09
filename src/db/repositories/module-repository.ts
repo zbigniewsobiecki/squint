@@ -110,6 +110,7 @@ export class ModuleRepository {
         name,
         description,
         depth,
+        color_index as colorIndex,
         created_at as createdAt
       FROM modules
       WHERE full_path = ?
@@ -131,6 +132,7 @@ export class ModuleRepository {
         name,
         description,
         depth,
+        color_index as colorIndex,
         created_at as createdAt
       FROM modules
       WHERE id = ?
@@ -152,6 +154,7 @@ export class ModuleRepository {
         name,
         description,
         depth,
+        color_index as colorIndex,
         created_at as createdAt
       FROM modules
       WHERE parent_id = ?
@@ -174,6 +177,7 @@ export class ModuleRepository {
         name,
         description,
         depth,
+        color_index as colorIndex,
         created_at as createdAt
       FROM modules
       ORDER BY depth, full_path
@@ -360,6 +364,7 @@ export class ModuleRepository {
         m.name,
         m.description,
         m.depth,
+        m.color_index as colorIndex,
         m.created_at as createdAt
       FROM module_members mm
       JOIN modules m ON mm.module_id = m.id
@@ -452,6 +457,7 @@ export class ModuleRepository {
         m.name,
         m.description,
         m.depth,
+        m.color_index as colorIndex,
         m.created_at as createdAt,
         COUNT(mm.definition_id) as memberCount
       FROM modules m
@@ -474,6 +480,7 @@ export class ModuleRepository {
         name: m.name,
         description: m.description,
         depth: m.depth,
+        colorIndex: m.colorIndex,
         createdAt: m.createdAt,
         members,
       };
@@ -501,6 +508,31 @@ export class ModuleRepository {
     `);
 
     return stmt.all(moduleId) as ModuleMemberInfo[];
+  }
+
+  /**
+   * Assign color indices based on branch identity.
+   * Each depth-1 module gets a sequential index; descendants inherit their ancestor's index.
+   */
+  assignColorIndices(): void {
+    ensureModulesTables(this.db);
+
+    const depth1Modules = this.db
+      .prepare('SELECT id, full_path FROM modules WHERE depth = 1 ORDER BY id')
+      .all() as Array<{ id: number; full_path: string }>;
+
+    const updateStmt = this.db.prepare(
+      'UPDATE modules SET color_index = ? WHERE id = ? OR (full_path LIKE ? AND depth > 1)'
+    );
+
+    const transaction = this.db.transaction(() => {
+      for (let i = 0; i < depth1Modules.length; i++) {
+        const mod = depth1Modules[i];
+        updateStmt.run(i, mod.id, `${mod.full_path}.%`);
+      }
+    });
+
+    transaction();
   }
 
   /**

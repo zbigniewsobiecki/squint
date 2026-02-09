@@ -115,6 +115,7 @@ export interface Module {
   name: string;
   description: string | null;
   depth: number;
+  colorIndex: number;
   createdAt: string;
 }
 

@@ -514,6 +514,10 @@ export class IndexDatabase implements IIndexWriter {
     return this.modules.getModulesExceedingThreshold(threshold);
   }
 
+  assignColorIndices(): void {
+    this.modules.assignColorIndices();
+  }
+
   // ============================================================
   // Interaction Operations
   // ============================================================

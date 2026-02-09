@@ -17,7 +17,7 @@ export interface AppState {
   interactionsData: InteractionsResponse | null;
 
   // UI state
-  currentView: 'force' | 'sunburst' | 'modules' | 'flows' | 'interactions';
+  currentView: 'force' | 'sunburst' | 'modules' | 'flows' | 'interactions' | 'files';
   selectedGrouping: RelationshipType;
   selectedFlowId: number | null; // Currently viewed flow (for detail view)
   selectedFlows: Set<number>;

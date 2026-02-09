@@ -9,14 +9,13 @@ import type { DagFlow, DagModule } from '../types/api';
 let originalSidebarHtml: string | null = null;
 
 // Sequence diagram layout constants
-const PARTICIPANT_WIDTH = 120;
+const PARTICIPANT_WIDTH = 130;
 const PARTICIPANT_GAP = 40;
-const PARTICIPANT_HEIGHT = 36;
+const PARTICIPANT_HEIGHT = 48;
 const MESSAGE_ROW_HEIGHT = 60;
 const TOP_PADDING = 80;
 const SELF_CALL_WIDTH = 30;
 const SELF_CALL_HEIGHT = 30;
-const MAX_LABEL_LENGTH = 30;
 
 export function initFlowsDag(store: Store, _api: ApiClient) {
   const state = store.getState();
@@ -237,32 +236,23 @@ function renderSequenceDiagram(store: Store) {
   const initialY = 20;
   svg.call(zoom.transform, d3.zoomIdentity.translate(initialX, initialY));
 
-  // Build branch index map for participant coloring
-  const branchIndexByModuleId = new Map<number, number>();
-  const depth1Modules = flowsDagData.modules.filter((m) => m.depth === 1).sort((a, b) => a.id - b.id);
-  for (let i = 0; i < depth1Modules.length; i++) {
-    branchIndexByModuleId.set(depth1Modules[i].id, i);
-  }
-  // Propagate branch index to descendants by walking up parentId chains
-  for (const mod of flowsDagData.modules) {
-    if (branchIndexByModuleId.has(mod.id)) continue;
-    // Walk up to find depth-1 ancestor
-    let current: DagModule | undefined = mod;
-    while (current && current.depth > 1) {
-      current = current.parentId !== null ? moduleById.get(current.parentId) : undefined;
-    }
-    if (current && current.depth === 1) {
-      branchIndexByModuleId.set(mod.id, branchIndexByModuleId.get(current.id) ?? 0);
-    }
-  }
-
-  // Get branch-colored fill/stroke for participant box
+  // Get branch-colored fill/stroke for participant box using data-driven color index
   function getParticipantColors(moduleId: number): { fill: string; stroke: string } {
     const mod = moduleById.get(moduleId);
     const depth = mod?.depth ?? 1;
-    const branchIndex = branchIndexByModuleId.get(moduleId) ?? 0;
-    return getBoxColors(depth, branchIndex);
+    const colorIndex = mod?.colorIndex || 0;
+    return getBoxColors(depth, colorIndex);
   }
+
+  // Flow title at top of diagram
+  const titleGroup = g.append('g').attr('class', 'seq-title');
+  titleGroup
+    .append('text')
+    .attr('class', 'seq-title-text')
+    .attr('x', diagramWidth / 2)
+    .attr('y', -20)
+    .attr('text-anchor', 'middle')
+    .text(flow.name);
 
   // Draw participant boxes and lifelines
   for (let i = 0; i < participantIds.length; i++) {
@@ -286,17 +276,30 @@ function renderSequenceDiagram(store: Store) {
       .attr('stroke', getParticipantColors(moduleId).stroke)
       .attr('stroke-width', 1.5);
 
-    // Participant label (truncate if needed)
-    const displayName = name.length > 14 ? `${name.slice(0, 13)}…` : name;
-    participantGroup
+    // Participant label — wrap to two lines
+    const lines = wrapText(name, 16);
+    const textEl = participantGroup
       .append('text')
       .attr('x', x + PARTICIPANT_WIDTH / 2)
-      .attr('y', PARTICIPANT_HEIGHT / 2)
-      .attr('text-anchor', 'middle')
-      .attr('dominant-baseline', 'central')
-      .text(displayName)
-      .append('title')
-      .text(name);
+      .attr('text-anchor', 'middle');
+    if (lines.length === 1) {
+      textEl
+        .attr('y', PARTICIPANT_HEIGHT / 2)
+        .attr('dominant-baseline', 'central')
+        .text(lines[0]);
+    } else {
+      textEl
+        .append('tspan')
+        .attr('x', x + PARTICIPANT_WIDTH / 2)
+        .attr('y', PARTICIPANT_HEIGHT / 2 - 7)
+        .text(lines[0]);
+      textEl
+        .append('tspan')
+        .attr('x', x + PARTICIPANT_WIDTH / 2)
+        .attr('y', PARTICIPANT_HEIGHT / 2 + 7)
+        .text(lines[1]);
+    }
+    textEl.append('title').text(name);
 
     // Lifeline
     const lifelineEnd = TOP_PADDING + flow.steps.length * MESSAGE_ROW_HEIGHT + 20;
@@ -335,16 +338,13 @@ function renderSequenceDiagram(store: Store) {
         .attr('marker-end', 'url(#seq-arrowhead)');
 
       // Label to the right of the loop
-      const label = truncateLabel(step.semantic || `Step ${stepIdx + 1}`);
       messageGroup
         .append('text')
         .attr('class', 'seq-message-label')
         .attr('x', fromX + SELF_CALL_WIDTH + 8)
         .attr('y', y + SELF_CALL_HEIGHT / 2)
         .attr('dominant-baseline', 'central')
-        .text(label)
-        .append('title')
-        .text(step.semantic || '');
+        .text(step.toDefName || step.semantic || `Step ${stepIdx + 1}`);
     } else {
       // Normal arrow between two lifelines
       const arrowMargin = 2;
@@ -362,7 +362,6 @@ function renderSequenceDiagram(store: Store) {
         .attr('marker-end', 'url(#seq-arrowhead)');
 
       // Label above the arrow, centered between the two lifelines
-      const label = truncateLabel(step.semantic || `Step ${stepIdx + 1}`);
       const labelX = (fromX + toX) / 2;
       messageGroup
         .append('text')
@@ -370,9 +369,7 @@ function renderSequenceDiagram(store: Store) {
         .attr('x', labelX)
         .attr('y', y - 10)
         .attr('text-anchor', 'middle')
-        .text(label)
-        .append('title')
-        .text(step.semantic || '');
+        .text(step.toDefName || step.semantic || `Step ${stepIdx + 1}`);
     }
 
     // Step number badge
@@ -390,9 +387,14 @@ function renderSequenceDiagram(store: Store) {
   }
 }
 
-function truncateLabel(text: string): string {
-  if (text.length <= MAX_LABEL_LENGTH) return text;
-  return `${text.slice(0, MAX_LABEL_LENGTH - 1)}…`;
+function wrapText(text: string, maxCharsPerLine: number): [string] | [string, string] {
+  if (text.length <= maxCharsPerLine) return [text];
+  // Find a break point near the middle, preferring word boundaries
+  const mid = Math.ceil(text.length / 2);
+  let breakIdx = text.lastIndexOf(' ', mid);
+  if (breakIdx <= 0) breakIdx = text.indexOf(' ', mid);
+  if (breakIdx <= 0) breakIdx = mid; // no spaces, just split
+  return [text.slice(0, breakIdx).trim(), text.slice(breakIdx).trim()];
 }
 
 function highlightStep(_store: Store, stepIdx: number) {
@@ -496,12 +498,12 @@ function showFlowSteps(store: Store, flowId: number) {
         <div class="step-item step-tree" data-step-idx="${idx}">
           <div class="step-tree-header">
             <span class="step-number">${idx + 1}</span>
-            <span class="step-semantic">${step.semantic || `Step ${idx + 1}`}</span>
+            <span class="step-semantic">${step.toDefName || step.semantic || `Step ${idx + 1}`}</span>
           </div>
           <div class="step-tree-path">
-            <span class="step-module from">${fromModule?.name || 'Unknown'}</span>
+            <span class="step-module from">${step.fromDefName || fromModule?.name || 'Unknown'}</span>
             <span class="step-arrow">→</span>
-            <span class="step-module to">${toModule?.name || 'Unknown'}</span>
+            <span class="step-module to">${step.toDefName || toModule?.name || 'Unknown'}</span>
           </div>
         </div>
       `;

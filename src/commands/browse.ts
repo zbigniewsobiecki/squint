@@ -48,6 +48,13 @@ export default class Browse extends Command {
       this.error(chalk.red(`Database appears to be invalid or empty: ${message}`));
     }
 
+    // Ensure module color indices are assigned (idempotent, runs migration if needed)
+    try {
+      db.assignColorIndices();
+    } catch {
+      // Modules table may not exist yet — safe to ignore
+    }
+
     // Create and start server
     const port = flags.port;
     const server = createServer(db, port);

@@ -43,6 +43,9 @@ export interface IModuleFacade {
   getModuleSymbols(moduleId: number): ReturnType<IndexDatabase['modules']['getSymbols']>;
   getDefinitionModule(definitionId: number): ReturnType<IndexDatabase['modules']['getDefinitionModule']>;
 
+  // Color assignment
+  assignColorIndices(): void;
+
   // Domain operations
   addDomain(name: string, description?: string): number | null;
   getDomain(name: string): Domain | null;
@@ -129,6 +132,11 @@ export class ModuleFacade implements IModuleFacade {
 
   getDefinitionModule(definitionId: number) {
     return this.db.getDefinitionModule(definitionId);
+  }
+
+  // Color assignment
+  assignColorIndices(): void {
+    this.db.assignColorIndices();
   }
 
   // Domain operations

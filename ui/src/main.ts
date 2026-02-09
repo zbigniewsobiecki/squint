@@ -6,6 +6,7 @@ import './styles/graph.css';
 
 import { createApiClient } from './api/client';
 import { createStore } from './state/store';
+import { initFilesTreemap } from './views/files-treemap';
 import { initFlowsDag } from './views/flows-dag';
 import { initForceGraph } from './views/force-graph';
 import { initInteractions } from './views/interactions';
@@ -23,6 +24,7 @@ const views = {
   modules: initModulesTree,
   flows: initFlowsDag,
   interactions: initInteractions,
+  files: initFilesTreemap,
 };
 
 // Current view state
@@ -97,6 +99,15 @@ function updateStatsForView(view: string) {
         <span class="stat">Coverage: <span class="stat-value">${data.relationshipCoverage.coveragePercent.toFixed(0)}%</span></span>
       `;
     }
+  } else if (view === 'files') {
+    const nodes = state.graphData?.nodes ?? [];
+    const fileCount = new Set(nodes.map((n) => n.filePath)).size;
+    const totalLines = nodes.reduce((sum, n) => sum + n.lines, 0);
+    statsContainer.innerHTML = `
+      <span class="stat">Files: <span class="stat-value">${fileCount}</span></span>
+      <span class="stat">Total Lines: <span class="stat-value annotated">${totalLines.toLocaleString()}</span></span>
+      <span class="stat">Symbols: <span class="stat-value">${nodes.length}</span></span>
+    `;
   } else {
     statsContainer.innerHTML = `
       <span class="stat">Symbols: <span class="stat-value" id="stat-symbols">${state.graphData?.stats.totalSymbols ?? '-'}</span></span>

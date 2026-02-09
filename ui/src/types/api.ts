@@ -49,6 +49,7 @@ export interface Module {
   fullPath: string;
   description: string | null;
   depth: number;
+  colorIndex: number;
   memberCount: number;
   members: ModuleMember[];
 }
@@ -144,6 +145,7 @@ export interface DagModule {
   name: string;
   fullPath: string;
   depth: number;
+  colorIndex: number;
   memberCount: number;
 }
 
@@ -154,10 +156,12 @@ export interface DagEdge {
 }
 
 export interface DagFlowStep {
-  interactionId: number;
+  interactionId: number | null;
   fromModuleId: number;
   toModuleId: number;
   semantic: string | null;
+  fromDefName: string | null;
+  toDefName: string | null;
 }
 
 export interface DagFlow {

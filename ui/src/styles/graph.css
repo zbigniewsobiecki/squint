@@ -193,6 +193,11 @@ marker path {
 .module-circle:hover circle {
   stroke-width: 2;
 }
+.module-circle.module-selected circle {
+  stroke: var(--text-primary);
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.15));
+}
 .module-circle-label {
   font-weight: 600;
   text-anchor: middle;
@@ -206,8 +211,12 @@ marker path {
   pointer-events: none;
 }
 /* Dimmed state (for flow highlighting) */
-.module-circle.module-dimmed circle { opacity: 0.3; }
-.module-circle.module-dimmed text { opacity: 0.3; }
+.module-circle.module-dimmed circle {
+  opacity: 0.3;
+}
+.module-circle.module-dimmed text {
+  opacity: 0.3;
+}
 
 /* Flow Arrows */
 .flow-arrow {
@@ -299,12 +308,8 @@ marker path {
   overflow: hidden;
 }
 
-.modules-sidebar-placeholder {
-  padding: var(--spacing-lg);
-  color: var(--text-muted);
-  font-size: 13px;
-  text-align: center;
-  margin-top: var(--spacing-xl);
+.modules-sidebar.hidden {
+  display: none;
 }
 
 .modules-sidebar-header {
@@ -374,11 +379,19 @@ marker path {
   word-break: break-all;
 }
 
-.modules-sidebar-member .member-from {
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-left: auto;
-  white-space: nowrap;
+.modules-sidebar-section {
+  padding: 6px var(--spacing-lg) 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  border-top: 1px solid var(--border-primary);
+  margin-top: var(--spacing-xs);
+}
+
+.modules-sidebar-section:first-child {
+  border-top: none;
+  margin-top: 0;
 }
 
 .modules-sidebar-empty {
@@ -391,6 +404,14 @@ marker path {
 /* ==============================
    Sequence Diagram Styles
    ============================== */
+
+/* Flow title above sequence diagram */
+.seq-title-text {
+  font-size: 16px;
+  font-weight: 600;
+  fill: var(--text-primary);
+  pointer-events: none;
+}
 
 /* Placeholder text when no flow selected */
 .seq-placeholder {
@@ -462,4 +483,268 @@ marker path {
   font-weight: 600;
   fill: var(--text-primary);
   pointer-events: none;
+}
+
+/* ==============================
+   Files Treemap
+   ============================== */
+.files-treemap-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+}
+
+.files-treemap-container svg {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Breadcrumb bar */
+.treemap-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px var(--spacing-lg);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.breadcrumb-segment {
+  color: var(--text-secondary);
+}
+
+.breadcrumb-clickable {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+}
+
+.breadcrumb-clickable:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.breadcrumb-root {
+  color: var(--text-muted);
+}
+
+.breadcrumb-sep {
+  color: var(--text-muted);
+  margin: 0 1px;
+}
+
+/* Treemap cells */
+.treemap-dir,
+.treemap-file {
+  transition: opacity var(--transition-fast);
+}
+
+.treemap-dir:hover rect,
+.treemap-file:hover rect {
+  opacity: 0.85;
+}
+
+/* Directory header label */
+.treemap-dir-label {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--text-primary);
+  pointer-events: none;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+}
+
+/* File name label */
+.treemap-file-label {
+  font-size: 10px;
+  fill: var(--text-secondary);
+  pointer-events: none;
+}
+
+/* File line-count label */
+.treemap-file-lines {
+  font-size: 9px;
+  fill: var(--text-muted);
+  pointer-events: none;
+}
+
+/* ==============================
+   Chord Dependency Diagram
+   ============================== */
+.chord-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  overflow: hidden;
+}
+
+.chord-container svg {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.chord-arc path {
+  cursor: pointer;
+  stroke-width: 1;
+  transition: opacity var(--transition-fast);
+}
+
+.chord-arc:hover path {
+  stroke-width: 2;
+}
+
+.chord-ribbon {
+  cursor: pointer;
+  transition: fill-opacity var(--transition-fast);
+}
+
+.chord-ribbon-utility {
+  stroke-dasharray: 4, 2;
+  fill-opacity: 0.35;
+}
+
+.chord-ribbon-business {
+  fill-opacity: 0.5;
+}
+
+.chord-label {
+  font-size: 11px;
+  fill: var(--text-primary);
+  pointer-events: none;
+}
+
+/* Chord Sidebar */
+.chord-sidebar {
+  width: 300px;
+  min-width: 300px;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-primary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chord-sidebar.hidden {
+  display: none;
+}
+
+.chord-sidebar-header {
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.chord-sidebar-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 2px 0;
+}
+
+.chord-sidebar-path {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.chord-sidebar-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chord-sidebar-list-title {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.chord-sidebar-list-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-xs) 0;
+}
+
+.chord-sidebar-item {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.chord-sidebar-item-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.chord-sidebar-module {
+  padding: 1px 6px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.chord-sidebar-arrow {
+  color: var(--text-muted);
+}
+
+.chord-sidebar-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+.chord-sidebar-badge.business {
+  background: var(--kind-function);
+  color: var(--kind-function-text);
+}
+
+.chord-sidebar-badge.utility {
+  background: var(--kind-type);
+  color: var(--kind-type-text);
+}
+
+.chord-sidebar-badge.weight {
+  background: var(--bg-elevated);
+  color: var(--accent-blue);
+}
+
+.chord-sidebar-semantic {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.chord-sidebar-symbols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.chord-sidebar-symbol {
+  padding: 1px 5px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
 }
