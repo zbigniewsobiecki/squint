@@ -355,6 +355,22 @@ export interface RelationshipCoverageBreakdown {
 }
 
 // ============================================================
+// Feature Types (Product-level groupings of flows)
+// ============================================================
+
+export interface Feature {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface FeatureWithFlows extends Feature {
+  flows: Flow[];
+}
+
+// ============================================================
 // Legacy Types (for backward compatibility during migration)
 // ============================================================
 

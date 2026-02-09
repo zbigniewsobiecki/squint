@@ -250,4 +250,89 @@ describe('facades', () => {
       expect(interactions).toHaveLength(1);
     });
   });
+
+  // ============================================
+  // IndexDatabase feature facade methods
+  // ============================================
+  describe('Feature facade methods on IndexDatabase', () => {
+    it('insertFeature + getFeatureById round-trip', () => {
+      const featureId = db.insertFeature('Customer Management', 'customer-management', {
+        description: 'Customer CRUD',
+      });
+      expect(featureId).toBeGreaterThan(0);
+
+      const feature = db.getFeatureById(featureId);
+      expect(feature).not.toBeNull();
+      expect(feature!.name).toBe('Customer Management');
+      expect(feature!.slug).toBe('customer-management');
+      expect(feature!.description).toBe('Customer CRUD');
+    });
+
+    it('getFeatureBySlug', () => {
+      db.insertFeature('Auth', 'auth-feature');
+
+      const feature = db.getFeatureBySlug('auth-feature');
+      expect(feature).not.toBeNull();
+      expect(feature!.name).toBe('Auth');
+    });
+
+    it('getFeatureBySlug returns null for missing slug', () => {
+      expect(db.getFeatureBySlug('nonexistent')).toBeNull();
+    });
+
+    it('getAllFeatures', () => {
+      db.insertFeature('Alpha', 'alpha');
+      db.insertFeature('Beta', 'beta');
+
+      const features = db.getAllFeatures();
+      expect(features).toHaveLength(2);
+      expect(features[0].name).toBe('Alpha');
+      expect(features[1].name).toBe('Beta');
+    });
+
+    it('getFeatureCount', () => {
+      expect(db.getFeatureCount()).toBe(0);
+
+      db.insertFeature('A', 'a');
+      expect(db.getFeatureCount()).toBe(1);
+
+      db.insertFeature('B', 'b');
+      expect(db.getFeatureCount()).toBe(2);
+    });
+
+    it('addFeatureFlows + getFeatureWithFlows', () => {
+      const flowId1 = db.insertFlow('Flow A', 'flow-a');
+      const flowId2 = db.insertFlow('Flow B', 'flow-b');
+
+      const featureId = db.insertFeature('My Feature', 'my-feature');
+      db.addFeatureFlows(featureId, [flowId1, flowId2]);
+
+      const result = db.getFeatureWithFlows(featureId);
+      expect(result).not.toBeNull();
+      expect(result!.name).toBe('My Feature');
+      expect(result!.flows).toHaveLength(2);
+    });
+
+    it('clearFeatures removes all features', () => {
+      db.insertFeature('A', 'a');
+      db.insertFeature('B', 'b');
+
+      const cleared = db.clearFeatures();
+      expect(cleared).toBe(2);
+      expect(db.getFeatureCount()).toBe(0);
+    });
+
+    it('clearFeatures also removes junction rows', () => {
+      const flowId = db.insertFlow('Flow', 'flow');
+      const featureId = db.insertFeature('Feat', 'feat');
+      db.addFeatureFlows(featureId, [flowId]);
+
+      db.clearFeatures();
+
+      // Feature with flows returns null now
+      expect(db.getFeatureById(featureId)).toBeNull();
+      // Flow still exists
+      expect(db.getFlowById(flowId)).not.toBeNull();
+    });
+  });
 });

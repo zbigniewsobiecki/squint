@@ -13,6 +13,8 @@ import {
   type EnhancedRelationshipContext,
   type EnrichedModuleCallEdge,
   type ExpandedFlow,
+  type Feature,
+  type FeatureWithFlows,
   type FileInsert,
   type Flow,
   type FlowCoverageStats,
@@ -42,6 +44,7 @@ import {
 import { DefinitionRepository } from './repositories/definition-repository.js';
 import { DependencyRepository } from './repositories/dependency-repository.js';
 import { DomainRepository } from './repositories/domain-repository.js';
+import { type FeatureInsertOptions, FeatureRepository } from './repositories/feature-repository.js';
 import { FileRepository } from './repositories/file-repository.js';
 import { type FlowInsertOptions, FlowRepository } from './repositories/flow-repository.js';
 import { GraphRepository } from './repositories/graph-repository.js';
@@ -66,6 +69,7 @@ export class IndexDatabase implements IIndexWriter {
   public readonly domains: DomainRepository;
   public readonly modules: ModuleRepository;
   public readonly interactions: InteractionRepository;
+  public readonly features: FeatureRepository;
   public readonly flows: FlowRepository;
   public readonly graph: GraphRepository;
 
@@ -82,6 +86,7 @@ export class IndexDatabase implements IIndexWriter {
     this.domains = new DomainRepository(this.conn);
     this.modules = new ModuleRepository(this.conn);
     this.interactions = new InteractionRepository(this.conn);
+    this.features = new FeatureRepository(this.conn);
     this.flows = new FlowRepository(this.conn);
     this.graph = new GraphRepository(this.conn);
   }
@@ -775,6 +780,42 @@ export class IndexDatabase implements IIndexWriter {
 
   getFlowsByTier(tier: number): Flow[] {
     return this.flows.getByTier(tier);
+  }
+
+  // ============================================================
+  // Feature Operations
+  // ============================================================
+
+  insertFeature(name: string, slug: string, options?: FeatureInsertOptions): number {
+    return this.features.insert(name, slug, options);
+  }
+
+  getFeatureById(id: number): Feature | null {
+    return this.features.getById(id);
+  }
+
+  getFeatureBySlug(slug: string): Feature | null {
+    return this.features.getBySlug(slug);
+  }
+
+  getAllFeatures(): Feature[] {
+    return this.features.getAll();
+  }
+
+  getFeatureWithFlows(featureId: number): FeatureWithFlows | null {
+    return this.features.getWithFlows(featureId);
+  }
+
+  addFeatureFlows(featureId: number, flowIds: number[]): void {
+    this.features.addFlows(featureId, flowIds);
+  }
+
+  getFeatureCount(): number {
+    return this.features.getCount();
+  }
+
+  clearFeatures(): number {
+    return this.features.clear();
   }
 
   // Definition-Level Call Graph

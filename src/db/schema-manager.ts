@@ -323,6 +323,40 @@ export function ensureFlowsTables(db: Database.Database): void {
 }
 
 /**
+ * Ensure the features and feature_flows tables exist.
+ */
+export function ensureFeaturesTables(db: Database.Database): void {
+  const tableExists = db
+    .prepare(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='features'
+  `)
+    .get();
+
+  if (!tableExists) {
+    db.exec(`
+      CREATE TABLE features (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        slug TEXT NOT NULL UNIQUE,
+        description TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX idx_features_slug ON features(slug);
+
+      CREATE TABLE feature_flows (
+        feature_id INTEGER NOT NULL REFERENCES features(id) ON DELETE CASCADE,
+        flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+        PRIMARY KEY (feature_id, flow_id)
+      );
+
+      CREATE INDEX idx_feature_flows_feature ON feature_flows(feature_id);
+      CREATE INDEX idx_feature_flows_flow ON feature_flows(flow_id);
+    `);
+  }
+}
+
+/**
  * Ensure the domains table exists.
  */
 export function ensureDomainsTable(db: Database.Database): void {
