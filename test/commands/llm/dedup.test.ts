@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deduplicateByInteractionOverlap } from '../../../src/commands/llm/flows/dedup.js';
+import { deduplicateByInteractionOverlap, pickFlowToDrop } from '../../../src/commands/llm/flows/dedup.js';
 import type { FlowSuggestion } from '../../../src/commands/llm/flows/types.js';
 import type { TracedDefinitionStep } from '../../../src/commands/llm/flows/types.js';
 
@@ -87,5 +87,80 @@ describe('deduplicateByInteractionOverlap', () => {
 
     const result = deduplicateByInteractionOverlap([a, b, c]);
     expect(result).toHaveLength(3);
+  });
+
+  it('keeps flows with different actionType+targetEntity despite high overlap', () => {
+    const createCustomer = makeFlow({
+      interactionIds: [1, 2, 3, 4, 5],
+      actionType: 'create',
+      targetEntity: 'customer',
+      tier: 1,
+    });
+    const updateCustomer = makeFlow({
+      interactionIds: [1, 2, 3, 4, 6],
+      actionType: 'update',
+      targetEntity: 'customer',
+      tier: 1,
+    });
+    const deleteCustomer = makeFlow({
+      interactionIds: [1, 2, 3, 7],
+      actionType: 'delete',
+      targetEntity: 'customer',
+      tier: 1,
+    });
+
+    // 4/4 overlap between create and delete = 1.0, but different actionType
+    const result = deduplicateByInteractionOverlap([createCustomer, updateCustomer, deleteCustomer]);
+    expect(result).toHaveLength(3);
+  });
+
+  it('drops catch-all flow when it overlaps a specific flow', () => {
+    const catchAll = makeFlow({
+      interactionIds: [1, 2, 3, 4, 5, 6, 7, 8],
+      actionType: null,
+      targetEntity: null,
+      tier: 1,
+    });
+    const specific = makeFlow({
+      interactionIds: [1, 2, 3, 4, 5],
+      actionType: 'create',
+      targetEntity: 'customer',
+      tier: 1,
+    });
+
+    // 5/5 = 1.0 overlap ratio, specific flow should survive
+    const result = deduplicateByInteractionOverlap([catchAll, specific]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBe(specific);
+  });
+
+  it('prefers more focused flow (fewer interactions) at same tier and steps', () => {
+    const broad = makeFlow({ interactionIds: [1, 2, 3, 4, 5, 6, 7, 8] });
+    const focused = makeFlow({ interactionIds: [1, 2, 3] });
+
+    // 3/3 = 1.0 overlap, focused (fewer interactions) should win
+    const result = deduplicateByInteractionOverlap([broad, focused]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBe(focused);
+  });
+});
+
+describe('pickFlowToDrop', () => {
+  it('keeps specific flow over catch-all', () => {
+    const specific = makeFlow({ interactionIds: [1, 2], actionType: 'create', targetEntity: 'customer' });
+    const catchAll = makeFlow({ interactionIds: [1, 2, 3, 4] });
+
+    // specific at idx 0, catchAll at idx 1 → should drop catchAll (idx 1)
+    expect(pickFlowToDrop(specific, catchAll, 0, 1)).toBe(1);
+    // reversed order → should drop catchAll (idx 0)
+    expect(pickFlowToDrop(catchAll, specific, 0, 1)).toBe(0);
+  });
+
+  it('keeps fewer interactions (more focused) when all else equal', () => {
+    const focused = makeFlow({ interactionIds: [1, 2, 3] });
+    const broad = makeFlow({ interactionIds: [1, 2, 3, 4, 5, 6, 7] });
+
+    // focused at idx 0, broad at idx 1 → should drop broad (idx 1)
+    expect(pickFlowToDrop(focused, broad, 0, 1)).toBe(1);
   });
 });

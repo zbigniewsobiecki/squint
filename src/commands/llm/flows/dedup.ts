@@ -24,6 +24,15 @@ export function deduplicateByInteractionOverlap(flows: FlowSuggestion[], thresho
       if (dropped.has(j)) continue;
       const b = flows[j];
       if (b.interactionIds.length === 0) continue;
+
+      // Don't dedup flows that represent different user journeys
+      // (different specific actionType+targetEntity combos)
+      if (a.actionType && a.targetEntity && b.actionType && b.targetEntity) {
+        const aKey = `${a.actionType}:${a.targetEntity}`;
+        const bKey = `${b.actionType}:${b.targetEntity}`;
+        if (aKey !== bKey) continue;
+      }
+
       const setB = new Set(b.interactionIds);
 
       let intersectionSize = 0;
@@ -48,9 +57,14 @@ export function deduplicateByInteractionOverlap(flows: FlowSuggestion[], thresho
 
 /**
  * Given two overlapping flows, decide which to drop.
- * Prefer keeping: higher tier > more definitionSteps > more interactionIds > earlier in array.
+ * Prefer keeping: specific over catch-all > higher tier > more definitionSteps > fewer interactionIds (more focused) > earlier in array.
  */
 export function pickFlowToDrop(a: FlowSuggestion, b: FlowSuggestion, idxA: number, idxB: number): number {
+  // Specific flows (with actionType+targetEntity) beat catch-all flows (without)
+  const aSpecific = !!(a.actionType && a.targetEntity);
+  const bSpecific = !!(b.actionType && b.targetEntity);
+  if (aSpecific !== bSpecific) return aSpecific ? idxB : idxA;
+
   // Higher tier wins
   if (a.tier !== b.tier) return a.tier > b.tier ? idxB : idxA;
 
@@ -59,9 +73,9 @@ export function pickFlowToDrop(a: FlowSuggestion, b: FlowSuggestion, idxA: numbe
     return a.definitionSteps.length > b.definitionSteps.length ? idxB : idxA;
   }
 
-  // More interaction IDs wins
+  // Fewer interaction IDs wins (more focused flow is better than catch-all)
   if (a.interactionIds.length !== b.interactionIds.length) {
-    return a.interactionIds.length > b.interactionIds.length ? idxB : idxA;
+    return a.interactionIds.length < b.interactionIds.length ? idxB : idxA;
   }
 
   // Earlier in array wins (drop the later one)

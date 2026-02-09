@@ -95,11 +95,19 @@ export class FlowTracer {
     const trace = (
       defId: number,
       depth: number,
-      lastKnownModule: { moduleId: number; modulePath: string } | null
+      lastKnownModule: { moduleId: number; modulePath: string } | null,
+      isBridged = false
     ): void => {
       if (depth >= this.maxDepth) return;
       if (visited.has(defId)) return;
       visited.add(defId);
+
+      // When a definition was reached via bridge (inferred interaction),
+      // don't follow its regular call-graph edges. The bridge connects the
+      // boundary crossing; the target's own call graph is traced by its own
+      // entry-point flows. Following it here would expand the entire target
+      // subsystem (e.g. an Express app.use() aggregator → all controllers).
+      if (isBridged) return;
 
       const calledDefs = this.context.definitionCallGraph.get(defId) ?? [];
       for (const calledDefId of calledDefs) {
@@ -153,9 +161,10 @@ export class FlowTracer {
             source: 'llm-inferred',
           });
 
-          // Continue tracing from the target definition
+          // Continue tracing from the bridge target — marked as bridged
+          // so we record the step but don't expand its call graph
           const targetModule = this.context.defToModule.get(representative) ?? null;
-          trace(representative, depth + 1, targetModule);
+          trace(representative, depth + 1, targetModule, true);
         }
       }
     };

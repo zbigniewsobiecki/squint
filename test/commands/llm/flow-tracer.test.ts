@@ -343,12 +343,13 @@ describe('flow-tracer', () => {
       expect(flows).toHaveLength(2);
     });
 
-    it('bridges via inferred interaction at leaf', () => {
+    it('bridges via inferred interaction at leaf but does not recurse into target call graph', () => {
       // Call graph: 10→20 (M1→M2), def 20 is leaf
       // Inferred interaction: M2→M3, M3 has defs 30→40 (M3→M4)
+      // Bridge should connect M2→M3 but NOT follow M3's call graph to M4
       const callGraph = new Map<number, number[]>();
       callGraph.set(10, [20]); // M1→M2 via call graph
-      callGraph.set(30, [40]); // M3→M4 via call graph (reachable after bridge)
+      callGraph.set(30, [40]); // M3→M4 via call graph (should NOT be followed after bridge)
 
       const modules = [
         { id: 1, fullPath: 'mod.m1', members: [{ definitionId: 10 }] },
@@ -383,10 +384,11 @@ describe('flow-tracer', () => {
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, atomics);
       expect(flows).toHaveLength(1);
-      // All three module pairs should be covered
+      // M1→M2 (call graph) and M2→M3 (bridge) should be covered
       expect(flows[0].interactionIds).toContain(100); // M1→M2 (call graph)
       expect(flows[0].interactionIds).toContain(101); // M2→M3 (inferred bridge)
-      expect(flows[0].interactionIds).toContain(102); // M3→M4 (call graph after bridge)
+      // M3→M4 should NOT be included — bridge targets don't expand their call graph
+      expect(flows[0].interactionIds).not.toContain(102);
       expect(flows[0].inferredSteps.length).toBeGreaterThan(0);
       expect(flows[0].inferredSteps[0]).toEqual({
         fromModuleId: 2,
