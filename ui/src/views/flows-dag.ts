@@ -1,22 +1,22 @@
 import * as d3 from 'd3';
 import type { ApiClient } from '../api/client';
 import { getFlowColor } from '../d3/colors';
+import { getBoxColors } from '../d3/module-dag';
 import type { Store } from '../state/store';
 import { selectFlow } from '../state/store';
 import type { DagFlow, DagModule } from '../types/api';
 
-interface ModuleTreeNode extends DagModule {
-  children: ModuleTreeNode[];
-  _width?: number;
-  _height?: number;
-  _isLeaf?: boolean;
-  _rows?: { children: ModuleTreeNode[]; width: number }[];
-  _x?: number;
-  _y?: number;
-}
-
-const modulePositions = new Map<number, { x: number; y: number; width: number; height: number }>();
 let originalSidebarHtml: string | null = null;
+
+// Sequence diagram layout constants
+const PARTICIPANT_WIDTH = 120;
+const PARTICIPANT_GAP = 40;
+const PARTICIPANT_HEIGHT = 36;
+const MESSAGE_ROW_HEIGHT = 60;
+const TOP_PADDING = 80;
+const SELF_CALL_WIDTH = 30;
+const SELF_CALL_HEIGHT = 30;
+const MAX_LABEL_LENGTH = 30;
 
 export function initFlowsDag(store: Store, _api: ApiClient) {
   const state = store.getState();
@@ -113,8 +113,8 @@ function renderFlowsDagView(store: Store) {
     </div>
   `;
 
-  // Initialize module DAG visualization
-  initializeModuleDAG(store);
+  // Show placeholder when no flow is selected
+  showSequencePlaceholder();
 
   // Setup sidebar interactions
   setupSidebarInteractions(store);
@@ -123,412 +123,287 @@ function renderFlowsDagView(store: Store) {
   setupKeyboardShortcuts(store);
 }
 
-function initializeModuleDAG(store: Store) {
+function showSequencePlaceholder() {
+  const svg = d3.select<SVGSVGElement, unknown>('#flows-dag-svg');
+  svg.selectAll('*').remove();
+
+  const mainContainer = document.getElementById('flows-dag-main');
+  if (!mainContainer) return;
+
+  const width = mainContainer.clientWidth;
+  const height = mainContainer.clientHeight;
+
+  svg
+    .append('text')
+    .attr('class', 'seq-placeholder')
+    .attr('x', width / 2)
+    .attr('y', height / 2)
+    .attr('text-anchor', 'middle')
+    .attr('dominant-baseline', 'middle')
+    .text('Select a flow to view its sequence diagram');
+}
+
+function renderSequenceDiagram(store: Store) {
   const state = store.getState();
   const flowsDagData = state.flowsDagData;
   if (!flowsDagData) return;
+
+  const flowId = state.selectedFlowId;
+  if (!flowId) {
+    showSequencePlaceholder();
+    return;
+  }
+
+  // Find the selected flow and its color index
+  const flow = flowsDagData.flows.find((f) => f.id === flowId);
+  if (!flow || flow.steps.length === 0) {
+    showSequencePlaceholder();
+    return;
+  }
+
+  let flowColorIndex = 0;
+  for (const f of flowsDagData.flows) {
+    if (f.id === flowId) break;
+    flowColorIndex++;
+  }
+  const flowColor = getFlowColor(flowColorIndex);
 
   const mainContainer = document.getElementById('flows-dag-main');
   if (!mainContainer) return;
 
   const svg = d3.select<SVGSVGElement, unknown>('#flows-dag-svg');
-  const width = mainContainer.clientWidth;
-  const height = mainContainer.clientHeight;
-
   svg.selectAll('*').remove();
 
-  const modules = flowsDagData.modules;
-  if (modules.length === 0) return;
-
-  // Build tree structure from flat module list
-  const moduleById = new Map<number, ModuleTreeNode>();
-  for (const m of modules) {
-    moduleById.set(m.id, { ...m, children: [] });
+  // Build module lookup
+  const moduleById = new Map<number, DagModule>();
+  for (const m of flowsDagData.modules) {
+    moduleById.set(m.id, m);
   }
 
-  let rootModule: ModuleTreeNode | null = null;
-
-  for (const m of modules) {
-    const node = moduleById.get(m.id)!;
-    if (m.parentId === null) {
-      rootModule = node;
-    } else {
-      const parent = moduleById.get(m.parentId);
-      if (parent) {
-        parent.children.push(node);
-      }
+  // Determine unique participants (modules involved in this flow), preserving first-appearance order
+  const participantIds: number[] = [];
+  const participantSet = new Set<number>();
+  for (const step of flow.steps) {
+    if (!participantSet.has(step.fromModuleId)) {
+      participantSet.add(step.fromModuleId);
+      participantIds.push(step.fromModuleId);
+    }
+    if (!participantSet.has(step.toModuleId)) {
+      participantSet.add(step.toModuleId);
+      participantIds.push(step.toModuleId);
     }
   }
 
-  if (!rootModule) {
-    rootModule = moduleById.get(modules[0].id)!;
+  const participantIndexMap = new Map<number, number>();
+  for (let i = 0; i < participantIds.length; i++) {
+    participantIndexMap.set(participantIds[i], i);
   }
 
-  // Layout constants
-  const HEADER_HEIGHT = 28;
-  const PADDING = 12;
-  const MIN_LEAF_WIDTH = 100;
-  const MIN_LEAF_HEIGHT = 50;
-  const GAP = 8;
-
-  // Calculate sizes recursively
-  function calculateSize(node: ModuleTreeNode) {
-    if (node.children.length === 0) {
-      const textWidth = Math.max(MIN_LEAF_WIDTH, node.name.length * 7 + 20);
-      node._width = textWidth;
-      node._height = MIN_LEAF_HEIGHT;
-      node._isLeaf = true;
-      return;
-    }
-
-    node.children.forEach((child) => calculateSize(child));
-
-    const maxRowWidth = Math.min(800, width - 100);
-    const rows: { children: ModuleTreeNode[]; width: number }[] = [];
-    let currentRow: ModuleTreeNode[] = [];
-    let currentRowWidth = 0;
-
-    const sortedChildren = [...node.children].sort((a, b) => {
-      if (a._isLeaf && !b._isLeaf) return 1;
-      if (!a._isLeaf && b._isLeaf) return -1;
-      return (b._width || 0) - (a._width || 0);
-    });
-
-    for (const child of sortedChildren) {
-      if (currentRow.length > 0 && currentRowWidth + (child._width || 0) + GAP > maxRowWidth) {
-        rows.push({ children: currentRow, width: currentRowWidth });
-        currentRow = [];
-        currentRowWidth = 0;
-      }
-      currentRow.push(child);
-      currentRowWidth += (child._width || 0) + (currentRow.length > 1 ? GAP : 0);
-    }
-    if (currentRow.length > 0) {
-      rows.push({ children: currentRow, width: currentRowWidth });
-    }
-
-    node._rows = rows;
-
-    const contentWidth = Math.max(...rows.map((r) => r.width));
-    const contentHeight = rows.reduce((sum, row) => {
-      const rowHeight = Math.max(...row.children.map((c) => c._height || 0));
-      return sum + rowHeight + GAP;
-    }, 0);
-
-    node._width = contentWidth + PADDING * 2;
-    node._height = contentHeight + HEADER_HEIGHT + PADDING;
-  }
-
-  calculateSize(rootModule);
-
-  // Position nodes
-  function positionNodes(node: ModuleTreeNode, x: number, y: number) {
-    node._x = x;
-    node._y = y;
-
-    modulePositions.set(node.id, {
-      x: x,
-      y: y,
-      width: node._width || 0,
-      height: node._height || 0,
-    });
-
-    if (!node._rows) return;
-
-    let currentY = y + HEADER_HEIGHT;
-    for (const row of node._rows) {
-      let currentX = x + PADDING;
-      const rowHeight = Math.max(...row.children.map((c) => c._height || 0));
-
-      for (const child of row.children) {
-        positionNodes(child, currentX, currentY);
-        currentX += (child._width || 0) + GAP;
-      }
-      currentY += rowHeight + GAP;
-    }
-  }
-
-  const startX = (width - (rootModule._width || 0)) / 2;
-  const startY = (height - (rootModule._height || 0)) / 2;
-  positionNodes(rootModule, startX, startY);
+  // Calculate diagram dimensions
+  const diagramWidth = participantIds.length * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) - PARTICIPANT_GAP;
 
   // Create zoom group
   const g = svg.append('g');
 
-  // Define arrowhead marker
-  svg
-    .append('defs')
+  // Define arrowhead markers
+  const defs = svg.append('defs');
+
+  defs
     .append('marker')
-    .attr('id', 'arrowhead')
+    .attr('id', 'seq-arrowhead')
     .attr('viewBox', '0 -5 10 10')
-    .attr('refX', 8)
+    .attr('refX', 10)
     .attr('refY', 0)
-    .attr('markerWidth', 6)
-    .attr('markerHeight', 6)
+    .attr('markerWidth', 8)
+    .attr('markerHeight', 8)
     .attr('orient', 'auto')
     .append('path')
-    .attr('d', 'M0,-5L10,0L0,5')
-    .attr('fill', 'currentColor');
+    .attr('d', 'M0,-4L10,0L0,4')
+    .attr('fill', flowColor);
 
   // Setup zoom
   const zoom = d3
     .zoom<SVGSVGElement, unknown>()
-    .scaleExtent([0.1, 4])
+    .scaleExtent([0.2, 4])
     .on('zoom', (event) => {
       g.attr('transform', event.transform.toString());
     });
 
   svg.call(zoom);
 
-  // Draw module boxes
-  function drawModuleBoxes(node: ModuleTreeNode, depth = 0) {
-    const isLeaf = node.children.length === 0;
-    const group = g
-      .append('g')
-      .attr('class', `module-box depth-${depth}${isLeaf ? ' leaf' : ''}`)
-      .attr('data-module-id', node.id);
+  // Center the diagram
+  const containerWidth = mainContainer.clientWidth;
+  const initialX = Math.max(20, (containerWidth - diagramWidth) / 2);
+  const initialY = 20;
+  svg.call(zoom.transform, d3.zoomIdentity.translate(initialX, initialY));
 
-    group
+  // Build branch index map for participant coloring
+  const branchIndexByModuleId = new Map<number, number>();
+  const depth1Modules = flowsDagData.modules.filter((m) => m.depth === 1).sort((a, b) => a.id - b.id);
+  for (let i = 0; i < depth1Modules.length; i++) {
+    branchIndexByModuleId.set(depth1Modules[i].id, i);
+  }
+  // Propagate branch index to descendants by walking up parentId chains
+  for (const mod of flowsDagData.modules) {
+    if (branchIndexByModuleId.has(mod.id)) continue;
+    // Walk up to find depth-1 ancestor
+    let current: DagModule | undefined = mod;
+    while (current && current.depth > 1) {
+      current = current.parentId !== null ? moduleById.get(current.parentId) : undefined;
+    }
+    if (current && current.depth === 1) {
+      branchIndexByModuleId.set(mod.id, branchIndexByModuleId.get(current.id) ?? 0);
+    }
+  }
+
+  // Get branch-colored fill/stroke for participant box
+  function getParticipantColors(moduleId: number): { fill: string; stroke: string } {
+    const mod = moduleById.get(moduleId);
+    const depth = mod?.depth ?? 1;
+    const branchIndex = branchIndexByModuleId.get(moduleId) ?? 0;
+    return getBoxColors(depth, branchIndex);
+  }
+
+  // Draw participant boxes and lifelines
+  for (let i = 0; i < participantIds.length; i++) {
+    const moduleId = participantIds[i];
+    const mod = moduleById.get(moduleId);
+    const name = mod?.name || `Module ${moduleId}`;
+    const x = i * (PARTICIPANT_WIDTH + PARTICIPANT_GAP);
+
+    const participantGroup = g.append('g').attr('class', 'seq-participant');
+
+    // Participant box
+    participantGroup
       .append('rect')
-      .attr('x', node._x || 0)
-      .attr('y', node._y || 0)
-      .attr('width', node._width || 0)
-      .attr('height', node._height || 0);
+      .attr('x', x)
+      .attr('y', 0)
+      .attr('width', PARTICIPANT_WIDTH)
+      .attr('height', PARTICIPANT_HEIGHT)
+      .attr('rx', 6)
+      .attr('ry', 6)
+      .attr('fill', getParticipantColors(moduleId).fill)
+      .attr('stroke', getParticipantColors(moduleId).stroke)
+      .attr('stroke-width', 1.5);
 
-    group
+    // Participant label (truncate if needed)
+    const displayName = name.length > 14 ? `${name.slice(0, 13)}…` : name;
+    participantGroup
       .append('text')
-      .attr('class', `module-box-header depth-${depth}`)
-      .attr('x', (node._x || 0) + PADDING)
-      .attr('y', (node._y || 0) + 18)
-      .text(node.name);
+      .attr('x', x + PARTICIPANT_WIDTH / 2)
+      .attr('y', PARTICIPANT_HEIGHT / 2)
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
+      .text(displayName)
+      .append('title')
+      .text(name);
 
-    if (!isLeaf) {
-      group
-        .append('text')
-        .attr('class', 'module-box-count')
-        .attr('x', (node._x || 0) + (node._width || 0) - PADDING)
-        .attr('y', (node._y || 0) + 18)
-        .attr('text-anchor', 'end')
-        .text(`${node.memberCount}`);
-    }
-
-    for (const child of node.children) {
-      drawModuleBoxes(child, depth + 1);
-    }
+    // Lifeline
+    const lifelineEnd = TOP_PADDING + flow.steps.length * MESSAGE_ROW_HEIGHT + 20;
+    g.append('line')
+      .attr('class', 'seq-lifeline')
+      .attr('x1', x + PARTICIPANT_WIDTH / 2)
+      .attr('y1', PARTICIPANT_HEIGHT)
+      .attr('x2', x + PARTICIPANT_WIDTH / 2)
+      .attr('y2', lifelineEnd);
   }
 
-  drawModuleBoxes(rootModule);
+  // Draw message arrows
+  for (let stepIdx = 0; stepIdx < flow.steps.length; stepIdx++) {
+    const step = flow.steps[stepIdx];
+    const fromIdx = participantIndexMap.get(step.fromModuleId);
+    const toIdx = participantIndexMap.get(step.toModuleId);
+    if (fromIdx === undefined || toIdx === undefined) continue;
 
-  // Draw flow arrows for selected flows
-  updateFlowArrows(store);
-}
+    const y = TOP_PADDING + stepIdx * MESSAGE_ROW_HEIGHT;
+    const fromX = fromIdx * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) + PARTICIPANT_WIDTH / 2;
+    const toX = toIdx * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) + PARTICIPANT_WIDTH / 2;
 
-function updateFlowArrows(store: Store) {
-  const state = store.getState();
-  const flowsDagData = state.flowsDagData;
-  if (!flowsDagData) return;
+    const messageGroup = g.append('g').attr('class', 'seq-message').attr('data-step-idx', stepIdx);
 
-  const g = d3.select('#flows-dag-svg g');
-  g.selectAll('.flow-arrow').remove();
-  g.selectAll('.flow-step-number').remove();
-  g.selectAll('.flow-semantic-label').remove();
+    const isSelfCall = step.fromModuleId === step.toModuleId;
 
-  const selectedFlows = state.selectedFlows;
-
-  // Collect module IDs that are part of selected flows
-  const activeModuleIds = new Set<number>();
-  let flowIndex = 0;
-
-  for (const flow of flowsDagData.flows) {
-    const color = getFlowColor(flowIndex);
-    flowIndex++;
-
-    if (!selectedFlows.has(flow.id)) continue;
-
-    let stepNum = 1;
-    for (const step of flow.steps) {
-      activeModuleIds.add(step.fromModuleId);
-      activeModuleIds.add(step.toModuleId);
-
-      const fromPos = modulePositions.get(step.fromModuleId);
-      const toPos = modulePositions.get(step.toModuleId);
-
-      if (!fromPos || !toPos) continue;
-
-      const fromX = fromPos.x + fromPos.width / 2;
-      const fromY = fromPos.y + fromPos.height / 2;
-      const toX = toPos.x + toPos.width / 2;
-      const toY = toPos.y + toPos.height / 2;
-
-      // Calculate curve parameters
-      const dx = toX - fromX;
-      const dy = toY - fromY;
-      const len = Math.sqrt(dx * dx + dy * dy);
-
-      // Midpoint of the line
-      const midX = (fromX + toX) / 2;
-      const midY = (fromY + toY) / 2;
-
-      // Perpendicular offset based on step number for separation
-      const perpX = -dy / len; // perpendicular direction
-      const perpY = dx / len;
-      const curveOffset = (stepNum - 1) * 15; // 15px offset per step
-
-      const ctrlX = midX + perpX * curveOffset;
-      const ctrlY = midY + perpY * curveOffset;
-
-      // Helper function to get point along quadratic bezier
-      function getQuadraticPoint(t: number, x0: number, y0: number, cx: number, cy: number, x1: number, y1: number) {
-        const mt = 1 - t;
-        return {
-          x: mt * mt * x0 + 2 * mt * t * cx + t * t * x1,
-          y: mt * mt * y0 + 2 * mt * t * cy + t * t * y1,
-        };
-      }
-
-      // Position labels at 15% and 85% along the curve
-      const startLabel = getQuadraticPoint(0.15, fromX, fromY, ctrlX, ctrlY, toX, toY);
-      const endLabel = getQuadraticPoint(0.85, fromX, fromY, ctrlX, ctrlY, toX, toY);
-
-      // Draw quadratic bezier curve
-      g.append('path')
-        .attr('class', 'flow-arrow')
-        .attr('data-step-idx', stepNum - 1)
-        .attr('d', `M${fromX},${fromY} Q${ctrlX},${ctrlY} ${toX},${toY}`)
-        .attr('stroke', color)
-        .attr('stroke-width', 3)
+    if (isSelfCall) {
+      // Self-call: draw a loop arc
+      const loopPath = `M${fromX},${y} h${SELF_CALL_WIDTH} v${SELF_CALL_HEIGHT} h${-SELF_CALL_WIDTH}`;
+      messageGroup
+        .append('path')
+        .attr('d', loopPath)
         .attr('fill', 'none')
-        .attr('marker-end', 'url(#arrowhead)')
-        .style('color', color); // for marker fill inheritance
+        .attr('stroke', flowColor)
+        .attr('stroke-width', 2)
+        .attr('marker-end', 'url(#seq-arrowhead)');
 
-      // Add step number at start of arrow
-      g.append('text')
-        .attr('class', 'flow-step-number')
-        .attr('data-step-idx', stepNum - 1)
-        .attr('x', startLabel.x)
-        .attr('y', startLabel.y)
-        .attr('text-anchor', 'middle')
-        .attr('dominant-baseline', 'middle')
-        .attr('fill', color)
-        .text(stepNum);
-
-      // Add step number at end of arrow
-      g.append('text')
-        .attr('class', 'flow-step-number')
-        .attr('data-step-idx', stepNum - 1)
-        .attr('x', endLabel.x)
-        .attr('y', endLabel.y)
-        .attr('text-anchor', 'middle')
-        .attr('dominant-baseline', 'middle')
-        .attr('fill', color)
-        .text(stepNum + 1);
-
-      // Add semantic label at midpoint of curve
-      if (step.semantic) {
-        const midLabel = getQuadraticPoint(0.5, fromX, fromY, ctrlX, ctrlY, toX, toY);
-        const labelText = step.semantic;
-
-        // Create a group for background + text
-        const labelGroup = g
-          .append('g')
-          .attr('class', 'flow-semantic-label')
-          .attr('data-step-idx', stepNum - 1)
-          .attr('transform', `translate(${midLabel.x}, ${midLabel.y})`);
-
-        // Add background rect (sized after text is added)
-        const bgRect = labelGroup.append('rect').attr('class', 'semantic-label-bg').attr('rx', 4).attr('ry', 4);
-
-        // Add text
-        const text = labelGroup
-          .append('text')
-          .attr('class', 'semantic-label-text')
-          .attr('text-anchor', 'middle')
-          .attr('dominant-baseline', 'middle')
-          .text(labelText);
-
-        // Size background to fit text
-        const bbox = (text.node() as SVGTextElement).getBBox();
-        bgRect
-          .attr('x', -bbox.width / 2 - 6)
-          .attr('y', -bbox.height / 2 - 3)
-          .attr('width', bbox.width + 12)
-          .attr('height', bbox.height + 6);
-      }
-
-      stepNum++;
-    }
-  }
-
-  // Update module dimming based on selection
-  updateModuleDimming(activeModuleIds);
-}
-
-function updateModuleDimming(activeModuleIds: Set<number>) {
-  const hasSelection = activeModuleIds.size > 0;
-
-  d3.selectAll('.module-box').each(function () {
-    const el = d3.select(this);
-    const moduleId = Number.parseInt(el.attr('data-module-id') || '0');
-
-    if (hasSelection && !activeModuleIds.has(moduleId)) {
-      el.classed('module-dimmed', true);
+      // Label to the right of the loop
+      const label = truncateLabel(step.semantic || `Step ${stepIdx + 1}`);
+      messageGroup
+        .append('text')
+        .attr('class', 'seq-message-label')
+        .attr('x', fromX + SELF_CALL_WIDTH + 8)
+        .attr('y', y + SELF_CALL_HEIGHT / 2)
+        .attr('dominant-baseline', 'central')
+        .text(label)
+        .append('title')
+        .text(step.semantic || '');
     } else {
-      el.classed('module-dimmed', false);
+      // Normal arrow between two lifelines
+      const arrowMargin = 2;
+      const actualFromX = fromX + (fromIdx < toIdx ? arrowMargin : -arrowMargin);
+      const actualToX = toX + (fromIdx < toIdx ? -arrowMargin : arrowMargin);
+
+      messageGroup
+        .append('line')
+        .attr('x1', actualFromX)
+        .attr('y1', y)
+        .attr('x2', actualToX)
+        .attr('y2', y)
+        .attr('stroke', flowColor)
+        .attr('stroke-width', 2)
+        .attr('marker-end', 'url(#seq-arrowhead)');
+
+      // Label above the arrow, centered between the two lifelines
+      const label = truncateLabel(step.semantic || `Step ${stepIdx + 1}`);
+      const labelX = (fromX + toX) / 2;
+      messageGroup
+        .append('text')
+        .attr('class', 'seq-message-label')
+        .attr('x', labelX)
+        .attr('y', y - 10)
+        .attr('text-anchor', 'middle')
+        .text(label)
+        .append('title')
+        .text(step.semantic || '');
     }
-  });
-}
 
-function highlightStep(store: Store, stepIdx: number) {
-  const state = store.getState();
-  const flowId = state.selectedFlowId;
-  if (!flowId) return;
+    // Step number badge
+    const badgeX = fromX + (isSelfCall ? -16 : -16);
+    messageGroup.append('circle').attr('class', 'seq-step-badge-circle').attr('cx', badgeX).attr('cy', y).attr('r', 10);
 
-  const flow = state.flowsDagData?.flows.find((f) => f.id === flowId);
-  if (!flow || !flow.steps[stepIdx]) return;
-
-  const step = flow.steps[stepIdx];
-  const activeModuleIds = new Set([step.fromModuleId, step.toModuleId]);
-
-  // Dim all arrows except the hovered one
-  d3.selectAll('.flow-arrow').classed('arrow-dimmed', function () {
-    return Number.parseInt(d3.select(this).attr('data-step-idx') || '-1') !== stepIdx;
-  });
-
-  d3.selectAll('.flow-step-number').classed('number-dimmed', function () {
-    return Number.parseInt(d3.select(this).attr('data-step-idx') || '-1') !== stepIdx;
-  });
-
-  // Show only the hovered step's semantic label
-  d3.selectAll('.flow-semantic-label').classed('label-visible', function () {
-    const idx = Number.parseInt(d3.select(this).attr('data-step-idx') || '-1');
-    return idx === stepIdx;
-  });
-
-  // Update module dimming - only show from/to modules
-  updateModuleDimming(activeModuleIds);
-}
-
-function clearStepHighlight(store: Store) {
-  // Remove arrow dimming
-  d3.selectAll('.flow-arrow').classed('arrow-dimmed', false);
-  d3.selectAll('.flow-step-number').classed('number-dimmed', false);
-  d3.selectAll('.flow-semantic-label').classed('label-visible', false);
-
-  // Restore flow-level module highlighting
-  const state = store.getState();
-  const flowId = state.selectedFlowId;
-  if (!flowId) return;
-
-  const flow = state.flowsDagData?.flows.find((f) => f.id === flowId);
-  if (!flow) return;
-
-  const activeModuleIds = new Set<number>();
-  for (const step of flow.steps) {
-    activeModuleIds.add(step.fromModuleId);
-    activeModuleIds.add(step.toModuleId);
+    messageGroup
+      .append('text')
+      .attr('class', 'seq-step-badge')
+      .attr('x', badgeX)
+      .attr('y', y)
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
+      .text(stepIdx + 1);
   }
+}
 
-  updateModuleDimming(activeModuleIds);
+function truncateLabel(text: string): string {
+  if (text.length <= MAX_LABEL_LENGTH) return text;
+  return `${text.slice(0, MAX_LABEL_LENGTH - 1)}…`;
+}
+
+function highlightStep(_store: Store, stepIdx: number) {
+  // Dim all arrows except the hovered one
+  d3.selectAll('.seq-message').classed('dimmed', function () {
+    return Number.parseInt(d3.select(this).attr('data-step-idx') || '-1') !== stepIdx;
+  });
+}
+
+function clearStepHighlight() {
+  d3.selectAll('.seq-message').classed('dimmed', false);
 }
 
 function setupSidebarInteractions(store: Store) {
@@ -560,8 +435,8 @@ function setupSidebarInteractions(store: Store) {
       // Show steps in sidebar
       showFlowSteps(store, flowId);
 
-      // Update arrows
-      updateFlowArrows(store);
+      // Render sequence diagram
+      renderSequenceDiagram(store);
     });
   });
 }
@@ -591,7 +466,7 @@ function setupKeyboardShortcuts(store: Store) {
           item.classList.remove('selected');
         });
 
-        updateFlowArrows(store);
+        showSequencePlaceholder();
       }
     }
   });
@@ -658,7 +533,7 @@ function showFlowSteps(store: Store, flowId: number) {
     });
 
     item.addEventListener('mouseleave', () => {
-      clearStepHighlight(store);
+      clearStepHighlight();
     });
   });
 }
@@ -676,6 +551,6 @@ function goBackToFlowsList(store: Store) {
   // Re-setup event handlers
   setupSidebarInteractions(store);
 
-  // Clear arrows
-  updateFlowArrows(store);
+  // Show placeholder
+  showSequencePlaceholder();
 }

@@ -115,7 +115,7 @@ export default class Annotate extends Command {
     model: Flags.string({
       char: 'm',
       description: 'LLM model alias',
-      default: 'sonnet',
+      default: 'openrouter:google/gemini-2.5-flash',
     }),
     'batch-size': Flags.integer({
       char: 'b',

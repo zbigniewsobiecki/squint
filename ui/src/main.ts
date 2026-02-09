@@ -53,6 +53,12 @@ function switchView(view: keyof typeof views) {
     filters.classList.toggle('visible', view === 'sunburst');
   }
 
+  // Show/hide symbol types legend (only for force view)
+  const legend = document.getElementById('legend');
+  if (legend) {
+    legend.classList.toggle('hidden', view !== 'force');
+  }
+
   // Update stats display based on view
   updateStatsForView(view);
 
@@ -68,10 +74,13 @@ function updateStatsForView(view: string) {
   const state = store.getState();
 
   if (view === 'modules') {
+    const moduleCount = state.modulesData?.stats.moduleCount ?? state.flowsDagData?.modules.length ?? '-';
+    const assigned = state.modulesData?.stats.assigned ?? '-';
+    const unassigned = state.modulesData?.stats.unassigned ?? '-';
     statsContainer.innerHTML = `
-      <span class="stat">Modules: <span class="stat-value" id="stat-modules">${state.modulesData?.stats.moduleCount ?? '-'}</span></span>
-      <span class="stat">Assigned: <span class="stat-value annotated" id="stat-assigned">${state.modulesData?.stats.assigned ?? '-'}</span></span>
-      <span class="stat">Unassigned: <span class="stat-value" id="stat-unassigned">${state.modulesData?.stats.unassigned ?? '-'}</span></span>
+      <span class="stat">Modules: <span class="stat-value" id="stat-modules">${moduleCount}</span></span>
+      <span class="stat">Assigned: <span class="stat-value annotated" id="stat-assigned">${assigned}</span></span>
+      <span class="stat">Unassigned: <span class="stat-value" id="stat-unassigned">${unassigned}</span></span>
     `;
   } else if (view === 'flows') {
     statsContainer.innerHTML = `

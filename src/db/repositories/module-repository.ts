@@ -12,7 +12,6 @@ export interface ModuleSymbol {
 }
 
 export interface ModuleMemberInfo {
-  id: number;
   definitionId: number;
   name: string;
   kind: string;
@@ -434,6 +433,74 @@ export class ModuleRepository {
     }
 
     return Array.from(edgeMap.values());
+  }
+
+  /**
+   * Get modules that exceed a member threshold.
+   * Returns modules with member_count > threshold, including their member details.
+   */
+  getModulesExceedingThreshold(threshold: number): ModuleWithMembers[] {
+    ensureModulesTables(this.db);
+
+    // First find modules that exceed the threshold
+    const modulesStmt = this.db.prepare(`
+      SELECT
+        m.id,
+        m.parent_id as parentId,
+        m.slug,
+        m.full_path as fullPath,
+        m.name,
+        m.description,
+        m.depth,
+        m.created_at as createdAt,
+        COUNT(mm.definition_id) as memberCount
+      FROM modules m
+      JOIN module_members mm ON mm.module_id = m.id
+      GROUP BY m.id
+      HAVING COUNT(mm.definition_id) > ?
+      ORDER BY m.depth, m.full_path
+    `);
+
+    const modules = modulesStmt.all(threshold) as Array<Module & { memberCount: number }>;
+
+    // For each module, get its members with details
+    return modules.map((m) => {
+      const members = this.getMemberInfo(m.id);
+      return {
+        id: m.id,
+        parentId: m.parentId,
+        slug: m.slug,
+        fullPath: m.fullPath,
+        name: m.name,
+        description: m.description,
+        depth: m.depth,
+        createdAt: m.createdAt,
+        members,
+      };
+    });
+  }
+
+  /**
+   * Get detailed member info for a module (used by deepen phase).
+   */
+  getMemberInfo(moduleId: number): ModuleMemberInfo[] {
+    ensureModulesTables(this.db);
+
+    const stmt = this.db.prepare(`
+      SELECT
+        mm.definition_id as definitionId,
+        d.name,
+        d.kind,
+        f.path as filePath,
+        d.line
+      FROM module_members mm
+      JOIN definitions d ON mm.definition_id = d.id
+      JOIN files f ON d.file_id = f.id
+      WHERE mm.module_id = ?
+      ORDER BY f.path, d.line
+    `);
+
+    return stmt.all(moduleId) as ModuleMemberInfo[];
   }
 
   /**

@@ -150,6 +150,11 @@ export interface CallGraphEdge {
 // ============================================================
 
 /**
+ * Interaction source type: how the interaction was detected.
+ */
+export type InteractionSource = 'ast' | 'llm-inferred';
+
+/**
  * Interaction: Point-to-point module connection.
  *
  * Represents a uni- or bi-directional relationship between two modules,
@@ -164,6 +169,7 @@ export interface Interaction {
   pattern: 'utility' | 'business' | null; // Classification based on call patterns
   symbols: string | null; // JSON array of symbol names
   semantic: string | null; // What happens in this interaction
+  source: InteractionSource; // How this interaction was detected
   createdAt: string;
 }
 
@@ -611,6 +617,7 @@ CREATE TABLE interactions (
   pattern TEXT,  -- 'utility' | 'business'
   symbols TEXT,  -- JSON array of symbol names
   semantic TEXT,  -- What happens in this interaction
+  source TEXT NOT NULL DEFAULT 'ast',  -- 'ast' | 'llm-inferred'
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(from_module_id, to_module_id)
 );
@@ -618,6 +625,7 @@ CREATE TABLE interactions (
 CREATE INDEX idx_interactions_from_module ON interactions(from_module_id);
 CREATE INDEX idx_interactions_to_module ON interactions(to_module_id);
 CREATE INDEX idx_interactions_pattern ON interactions(pattern);
+CREATE INDEX idx_interactions_source ON interactions(source);
 
 -- Flows: user journeys with entry points
 CREATE TABLE flows (

@@ -57,3 +57,8 @@ body {
   border-radius: var(--radius-sm);
   margin: 0 2px;
 }
+
+/* Utility classes */
+.hidden {
+  display: none !important;
+}

@@ -61,7 +61,12 @@ module,project.backend,api,"API","HTTP endpoint handlers"
 - Use domain tags to inform module boundaries
 - Consider architectural layers (e.g., presentation, business logic, data)
 - Keep module names concise but descriptive
-- Each parent_path must be a valid path (either "project" or a previously defined module)`;
+- Each parent_path must be a valid path (either "project" or a previously defined module)
+- For API layers (controllers, routes, services), create entity-specific modules:
+  - backend.api.controllers.users (not just backend.api.controllers)
+  - backend.api.controllers.products
+  - backend.services.user-management
+  This enables accurate per-entity flow tracing.`;
 }
 
 /**
@@ -220,4 +225,91 @@ export function toSymbolForAssignment(sym: AnnotatedSymbolInfo): SymbolForAssign
     domain: sym.domain,
     role: sym.role,
   };
+}
+
+// ============================================================
+// Phase 3: Module Deepening
+// ============================================================
+
+export interface ModuleMemberForDeepening {
+  definitionId: number;
+  name: string;
+  kind: string;
+  filePath: string;
+}
+
+export interface ModuleForDeepening {
+  id: number;
+  fullPath: string;
+  name: string;
+  members: ModuleMemberForDeepening[];
+}
+
+/**
+ * Build the system prompt for Phase 3 (module deepening).
+ */
+export function buildDeepenSystemPrompt(): string {
+  return `You are a software architect splitting a large module into smaller sub-modules.
+
+## Your Task
+A module has too many members and needs to be split into 2-5 smaller sub-modules.
+Analyze the member symbols and propose sub-modules based on patterns in:
+- Names (e.g., use*Customer* → customers sub-module)
+- File paths (same file often = same sub-module)
+- Functionality (CRUD operations, queries, mutations, etc.)
+- Entity/domain groupings (customers, sales, vehicles, etc.)
+
+## Output Format
+Respond with **only** a CSV table with two row types:
+
+\`\`\`csv
+type,parent_path,slug,name,description,definition_id
+module,project.frontend.hooks.data-fetching,customers,"Customer Hooks","Hooks for customer data",
+module,project.frontend.hooks.data-fetching,sales,"Sales Hooks","Hooks for sales data",
+reassign,project.frontend.hooks.data-fetching.customers,,,,42
+reassign,project.frontend.hooks.data-fetching.customers,,,,43
+reassign,project.frontend.hooks.data-fetching.sales,,,,87
+\`\`\`
+
+Row types:
+- \`module\`: Creates a new sub-module. parent_path is the current module being split. Leave definition_id empty.
+- \`reassign\`: Moves a symbol to a sub-module. parent_path is the target module path (new sub-module). definition_id is required, other fields empty.
+
+## Slug Rules
+- Must start with lowercase letter
+- Only lowercase letters, numbers, and hyphens allowed
+- No consecutive hyphens
+- No trailing hyphens
+- Maximum 50 characters
+
+## Guidelines
+- Create 2-5 sub-modules (not more)
+- Every member MUST be reassigned to exactly one sub-module
+- Group related symbols together
+- Use clear, descriptive slugs based on the grouping pattern
+- Do NOT leave any members in the parent module
+- For API layer modules (controllers, routes, handlers), prioritize splitting by entity/domain
+  even if member count is low, because each entity typically has separate user flows`;
+}
+
+/**
+ * Build the user prompt for Phase 3 (module deepening).
+ */
+export function buildDeepenUserPrompt(module: ModuleForDeepening): string {
+  const parts: string[] = [];
+
+  parts.push('## Module to Split');
+  parts.push(`Path: ${module.fullPath}`);
+  parts.push(`Name: ${module.name}`);
+  parts.push(`Members (${module.members.length}):`);
+  parts.push('');
+
+  for (const member of module.members) {
+    parts.push(`- #${member.definitionId}: ${member.name} (${member.kind}) from ${member.filePath}`);
+  }
+  parts.push('');
+
+  parts.push('Propose sub-modules and reassign all members to them.');
+
+  return parts.join('\n');
 }

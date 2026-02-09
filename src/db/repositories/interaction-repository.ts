@@ -5,6 +5,7 @@ import type {
   CalledSymbolInfo,
   EnrichedModuleCallEdge,
   Interaction,
+  InteractionSource,
   InteractionWithPaths,
   ModuleCallEdge,
   RelationshipCoverageBreakdown,
@@ -17,6 +18,7 @@ export interface InteractionInsertOptions {
   pattern?: 'utility' | 'business';
   symbols?: string[];
   semantic?: string;
+  source?: InteractionSource;
 }
 
 export interface InteractionUpdateOptions {
@@ -47,8 +49,8 @@ export class InteractionRepository {
     ensureInteractionsTables(this.db);
 
     const stmt = this.db.prepare(`
-      INSERT INTO interactions (from_module_id, to_module_id, direction, weight, pattern, symbols, semantic)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO interactions (from_module_id, to_module_id, direction, weight, pattern, symbols, semantic, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -58,7 +60,8 @@ export class InteractionRepository {
       options?.weight ?? 1,
       options?.pattern ?? null,
       options?.symbols ? JSON.stringify(options.symbols) : null,
-      options?.semantic ?? null
+      options?.semantic ?? null,
+      options?.source ?? 'ast'
     );
 
     return result.lastInsertRowid as number;
@@ -103,6 +106,7 @@ export class InteractionRepository {
         pattern,
         symbols,
         semantic,
+        source,
         created_at as createdAt
       FROM interactions
       WHERE id = ?
@@ -131,6 +135,7 @@ export class InteractionRepository {
         pattern,
         symbols,
         semantic,
+        source,
         created_at as createdAt
       FROM interactions
       WHERE from_module_id = ? AND to_module_id = ?
@@ -160,6 +165,7 @@ export class InteractionRepository {
         i.pattern,
         i.symbols,
         i.semantic,
+        i.source,
         i.created_at as createdAt,
         from_m.full_path as fromModulePath,
         to_m.full_path as toModulePath
@@ -189,6 +195,7 @@ export class InteractionRepository {
         i.pattern,
         i.symbols,
         i.semantic,
+        i.source,
         i.created_at as createdAt,
         from_m.full_path as fromModulePath,
         to_m.full_path as toModulePath
@@ -219,6 +226,7 @@ export class InteractionRepository {
         i.pattern,
         i.symbols,
         i.semantic,
+        i.source,
         i.created_at as createdAt,
         from_m.full_path as fromModulePath,
         to_m.full_path as toModulePath
@@ -249,6 +257,7 @@ export class InteractionRepository {
         i.pattern,
         i.symbols,
         i.semantic,
+        i.source,
         i.created_at as createdAt,
         from_m.full_path as fromModulePath,
         to_m.full_path as toModulePath
@@ -349,6 +358,47 @@ export class InteractionRepository {
       utilityCount,
       biDirectionalCount,
     };
+  }
+
+  /**
+   * Get interactions by source type.
+   */
+  getBySource(source: InteractionSource): InteractionWithPaths[] {
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+
+    const stmt = this.db.prepare(`
+      SELECT
+        i.id,
+        i.from_module_id as fromModuleId,
+        i.to_module_id as toModuleId,
+        i.direction,
+        i.weight,
+        i.pattern,
+        i.symbols,
+        i.semantic,
+        i.source,
+        i.created_at as createdAt,
+        from_m.full_path as fromModulePath,
+        to_m.full_path as toModulePath
+      FROM interactions i
+      JOIN modules from_m ON i.from_module_id = from_m.id
+      JOIN modules to_m ON i.to_module_id = to_m.id
+      WHERE i.source = ?
+      ORDER BY i.weight DESC
+    `);
+
+    return stmt.all(source) as InteractionWithPaths[];
+  }
+
+  /**
+   * Get count of interactions by source type.
+   */
+  getCountBySource(source: InteractionSource): number {
+    ensureInteractionsTables(this.db);
+    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM interactions WHERE source = ?');
+    const row = stmt.get(source) as { count: number };
+    return row.count;
   }
 
   /**

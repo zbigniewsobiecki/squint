@@ -24,6 +24,7 @@ import {
   type IIndexWriter,
   type IncomingDependency,
   type Interaction,
+  type InteractionSource,
   type InteractionWithPaths,
   type Module,
   type ModuleCallEdge,
@@ -509,6 +510,10 @@ export class IndexDatabase implements IIndexWriter {
     return this.modules.getIncomingEdgesFor(definitionId);
   }
 
+  getModulesExceedingThreshold(threshold: number): ModuleWithMembers[] {
+    return this.modules.getModulesExceedingThreshold(threshold);
+  }
+
   // ============================================================
   // Interaction Operations
   // ============================================================
@@ -590,6 +595,14 @@ export class IndexDatabase implements IIndexWriter {
 
   syncInheritanceInteractions(): { created: number } {
     return this.interactions.syncInheritanceInteractions();
+  }
+
+  getInteractionsBySource(source: InteractionSource): InteractionWithPaths[] {
+    return this.interactions.getBySource(source);
+  }
+
+  getInferredInteractionCount(): number {
+    return this.interactions.getCountBySource('llm-inferred');
   }
 
   // ============================================================

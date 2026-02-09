@@ -1,8 +1,11 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { LLMist } from 'llmist';
-import type { EnrichedModuleCallEdge } from '../../db/schema.js';
+import type { IndexDatabase } from '../../db/database-facade.js';
+import type { EnrichedModuleCallEdge, Module, ModuleCallEdge } from '../../db/schema.js';
 import { SharedFlags, openDatabase } from '../_shared/index.js';
+import { parseCSVLine } from './_shared/csv-utils.js';
+import { getErrorMessage } from './_shared/llm-utils.js';
 
 interface InteractionSuggestion {
   fromModuleId: number;
@@ -13,6 +16,12 @@ interface InteractionSuggestion {
   pattern: 'utility' | 'business';
   symbols: string[];
   weight: number;
+}
+
+interface InferredInteraction {
+  fromModuleId: number;
+  toModuleId: number;
+  reason: string;
 }
 
 export default class Interactions extends Command {
@@ -32,7 +41,7 @@ export default class Interactions extends Command {
     model: Flags.string({
       char: 'm',
       description: 'LLM model alias',
-      default: 'sonnet',
+      default: 'openrouter:google/gemini-2.5-flash',
     }),
     'batch-size': Flags.integer({
       description: 'Module edges per LLM batch for semantic generation',
@@ -53,6 +62,14 @@ export default class Interactions extends Command {
       description: 'Show detailed progress',
       default: false,
     }),
+    'show-llm-requests': Flags.boolean({
+      description: 'Show LLM request prompts',
+      default: false,
+    }),
+    'show-llm-responses': Flags.boolean({
+      description: 'Show LLM response text',
+      default: false,
+    }),
   };
 
   public async run(): Promise<void> {
@@ -64,6 +81,8 @@ export default class Interactions extends Command {
     const verbose = flags.verbose;
     const model = flags.model;
     const batchSize = flags['batch-size'];
+    const showLlmRequests = flags['show-llm-requests'];
+    const showLlmResponses = flags['show-llm-responses'];
 
     try {
       // Check if interactions already exist
@@ -136,7 +155,7 @@ export default class Interactions extends Command {
             );
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = getErrorMessage(error);
           if (!isJson) {
             this.log(chalk.yellow(`  Batch ${Math.floor(i / batchSize) + 1} failed: ${message}`));
           }
@@ -174,6 +193,55 @@ export default class Interactions extends Command {
         }
       }
 
+      // Step 3: Infer logical (non-AST) interactions
+      if (!isJson) {
+        this.log('');
+        this.log(chalk.bold('Step 3: Inferring Logical Connections (LLM Analysis)'));
+      }
+
+      // Get existing edges to avoid duplicates
+      const existingEdges = db.getModuleCallGraph();
+
+      const logicalInteractions = await this.inferLogicalInteractions(
+        db,
+        existingEdges,
+        model,
+        showLlmRequests,
+        showLlmResponses
+      );
+
+      let inferredCount = 0;
+      if (!dryRun && logicalInteractions.length > 0) {
+        for (const li of logicalInteractions) {
+          try {
+            db.upsertInteraction(li.fromModuleId, li.toModuleId, {
+              semantic: li.reason,
+              source: 'llm-inferred',
+              weight: 1,
+            });
+            inferredCount++;
+          } catch {
+            // Skip duplicates (edge may already exist from AST detection)
+            if (verbose && !isJson) {
+              const modules = db.getAllModules();
+              const fromMod = modules.find((m) => m.id === li.fromModuleId);
+              const toMod = modules.find((m) => m.id === li.toModuleId);
+              this.log(chalk.gray(`  Skipping: ${fromMod?.fullPath} → ${toMod?.fullPath} (exists)`));
+            }
+          }
+        }
+
+        if (!isJson) {
+          this.log(chalk.green(`  Added ${inferredCount} inferred interactions`));
+        }
+      } else if (!isJson) {
+        if (logicalInteractions.length === 0) {
+          this.log(chalk.gray('  No additional logical connections detected'));
+        } else {
+          this.log(chalk.gray(`  Would add ${logicalInteractions.length} inferred interactions (dry run)`));
+        }
+      }
+
       // Get relationship coverage
       const relCoverage = db.getRelationshipCoverage();
 
@@ -181,6 +249,7 @@ export default class Interactions extends Command {
       const result = {
         totalEdges: enrichedEdges.length,
         interactions: interactions.length,
+        inferredInteractions: inferredCount,
         businessCount,
         utilityCount,
         relationshipCoverage: relCoverage,
@@ -192,9 +261,10 @@ export default class Interactions extends Command {
         this.log('');
         this.log(chalk.bold('Results'));
         this.log(`Total module edges: ${result.totalEdges}`);
-        this.log(`Interactions created: ${result.interactions}`);
+        this.log(`AST interactions created: ${result.interactions}`);
         this.log(`  Business: ${businessCount}`);
         this.log(`  Utility: ${utilityCount}`);
+        this.log(`LLM-inferred interactions: ${result.inferredInteractions}`);
 
         // Display relationship coverage
         this.log('');
@@ -284,7 +354,7 @@ Generate semantic descriptions for each interaction in CSV format.`;
     const lines = csvContent.split('\n').filter((l) => l.trim() && !l.startsWith('from_module'));
 
     for (const line of lines) {
-      const fields = this.parseCSVLine(line);
+      const fields = parseCSVLine(line);
       if (fields.length < 3) continue;
 
       const [fromPath, toPath, semantic] = fields;
@@ -337,28 +407,321 @@ Generate semantic descriptions for each interaction in CSV format.`;
     };
   }
 
+  // ============================================================
+  // Step 3: Logical Interaction Inference
+  // ============================================================
+
   /**
-   * Parse a CSV line handling quoted fields.
+   * Infer logical (non-AST) interactions between modules using LLM analysis.
+   * These are connections that exist at runtime but aren't in the static call graph,
+   * such as HTTP calls between frontend and backend.
    */
-  private parseCSVLine(line: string): string[] {
-    const fields: string[] = [];
-    let current = '';
-    let inQuotes = false;
+  private async inferLogicalInteractions(
+    db: IndexDatabase,
+    existingEdges: ModuleCallEdge[],
+    model: string,
+    showLlmRequests: boolean,
+    showLlmResponses: boolean
+  ): Promise<InferredInteraction[]> {
+    const modules = db.getAllModules();
 
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
+    // Build existing edge lookup to avoid duplicates
+    const existingPairs = new Set(existingEdges.map((e) => `${e.fromModuleId}->${e.toModuleId}`));
 
-      if (char === '"') {
-        inQuotes = !inQuotes;
-      } else if (char === ',' && !inQuotes) {
-        fields.push(current);
-        current = '';
+    // Also include existing interactions (both AST and already-inferred)
+    const existingInteractions = db.getAllInteractions();
+    for (const interaction of existingInteractions) {
+      existingPairs.add(`${interaction.fromModuleId}->${interaction.toModuleId}`);
+    }
+
+    // Classify modules by layer
+    const frontend = modules.filter((m) => this.isModuleInLayer(m, 'frontend'));
+    const backend = modules.filter((m) => this.isModuleInLayer(m, 'backend'));
+
+    if (frontend.length === 0 || backend.length === 0) {
+      return [];
+    }
+
+    const systemPrompt = this.buildLogicalInferenceSystemPrompt();
+    const userPrompt = this.buildLogicalInferenceUserPrompt(frontend, backend, existingEdges, modules);
+
+    if (showLlmRequests) {
+      this.log(chalk.cyan('═'.repeat(60)));
+      this.log(chalk.cyan('LLM REQUEST - inferLogicalInteractions'));
+      this.log(chalk.gray(systemPrompt));
+      this.log(chalk.gray(userPrompt));
+    }
+
+    const response = await LLMist.complete(userPrompt, { model, systemPrompt, temperature: 0 });
+
+    if (showLlmResponses) {
+      this.log(chalk.green('═'.repeat(60)));
+      this.log(chalk.green('LLM RESPONSE'));
+      this.log(chalk.gray(response));
+    }
+
+    return this.parseLogicalInteractionCSV(response, modules, existingPairs);
+  }
+
+  /**
+   * Determine if a module belongs to frontend or backend layer based on path patterns.
+   */
+  private isModuleInLayer(module: Module, layer: 'frontend' | 'backend'): boolean {
+    const path = module.fullPath.toLowerCase();
+    if (layer === 'frontend') {
+      return (
+        path.includes('frontend') ||
+        path.includes('screen') ||
+        path.includes('page') ||
+        path.includes('hook') ||
+        path.includes('component') ||
+        path.includes('ui') ||
+        path.includes('view') ||
+        path.includes('client')
+      );
+    }
+    return (
+      path.includes('backend') ||
+      path.includes('api') ||
+      path.includes('route') ||
+      path.includes('controller') ||
+      path.includes('handler') ||
+      path.includes('server') ||
+      path.includes('service') ||
+      path.includes('repository') ||
+      path.includes('model')
+    );
+  }
+
+  /**
+   * Build system prompt for logical inference.
+   */
+  private buildLogicalInferenceSystemPrompt(): string {
+    return `You identify LOGICAL module connections that exist at runtime but aren't in static analysis.
+
+## Architecture Boundary Rules (CRITICAL)
+Frontend and backend are separated by an HTTP boundary. Frontend code makes HTTP requests to backend API endpoints.
+
+VALID cross-boundary connections (frontend → backend):
+- Frontend modules → API routes/controllers (the HTTP entry points)
+- Example: hooks.data-fetching.sales → api.routes OR api.controllers
+
+INVALID connections (DO NOT INFER):
+- Frontend → Backend Services (services are internal to backend, not exposed via HTTP)
+- Frontend → Backend Repositories/Data layers (internal to backend)
+- Frontend → Backend Models (internal to backend)
+
+## What to Detect
+- Frontend screens/hooks calling backend API endpoints via HTTP/fetch
+- Only connect frontend to the backend's HTTP boundary (routes, controllers, API)
+
+## Matching Patterns
+- Entity names: "useVehicles" hook likely calls "vehicleRoutes" or "vehicleController"
+- Data fetching hooks call API endpoints, NOT services directly
+- The backend call chain is: Routes → Controllers → Services (internal to backend)
+
+## Entity-Based Matching (IMPORTANT)
+When inferring connections, prefer entity-specific targets over generic ones:
+- hooks.data-fetching.users → api.controllers.users (if exists)
+- hooks.useProducts → api.controllers.products (if exists)
+- Only fall back to generic module (e.g., api.controllers) if no entity-specific module exists
+
+Extract entity name from source module path and match to target.
+
+## Output Format
+\`\`\`csv
+from_module_path,to_module_path,reason,confidence
+project.frontend.hooks.useCustomers,project.backend.api.controllers,"Customer data hooks call customer API controllers",high
+\`\`\`
+
+Confidence levels:
+- high: Names/patterns strongly suggest connection
+- medium: Context supports it but names don't match exactly
+- Skip low confidence - only report likely connections
+
+DO NOT report:
+- Frontend → Services (WRONG: services are internal to backend)
+- Frontend → Repositories (WRONG: repos are internal to backend)
+- Same-layer connections (frontend→frontend, backend→backend)
+- Utility modules (logging, config, etc.)`;
+  }
+
+  /**
+   * Build user prompt with module lists for logical inference.
+   */
+  private buildLogicalInferenceUserPrompt(
+    frontend: Module[],
+    backend: Module[],
+    existingEdges: ModuleCallEdge[],
+    allModules: Module[]
+  ): string {
+    const parts: string[] = [];
+
+    parts.push('## Frontend Modules');
+    for (const m of frontend) {
+      parts.push(`- ${m.fullPath}: ${m.name}${m.description ? ` - ${m.description}` : ''}`);
+    }
+
+    parts.push('');
+    parts.push('## Backend Modules (grouped by entity)');
+
+    // Group backend modules by entity pattern for better LLM matching
+    const entityGroups = this.groupModulesByEntity(backend);
+
+    for (const [entity, modules] of entityGroups) {
+      if (entity === '_generic') {
+        parts.push('### Generic/Shared');
       } else {
-        current += char;
+        parts.push(`### ${entity}-related`);
+      }
+      for (const m of modules) {
+        parts.push(`- ${m.fullPath}: ${m.name}${m.description ? ` - ${m.description}` : ''}`);
+      }
+      parts.push('');
+    }
+
+    parts.push('');
+    parts.push('## Existing AST-Detected Connections (for reference)');
+    const crossLayerEdges = existingEdges.filter((e) => {
+      const from = allModules.find((m) => m.id === e.fromModuleId);
+      const to = allModules.find((m) => m.id === e.toModuleId);
+      return from && to && this.isModuleInLayer(from, 'frontend') !== this.isModuleInLayer(to, 'frontend');
+    });
+
+    if (crossLayerEdges.length === 0) {
+      parts.push('(None detected - this is why we need inference!)');
+    } else {
+      for (const e of crossLayerEdges.slice(0, 10)) {
+        const from = allModules.find((m) => m.id === e.fromModuleId);
+        const to = allModules.find((m) => m.id === e.toModuleId);
+        if (from && to) {
+          parts.push(`- ${from.fullPath} → ${to.fullPath}`);
+        }
       }
     }
-    fields.push(current);
 
-    return fields;
+    parts.push('');
+    parts.push('Identify frontend→backend logical connections that likely exist at runtime.');
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Group modules by entity name extracted from their path.
+   * Returns a Map where keys are entity names (or '_generic' for non-entity modules).
+   */
+  private groupModulesByEntity(modules: Module[]): Map<string, Module[]> {
+    const groups = new Map<string, Module[]>();
+
+    // Common entity patterns to extract from module paths
+    const entityPatterns = [
+      /\.(users?|accounts?|auth)[-.]?/i,
+      /\.(customers?|clients?)[-.]?/i,
+      /\.(products?|items?|inventory)[-.]?/i,
+      /\.(orders?|purchases?)[-.]?/i,
+      /\.(sales?)[-.]?/i,
+      /\.(vehicles?)[-.]?/i,
+      /\.(payments?|billing)[-.]?/i,
+      /\.(notifications?|alerts?)[-.]?/i,
+      /\.(reports?|analytics?)[-.]?/i,
+      /\.(settings?|config)[-.]?/i,
+    ];
+
+    // Normalize entity names for grouping
+    const normalizeEntity = (match: string): string => {
+      const entity = match.replace(/^\./, '').replace(/[-.]$/, '').toLowerCase();
+      // Singularize and normalize common variants
+      if (/^(users?|accounts?|auth)$/i.test(entity)) return 'User';
+      if (/^(customers?|clients?)$/i.test(entity)) return 'Customer';
+      if (/^(products?|items?|inventory)$/i.test(entity)) return 'Product';
+      if (/^(orders?|purchases?)$/i.test(entity)) return 'Order';
+      if (/^(sales?)$/i.test(entity)) return 'Sales';
+      if (/^(vehicles?)$/i.test(entity)) return 'Vehicle';
+      if (/^(payments?|billing)$/i.test(entity)) return 'Payment';
+      if (/^(notifications?|alerts?)$/i.test(entity)) return 'Notification';
+      if (/^(reports?|analytics?)$/i.test(entity)) return 'Report';
+      if (/^(settings?|config)$/i.test(entity)) return 'Settings';
+      return entity.charAt(0).toUpperCase() + entity.slice(1);
+    };
+
+    for (const mod of modules) {
+      let entityFound = false;
+
+      for (const pattern of entityPatterns) {
+        const match = mod.fullPath.match(pattern);
+        if (match) {
+          const entity = normalizeEntity(match[0]);
+          if (!groups.has(entity)) {
+            groups.set(entity, []);
+          }
+          groups.get(entity)!.push(mod);
+          entityFound = true;
+          break;
+        }
+      }
+
+      if (!entityFound) {
+        if (!groups.has('_generic')) {
+          groups.set('_generic', []);
+        }
+        groups.get('_generic')!.push(mod);
+      }
+    }
+
+    // Sort to put _generic last
+    const sorted = new Map<string, Module[]>();
+    for (const [key, value] of [...groups.entries()].sort((a, b) => {
+      if (a[0] === '_generic') return 1;
+      if (b[0] === '_generic') return -1;
+      return a[0].localeCompare(b[0]);
+    })) {
+      sorted.set(key, value);
+    }
+
+    return sorted;
+  }
+
+  /**
+   * Parse the LLM response CSV into inferred interactions.
+   */
+  private parseLogicalInteractionCSV(
+    response: string,
+    modules: Module[],
+    existingPairs: Set<string>
+  ): InferredInteraction[] {
+    const results: InferredInteraction[] = [];
+    const moduleByPath = new Map(modules.map((m) => [m.fullPath, m]));
+
+    const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/);
+    const csv = csvMatch ? csvMatch[1] : response;
+
+    for (const line of csv.split('\n')) {
+      if (!line.trim() || line.startsWith('from_module')) continue;
+
+      const fields = parseCSVLine(line);
+      if (fields.length < 4) continue;
+
+      const [fromPath, toPath, reason, confidence] = fields;
+
+      const fromModule = moduleByPath.get(fromPath.trim());
+      const toModule = moduleByPath.get(toPath.trim());
+
+      if (!fromModule || !toModule) continue;
+      if (confidence.trim().toLowerCase() === 'low') continue;
+
+      const pairKey = `${fromModule.id}->${toModule.id}`;
+      if (existingPairs.has(pairKey)) continue; // Skip duplicates
+
+      results.push({
+        fromModuleId: fromModule.id,
+        toModuleId: toModule.id,
+        reason: reason?.replace(/"/g, '').trim() ?? 'LLM inferred connection',
+      });
+
+      // Mark as processed to avoid duplicates within this batch
+      existingPairs.add(pairKey);
+    }
+
+    return results;
   }
 }

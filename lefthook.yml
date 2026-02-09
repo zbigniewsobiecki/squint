@@ -11,4 +11,4 @@ pre-commit:
       glob: "ui/**/*.{ts,tsx}"
       run: cd ui && pnpm run build
     test:
-      run: pnpm test
+      run: pnpm run test:coverage

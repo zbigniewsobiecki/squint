@@ -3,12 +3,16 @@ import chalk from 'chalk';
 import { LLMist } from 'llmist';
 
 import { SharedFlags, openDatabase } from '../_shared/index.js';
-import { isValidModulePath, parseAssignmentCsv, parseTreeCsv } from './_shared/module-csv.js';
+import { getErrorMessage } from './_shared/llm-utils.js';
+import { isValidModulePath, parseAssignmentCsv, parseDeepenCsv, parseTreeCsv } from './_shared/module-csv.js';
 import {
   type DomainSummary,
+  type ModuleForDeepening,
   type TreeGenerationContext,
   buildAssignmentSystemPrompt,
   buildAssignmentUserPrompt,
+  buildDeepenSystemPrompt,
+  buildDeepenUserPrompt,
   buildTreeSystemPrompt,
   buildTreeUserPrompt,
   toSymbolForAssignment,
@@ -40,7 +44,7 @@ export default class Modules extends Command {
       description: 'Maximum LLM iterations for assignment phase',
     }),
     model: Flags.string({
-      default: 'sonnet',
+      default: 'openrouter:google/gemini-2.5-flash',
       description: 'LLM model to use',
     }),
     'dry-run': Flags.boolean({
@@ -54,6 +58,10 @@ export default class Modules extends Command {
     incremental: Flags.boolean({
       default: false,
       description: 'Only assign unassigned symbols (skip tree generation)',
+    }),
+    'deepen-threshold': Flags.integer({
+      default: 10,
+      description: 'Min members before splitting a module (0 to disable deepening)',
     }),
     json: SharedFlags.json,
     verbose: Flags.boolean({
@@ -110,6 +118,12 @@ export default class Modules extends Command {
       // Phase 2: Symbol Assignment
       if (phase === 'all' || phase === 'assign') {
         await this.runAssignmentPhase(db, flags, dryRun, isJson, verbose);
+
+        // Phase 3: Deepening (automatic after assignment, unless disabled)
+        const deepenThreshold = flags['deepen-threshold'];
+        if (deepenThreshold > 0) {
+          await this.runDeepenPhase(db, flags, deepenThreshold, dryRun, isJson, verbose);
+        }
       }
 
       // Final stats
@@ -253,7 +267,7 @@ export default class Modules extends Command {
         insertedCount++;
       } catch (error) {
         if (verbose && !isJson) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = getErrorMessage(error);
           this.log(chalk.yellow(`  Failed to insert ${mod.slug}: ${message}`));
         }
       }
@@ -370,7 +384,7 @@ export default class Modules extends Command {
           process.stdout.write(chalk.gray('.'));
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         if (!isJson) {
           this.log(chalk.red(`  Batch ${iteration} failed: ${message}`));
         }
@@ -403,6 +417,166 @@ export default class Modules extends Command {
 
     if (!isJson) {
       this.log(chalk.green(`  Assigned ${totalAssigned} symbols`));
+    }
+  }
+
+  /**
+   * Phase 3: Deepen large modules by splitting them into sub-modules.
+   */
+  private async runDeepenPhase(
+    db: ReturnType<typeof openDatabase> extends Promise<infer T> ? T : never,
+    flags: { model: string },
+    threshold: number,
+    dryRun: boolean,
+    isJson: boolean,
+    verbose: boolean
+  ): Promise<void> {
+    if (!isJson) {
+      this.log('');
+      this.log(chalk.bold('Phase 3: Module Deepening'));
+    }
+
+    const maxIterations = 5; // Safety limit to prevent infinite loops
+    let iteration = 0;
+    let totalNewModules = 0;
+    let totalReassignments = 0;
+
+    while (iteration < maxIterations) {
+      iteration++;
+
+      // Query modules exceeding threshold
+      const largeModules = db.getModulesExceedingThreshold(threshold);
+
+      if (largeModules.length === 0) {
+        if (verbose && !isJson) {
+          this.log(chalk.gray(`  Iteration ${iteration}: All modules under threshold`));
+        }
+        break;
+      }
+
+      if (!isJson) {
+        this.log(chalk.gray(`  Iteration ${iteration}: ${largeModules.length} modules exceed threshold`));
+      }
+
+      // Process each large module
+      for (const mod of largeModules) {
+        if (verbose && !isJson) {
+          this.log(chalk.gray(`    Splitting ${mod.fullPath} (${mod.members.length} members)...`));
+        }
+
+        // Build prompt data
+        const moduleForDeepening: ModuleForDeepening = {
+          id: mod.id,
+          fullPath: mod.fullPath,
+          name: mod.name,
+          members: mod.members.map((m) => ({
+            definitionId: m.definitionId,
+            name: m.name,
+            kind: m.kind,
+            filePath: m.filePath,
+          })),
+        };
+
+        try {
+          const response = await LLMist.complete(buildDeepenUserPrompt(moduleForDeepening), {
+            model: flags.model,
+            systemPrompt: buildDeepenSystemPrompt(),
+            temperature: 0,
+          });
+
+          // Parse response
+          const { newModules, reassignments, errors } = parseDeepenCsv(response);
+
+          if (errors.length > 0 && verbose && !isJson) {
+            this.log(chalk.yellow(`      Parse warnings: ${errors.length}`));
+            for (const err of errors.slice(0, 3)) {
+              this.log(chalk.gray(`        ${err}`));
+            }
+          }
+
+          if (newModules.length === 0) {
+            if (verbose && !isJson) {
+              this.log(chalk.yellow(`      No sub-modules proposed for ${mod.fullPath}`));
+            }
+            continue;
+          }
+
+          if (dryRun) {
+            if (verbose && !isJson) {
+              this.log(chalk.gray(`      Would create ${newModules.length} sub-modules`));
+              for (const sub of newModules) {
+                this.log(chalk.cyan(`        ${mod.fullPath}.${sub.slug}: ${sub.name}`));
+              }
+            }
+            totalNewModules += newModules.length;
+            totalReassignments += reassignments.length;
+            continue;
+          }
+
+          // Create sub-modules
+          for (const subMod of newModules) {
+            const parent = db.getModuleByPath(subMod.parentPath);
+            if (!parent) {
+              if (verbose && !isJson) {
+                this.log(chalk.yellow(`      Parent not found: ${subMod.parentPath}`));
+              }
+              continue;
+            }
+
+            try {
+              db.insertModule(parent.id, subMod.slug, subMod.name, subMod.description);
+              totalNewModules++;
+            } catch (error) {
+              if (verbose && !isJson) {
+                const message = getErrorMessage(error);
+                this.log(chalk.yellow(`      Failed to create ${subMod.slug}: ${message}`));
+              }
+            }
+          }
+
+          // Reassign symbols to new sub-modules
+          for (const reassignment of reassignments) {
+            const targetModule = db.getModuleByPath(reassignment.targetModulePath);
+            if (!targetModule) {
+              if (verbose && !isJson) {
+                this.log(chalk.yellow(`      Target module not found: ${reassignment.targetModulePath}`));
+              }
+              continue;
+            }
+
+            db.assignSymbolToModule(reassignment.definitionId, targetModule.id);
+            totalReassignments++;
+          }
+        } catch (error) {
+          const message = getErrorMessage(error);
+          if (!isJson) {
+            this.log(chalk.red(`    Failed to process ${mod.fullPath}: ${message}`));
+          }
+        }
+      }
+    }
+
+    if (iteration >= maxIterations && !isJson) {
+      this.log(chalk.yellow(`  Warning: Reached max iterations (${maxIterations})`));
+    }
+
+    if (dryRun) {
+      if (isJson) {
+        this.log(
+          JSON.stringify({
+            phase: 'deepen',
+            dryRun: true,
+            proposedNewModules: totalNewModules,
+            proposedReassignments: totalReassignments,
+          })
+        );
+      } else {
+        this.log(chalk.gray(`  Would create ${totalNewModules} sub-modules`));
+        this.log(chalk.gray(`  Would reassign ${totalReassignments} symbols`));
+      }
+    } else if (!isJson) {
+      this.log(chalk.green(`  Created ${totalNewModules} sub-modules`));
+      this.log(chalk.green(`  Reassigned ${totalReassignments} symbols`));
     }
   }
 

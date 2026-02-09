@@ -335,3 +335,127 @@ export function formatCsvValue(value: string): string {
   }
   return value;
 }
+
+// ============================================================
+// Phase 3: Deepen Response Parsing
+// ============================================================
+
+export interface DeepenModuleRow {
+  parentPath: string;
+  slug: string;
+  name: string;
+  description: string;
+}
+
+export interface DeepenReassignRow {
+  definitionId: number;
+  targetModulePath: string;
+}
+
+export interface DeepenParseResult {
+  newModules: DeepenModuleRow[];
+  reassignments: DeepenReassignRow[];
+  errors: string[];
+}
+
+/**
+ * Parse Phase 3 LLM response (deepen/split modules).
+ * Expected CSV format: type,parent_path,slug,name,description,definition_id
+ */
+export function parseDeepenCsv(content: string): DeepenParseResult {
+  const newModules: DeepenModuleRow[] = [];
+  const reassignments: DeepenReassignRow[] = [];
+  const errors: string[] = [];
+
+  // Remove code fence if present
+  let csv = content.trim();
+  const codeFenceMatch = csv.match(/```(?:csv)?\s*\n([\s\S]*?)\n```/);
+  if (codeFenceMatch) {
+    csv = codeFenceMatch[1].trim();
+  }
+
+  const lines = splitCsvLines(csv);
+  if (lines.length === 0) {
+    errors.push('Empty CSV content');
+    return { newModules, reassignments, errors };
+  }
+
+  // Determine if first row is header or data
+  const firstRow = parseRow(lines[0]);
+  let startIndex = 0;
+
+  if (firstRow && firstRow.length >= 1) {
+    const firstValue = firstRow[0].toLowerCase().trim();
+    // If first row starts with 'type', it's a header - skip it
+    // If it starts with 'module' or 'reassign', it's data - process from index 0
+    if (firstValue === 'type') {
+      startIndex = 1;
+    }
+  }
+
+  // Parse data rows
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const parsed = parseRow(line);
+    if (!parsed) {
+      errors.push(`Line ${i + 1}: Failed to parse row: ${line.substring(0, 50)}...`);
+      continue;
+    }
+
+    if (parsed.length !== 6) {
+      errors.push(`Line ${i + 1}: Expected 6 columns, got ${parsed.length}: ${line.substring(0, 50)}...`);
+      continue;
+    }
+
+    const [rowType, parentPath, slug, name, description, definitionIdStr] = parsed.map((v) => v.trim());
+
+    if (rowType === 'module') {
+      // Validate parent_path
+      if (!isValidModulePath(parentPath)) {
+        errors.push(`Line ${i + 1}: Invalid parent_path "${parentPath}"`);
+        continue;
+      }
+
+      // Validate slug
+      if (!isValidSlug(slug)) {
+        errors.push(`Line ${i + 1}: Invalid slug "${slug}"`);
+        continue;
+      }
+
+      if (!name) {
+        errors.push(`Line ${i + 1}: Missing name for module`);
+        continue;
+      }
+
+      newModules.push({
+        parentPath,
+        slug,
+        name,
+        description: description || '',
+      });
+    } else if (rowType === 'reassign') {
+      // For reassign rows, parent_path is the target module path
+      if (!isValidModulePath(parentPath)) {
+        errors.push(`Line ${i + 1}: Invalid target module path "${parentPath}"`);
+        continue;
+      }
+
+      const definitionId = Number.parseInt(definitionIdStr, 10);
+      if (Number.isNaN(definitionId)) {
+        errors.push(`Line ${i + 1}: Invalid definition_id "${definitionIdStr}"`);
+        continue;
+      }
+
+      reassignments.push({
+        definitionId,
+        targetModulePath: parentPath,
+      });
+    } else {
+      errors.push(`Line ${i + 1}: Unknown type "${rowType}", expected "module" or "reassign"`);
+    }
+  }
+
+  return { newModules, reassignments, errors };
+}

@@ -20,6 +20,9 @@
     "dev:ui": "cd ui && pnpm run dev",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:coverage:ui": "cd ui && pnpm run test:coverage",
+    "test:coverage:all": "pnpm run test:coverage && pnpm run test:coverage:ui",
     "test:all": "pnpm test && cd ui && pnpm test",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
@@ -31,7 +34,7 @@
     "commands": {
       "strategy": "pattern",
       "target": "./dist/commands",
-      "globPatterns": ["**/*.js", "!**/_shared/**"]
+      "globPatterns": ["**/*.js", "!**/_shared/**", "!**/llm/flows/**"]
     },
     "default": "parse",
     "topicSeparator": " "
@@ -51,6 +54,7 @@
     "@biomejs/biome": "^1.9.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "lefthook": "^1.6.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"

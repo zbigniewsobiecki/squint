@@ -101,6 +101,7 @@ export function ensureInteractionsTables(db: Database.Database): void {
         pattern TEXT,
         symbols TEXT,
         semantic TEXT,
+        source TEXT NOT NULL DEFAULT 'ast',
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(from_module_id, to_module_id)
       );
@@ -108,7 +109,22 @@ export function ensureInteractionsTables(db: Database.Database): void {
       CREATE INDEX idx_interactions_from_module ON interactions(from_module_id);
       CREATE INDEX idx_interactions_to_module ON interactions(to_module_id);
       CREATE INDEX idx_interactions_pattern ON interactions(pattern);
+      CREATE INDEX idx_interactions_source ON interactions(source);
     `);
+  } else {
+    // Check if we need to add source column
+    const hasSource = db
+      .prepare(`
+      SELECT COUNT(*) as count FROM pragma_table_info('interactions') WHERE name='source'
+    `)
+      .get() as { count: number };
+
+    if (hasSource.count === 0) {
+      db.exec(`
+        ALTER TABLE interactions ADD COLUMN source TEXT NOT NULL DEFAULT 'ast';
+        CREATE INDEX idx_interactions_source ON interactions(source);
+      `);
+    }
   }
 }
 

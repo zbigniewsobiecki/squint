@@ -202,27 +202,7 @@ marker path {
   filter: brightness(1.2);
 }
 
-/* Depth-based colors for nested boxes */
-.module-box.depth-0 > rect {
-  fill: #1a2332;
-  stroke: #3d5a80;
-}
-.module-box.depth-1 > rect {
-  fill: #1e2a38;
-  stroke: #4a6fa5;
-}
-.module-box.depth-2 > rect {
-  fill: #232f3e;
-  stroke: #5885af;
-}
-.module-box.depth-3 > rect {
-  fill: #283544;
-  stroke: #6699cc;
-}
-.module-box.depth-4 > rect {
-  fill: #2d3b4a;
-  stroke: #77aadd;
-}
+/* Fill/stroke colors are applied inline by the renderer based on branch identity */
 
 .module-box-header {
   font-size: 12px;
@@ -254,11 +234,7 @@ marker path {
   pointer-events: none;
 }
 
-/* Leaf module (no children) */
-.module-box.leaf > rect {
-  fill: #2d3b4a;
-  stroke: #5885af;
-}
+/* Leaf module (no children) — fill/stroke applied inline */
 
 .module-box.leaf .module-box-header {
   font-size: 10px;
@@ -338,4 +314,96 @@ marker path {
 
 .flow-step-number.number-dimmed {
   opacity: 0.2;
+}
+
+/* ==============================
+   Modules DAG Container
+   ============================== */
+.modules-dag-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.modules-dag-container svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* ==============================
+   Sequence Diagram Styles
+   ============================== */
+
+/* Placeholder text when no flow selected */
+.seq-placeholder {
+  font-size: 14px;
+  fill: var(--text-muted);
+}
+
+/* Participant boxes at top of lifelines */
+.seq-participant rect {
+  transition: stroke-width var(--transition-fast);
+}
+
+.seq-participant:hover rect {
+  stroke-width: 2.5;
+}
+
+.seq-participant text {
+  font-size: 11px;
+  fill: var(--text-primary);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* Vertical dashed lifelines */
+.seq-lifeline {
+  stroke: var(--border-secondary);
+  stroke-width: 1;
+  stroke-dasharray: 6, 4;
+}
+
+/* Message groups */
+.seq-message {
+  transition: opacity var(--transition-fast);
+}
+
+.seq-message.dimmed {
+  opacity: 0.15;
+}
+
+/* Message arrow lines */
+.seq-message line,
+.seq-message path {
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.seq-message line:hover,
+.seq-message path:hover {
+  stroke-width: 3;
+}
+
+/* Semantic labels on message arrows */
+.seq-message-label {
+  font-size: 10px;
+  fill: var(--text-secondary);
+  pointer-events: none;
+}
+
+/* Step number badge circle */
+.seq-step-badge-circle {
+  fill: var(--bg-elevated);
+  stroke: var(--border-secondary);
+  stroke-width: 1;
+}
+
+/* Step number badge text */
+.seq-step-badge {
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--text-primary);
+  pointer-events: none;
 }

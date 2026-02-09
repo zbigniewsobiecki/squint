@@ -41,6 +41,7 @@ function createMockDb(): IndexDatabase {
     getFlowWithSteps: vi.fn().mockReturnValue(null),
     expandFlow: vi.fn().mockReturnValue([]),
     getModuleCallGraph: vi.fn().mockReturnValue([]),
+    getFlowWithDefinitionSteps: vi.fn().mockReturnValue(null),
   } as unknown as IndexDatabase;
 }
 
@@ -384,6 +385,119 @@ describe('server', () => {
         expect(body).toHaveProperty('interactions');
         expect(body).toHaveProperty('stats');
         expect(body).toHaveProperty('relationshipCoverage');
+      });
+
+      it('GET /api/interactions/stats returns interaction stats', async () => {
+        (mockDb.getInteractionStats as any).mockReturnValue({
+          totalCount: 5,
+          businessCount: 3,
+          utilityCount: 2,
+          biDirectionalCount: 1,
+        });
+
+        const response = await makeRequest(server, '/api/interactions/stats');
+
+        expect(response.statusCode).toBe(200);
+        expect(JSON.parse(response.body)).toEqual({
+          totalCount: 5,
+          businessCount: 3,
+          utilityCount: 2,
+          biDirectionalCount: 1,
+        });
+      });
+
+      it('GET /api/interactions/:id returns interaction with module paths', async () => {
+        (mockDb.getInteractionById as any).mockReturnValue({
+          id: 1,
+          fromModuleId: 10,
+          toModuleId: 20,
+          direction: 'uni',
+          weight: 5,
+        });
+        (mockDb.getAllModules as any).mockReturnValue([
+          { id: 10, fullPath: 'project.auth' },
+          { id: 20, fullPath: 'project.api' },
+        ]);
+
+        const response = await makeRequest(server, '/api/interactions/1');
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.body);
+        expect(body.id).toBe(1);
+        expect(body.fromModulePath).toBe('project.auth');
+        expect(body.toModulePath).toBe('project.api');
+      });
+
+      it('GET /api/interactions/:id returns 404 for non-existent interaction', async () => {
+        (mockDb.getInteractionById as any).mockReturnValue(null);
+
+        const response = await makeRequest(server, '/api/interactions/999');
+
+        expect(response.statusCode).toBe(404);
+        expect(JSON.parse(response.body)).toEqual({ error: 'Interaction not found' });
+      });
+
+      it('GET /api/graph/symbols returns symbol graph', async () => {
+        (mockDb.getAllDefinitions as any).mockReturnValue([
+          { id: 1, name: 'test', kind: 'function', line: 1, endLine: 10, fileId: 1 },
+        ]);
+        (mockDb.getAllRelationshipAnnotations as any).mockReturnValue([]);
+        (mockDb.getAllFiles as any).mockReturnValue([{ id: 1, path: 'test.ts' }]);
+        (mockDb.getDefinitionMetadata as any).mockReturnValue({});
+        (mockDb.getAllModulesWithMembers as any).mockReturnValue([]);
+
+        const response = await makeRequest(server, '/api/graph/symbols');
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.body);
+        expect(body).toHaveProperty('nodes');
+        expect(body).toHaveProperty('edges');
+        expect(body).toHaveProperty('stats');
+      });
+
+      it('GET /api/definitions supports kind filter', async () => {
+        const mockDefs = [{ id: 1, name: 'test', kind: 'function' }];
+        (mockDb.getAllDefinitions as any).mockReturnValue(mockDefs);
+
+        const response = await makeRequest(server, '/api/definitions?kind=function');
+
+        expect(response.statusCode).toBe(200);
+        expect(mockDb.getAllDefinitions).toHaveBeenCalledWith({ kind: 'function', exported: undefined });
+      });
+
+      it('GET /api/definitions supports exported filter', async () => {
+        const mockDefs = [{ id: 1, name: 'test', kind: 'function' }];
+        (mockDb.getAllDefinitions as any).mockReturnValue(mockDefs);
+
+        const response = await makeRequest(server, '/api/definitions?exported=true');
+
+        expect(response.statusCode).toBe(200);
+        expect(mockDb.getAllDefinitions).toHaveBeenCalledWith({ kind: undefined, exported: true });
+      });
+
+      it('GET /api/flows/dag returns DAG data', async () => {
+        (mockDb.getAllModulesWithMembers as any).mockReturnValue([]);
+        (mockDb.getModuleCallGraph as any).mockReturnValue([]);
+        (mockDb.getAllFlows as any).mockReturnValue([]);
+
+        const response = await makeRequest(server, '/api/flows/dag');
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.body);
+        expect(body).toHaveProperty('modules');
+        expect(body).toHaveProperty('edges');
+        expect(body).toHaveProperty('flows');
+      });
+
+      it('GET /api/flows/:id/expand returns expanded flow', async () => {
+        const mockExpanded = [{ id: 1, fromModulePath: 'a', toModulePath: 'b' }];
+        (mockDb.expandFlow as any).mockReturnValue(mockExpanded);
+
+        const response = await makeRequest(server, '/api/flows/1/expand');
+
+        expect(response.statusCode).toBe(200);
+        expect(JSON.parse(response.body)).toEqual(mockExpanded);
+        expect(mockDb.expandFlow).toHaveBeenCalledWith(1);
       });
 
       it('OPTIONS request returns 204 with CORS headers', async () => {
