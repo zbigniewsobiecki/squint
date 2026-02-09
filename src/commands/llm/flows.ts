@@ -235,30 +235,49 @@ export default class Flows extends Command {
             interactions,
             model,
             llmOptions,
-            gateResults?.failures
+            gateResults?.failures,
+            entryPointModules
           );
 
-          if (validatorFlows.length > 0) {
+          // Post-validation gate: reject flows whose actionType doesn't exist in entry point definitions
+          const verifiedFlows = this.filterUnverifiedFlows(validatorFlows, entryPointModules);
+          const gateRejects = validatorFlows.length - verifiedFlows.length;
+          if (gateRejects > 0) {
+            logVerbose(
+              this,
+              `  Rejected ${gateRejects} flows: actionType not found in entry point definitions`,
+              verbose,
+              isJson
+            );
+          }
+
+          if (verifiedFlows.length > 0) {
             // Build dedup key set from existing flows
             const existingKeys = new Set(
               enhancedFlows
                 .filter((f) => f.actionType && f.targetEntity)
                 .map((f) => `${f.entryPointModuleId}:${f.actionType}:${f.targetEntity}`)
             );
+            const existingSlugs = new Set(enhancedFlows.map((f) => f.slug));
 
             const dedup = (flows: FlowSuggestion[]): FlowSuggestion[] =>
               flows.filter((f) => {
-                if (!f.actionType || !f.targetEntity) return true;
-                const key = `${f.entryPointModuleId}:${f.actionType}:${f.targetEntity}`;
-                if (existingKeys.has(key)) return false;
-                existingKeys.add(key);
+                if (f.actionType && f.targetEntity) {
+                  const key = `${f.entryPointModuleId}:${f.actionType}:${f.targetEntity}`;
+                  if (existingKeys.has(key)) return false;
+                  existingKeys.add(key);
+                  return true;
+                }
+                // Fallback: slug-based dedup for unclassified flows
+                if (existingSlugs.has(f.slug)) return false;
+                existingSlugs.add(f.slug);
                 return true;
               });
 
             // Run through enhancer for consistent naming
             try {
               const enhancedValidatorFlows = await sharedFlowEnhancer.enhanceFlowsWithLLM(
-                validatorFlows,
+                verifiedFlows,
                 interactions,
                 model,
                 llmOptions
@@ -274,9 +293,9 @@ export default class Flows extends Command {
                 isJson
               );
             } catch {
-              const dedupedFlows = dedup(validatorFlows);
+              const dedupedFlows = dedup(verifiedFlows);
               enhancedFlows.push(...dedupedFlows);
-              const filteredCount = validatorFlows.length - dedupedFlows.length;
+              const filteredCount = verifiedFlows.length - dedupedFlows.length;
               const suffix = filteredCount > 0 ? ` (${filteredCount} duplicates filtered)` : '';
               logVerbose(
                 this,
@@ -414,7 +433,9 @@ export default class Flows extends Command {
 
     // Count test-internal exclusions
     const testInternalCount = interactions.filter((i) => i.pattern === 'test-internal').length;
-    const relevantTotal = coverage.totalInteractions - testInternalCount;
+    const relevantTotal = dryRun
+      ? coverage.totalInteractions - testInternalCount // dry-run total includes all
+      : coverage.totalInteractions; // DB total already excludes test-internal
     const relevantCovered = dryRun
       ? interactions.filter((i) => i.pattern !== 'test-internal' && coveredInteractionIds.has(i.id)).length
       : coverage.coveredByFlows; // getCoverage already excludes test-internal
@@ -503,7 +524,7 @@ export default class Flows extends Command {
     // Gate 3: Entry point yield
     const userFlows = flows.filter((f) => f.entryPointModuleId !== null);
     const modulesWithFlows = new Set(
-      userFlows.filter((f) => f.interactionIds.length >= 2).map((f) => f.entryPointModuleId)
+      userFlows.filter((f) => f.interactionIds.length >= 1).map((f) => f.entryPointModuleId)
     );
     const entryPointYield =
       entryPointModules.length > 0 ? (modulesWithFlows.size / entryPointModules.length) * 100 : 100;
@@ -532,5 +553,29 @@ export default class Flows extends Command {
     }
 
     return { passed: failures.length === 0, failures };
+  }
+
+  /**
+   * Reject validator-proposed flows whose actionType has no matching definition
+   * in the entry point module. Deterministic safety net against hallucinated flows.
+   */
+  private filterUnverifiedFlows(flows: FlowSuggestion[], entryPointModules: EntryPointModuleInfo[]): FlowSuggestion[] {
+    // Build lookup: moduleId -> set of actionTypes available
+    const moduleActions = new Map<number, Set<string>>();
+    for (const ep of entryPointModules) {
+      const actions = new Set<string>();
+      for (const def of ep.memberDefinitions) {
+        if (def.actionType) actions.add(def.actionType);
+      }
+      moduleActions.set(ep.moduleId, actions);
+    }
+
+    return flows.filter((flow) => {
+      // Only gate flows that claim a specific actionType from a known entry point
+      if (!flow.actionType || !flow.entryPointModuleId) return true;
+      const available = moduleActions.get(flow.entryPointModuleId);
+      if (!available) return true; // Unknown module — let through
+      return available.has(flow.actionType);
+    });
   }
 }

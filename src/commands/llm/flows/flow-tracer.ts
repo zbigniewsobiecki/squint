@@ -15,6 +15,7 @@ import type {
 
 export class FlowTracer {
   private readonly maxDepth = 15;
+  private readonly maxExpansionDepth = 3;
 
   constructor(private readonly context: FlowTracingContext) {}
 
@@ -62,14 +63,18 @@ export class FlowTracer {
     const visited = new Set<number>();
     const steps: TracedDefinitionStep[] = [];
 
-    const trace = (defId: number, depth: number): void => {
+    const trace = (
+      defId: number,
+      depth: number,
+      lastKnownModule: { moduleId: number; modulePath: string } | null
+    ): void => {
       if (depth >= this.maxDepth) return;
       if (visited.has(defId)) return;
       visited.add(defId);
 
       const calledDefs = this.context.definitionCallGraph.get(defId) ?? [];
       for (const calledDefId of calledDefs) {
-        const fromModule = this.context.defToModule.get(defId);
+        const fromModule = this.context.defToModule.get(defId) ?? lastKnownModule;
         const toModule = this.context.defToModule.get(calledDefId);
 
         // Only include cross-module calls
@@ -82,11 +87,13 @@ export class FlowTracer {
           });
         }
 
-        trace(calledDefId, depth + 1);
+        const nextKnownModule = this.context.defToModule.get(calledDefId) ?? fromModule;
+        trace(calledDefId, depth + 1, nextKnownModule);
       }
     };
 
-    trace(startDefinitionId, 0);
+    const startModule = this.context.defToModule.get(startDefinitionId) ?? null;
+    trace(startDefinitionId, 0, startModule);
     return steps;
   }
 
@@ -113,8 +120,8 @@ export class FlowTracer {
 
   /**
    * Extend traced definition steps with module-level interactions.
-   * 1. Add inferred interactions from all traced modules
-   * 2. Continue tracing AST interactions from modules reached via inference
+   * Uses depth-limited BFS (maxExpansionDepth) to follow ALL interactions
+   * (both inferred and AST) from traced modules without unbounded snowballing.
    * This ensures flows continue through backend layers after crossing the HTTP boundary.
    */
   private extendWithInferredInteractions(definitionSteps: TracedDefinitionStep[]): {
@@ -126,7 +133,7 @@ export class FlowTracer {
     const visitedModules = new Set<number>();
     const addedInteractionIds = new Set<number>();
 
-    // Track interaction IDs already covered by definition steps
+    // Track interactions already covered by definition steps
     for (const step of definitionSteps) {
       if (step.fromModuleId && step.toModuleId) {
         const key = `${step.fromModuleId}->${step.toModuleId}`;
@@ -135,23 +142,26 @@ export class FlowTracer {
       }
     }
 
-    // Collect ALL modules that appear in the traced definition steps
+    // Collect modules from definition steps as depth-0 seeds
     const tracedModules = new Set<number>();
     for (const step of definitionSteps) {
       if (step.fromModuleId) tracedModules.add(step.fromModuleId);
       if (step.toModuleId) tracedModules.add(step.toModuleId);
     }
 
-    const queue = [...tracedModules];
+    const queue: Array<{ moduleId: number; depth: number }> = [];
+    for (const moduleId of tracedModules) {
+      queue.push({ moduleId, depth: 0 });
+    }
 
     while (queue.length > 0) {
-      const moduleId = queue.shift()!;
+      const { moduleId, depth } = queue.shift()!;
       if (visitedModules.has(moduleId)) continue;
       visitedModules.add(moduleId);
 
-      // First, add inferred interactions from this module
-      const inferredInteractions = this.context.inferredFromModule.get(moduleId) ?? [];
-      for (const interaction of inferredInteractions) {
+      // Follow ALL interactions (inferred + AST) from every module
+      const allInteractions = this.context.allInteractionsFromModule.get(moduleId) ?? [];
+      for (const interaction of allInteractions) {
         if (addedInteractionIds.has(interaction.id)) continue;
         addedInteractionIds.add(interaction.id);
 
@@ -162,31 +172,8 @@ export class FlowTracer {
           source: 'llm-inferred',
         });
 
-        // Continue tracing from the target module
-        if (!visitedModules.has(interaction.toModuleId)) {
-          queue.push(interaction.toModuleId);
-        }
-      }
-
-      // For modules reached via inference (not in original traced modules),
-      // also follow their AST interactions to continue the trace
-      if (!tracedModules.has(moduleId)) {
-        const allInteractions = this.context.allInteractionsFromModule.get(moduleId) ?? [];
-        for (const interaction of allInteractions) {
-          if (addedInteractionIds.has(interaction.id)) continue;
-          addedInteractionIds.add(interaction.id);
-
-          extendedInteractionIds.push(interaction.id);
-          // Mark as inferred since we reached this module via inference
-          inferredSteps.push({
-            fromModuleId: interaction.fromModuleId,
-            toModuleId: interaction.toModuleId,
-            source: 'llm-inferred',
-          });
-
-          if (!visitedModules.has(interaction.toModuleId)) {
-            queue.push(interaction.toModuleId);
-          }
+        if (depth + 1 <= this.maxExpansionDepth && !visitedModules.has(interaction.toModuleId)) {
+          queue.push({ moduleId: interaction.toModuleId, depth: depth + 1 });
         }
       }
     }

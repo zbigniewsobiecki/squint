@@ -8,10 +8,10 @@ import { createApiClient } from './api/client';
 import { createStore } from './state/store';
 import { initFilesTreemap } from './views/files-treemap';
 import { initFlowsDag } from './views/flows-dag';
-import { initForceGraph } from './views/force-graph';
 import { initInteractions } from './views/interactions';
 import { initModulesTree } from './views/modules-tree';
 import { initSunburst } from './views/sunburst';
+import { initSymbols } from './views/symbols';
 
 // Initialize store and API client
 const store = createStore();
@@ -19,7 +19,7 @@ const api = createApiClient();
 
 // View initialization functions
 const views = {
-  force: initForceGraph,
+  symbols: initSymbols,
   sunburst: initSunburst,
   modules: initModulesTree,
   flows: initFlowsDag,
@@ -28,7 +28,7 @@ const views = {
 };
 
 // Current view state
-let currentView: keyof typeof views = 'force';
+let currentView: keyof typeof views = 'symbols';
 
 // Setup view toggle buttons
 function setupViewToggle() {
@@ -53,12 +53,6 @@ function switchView(view: keyof typeof views) {
   const filters = document.getElementById('relationship-filters');
   if (filters) {
     filters.classList.toggle('visible', view === 'sunburst');
-  }
-
-  // Show/hide symbol types legend (only for force view)
-  const legend = document.getElementById('legend');
-  if (legend) {
-    legend.classList.toggle('hidden', view !== 'force');
   }
 
   // Update stats display based on view

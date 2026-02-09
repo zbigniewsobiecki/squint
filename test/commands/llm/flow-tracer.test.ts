@@ -323,6 +323,95 @@ describe('flow-tracer', () => {
       expect(flows[0].inferredSteps.length).toBeGreaterThan(0);
     });
 
+    it('follows AST interactions from traced modules (not just inferred)', () => {
+      // Scenario: definition call graph traces frontend→backend (AST interaction 100)
+      // Backend also has an AST interaction to services (101), which should be followed
+      const callGraph = new Map<number, number[]>();
+      callGraph.set(10, [20]);
+
+      const modules = [
+        { id: 1, fullPath: 'project.frontend', members: [{ definitionId: 10 }] },
+        { id: 2, fullPath: 'project.backend.api', members: [{ definitionId: 20 }] },
+        { id: 3, fullPath: 'project.backend.services', members: [{ definitionId: 30 }] },
+      ];
+
+      const interactions = [
+        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'ast' }),
+        // AST interaction from a traced module (backend.api → backend.services)
+        makeInteraction({ id: 101, fromModuleId: 2, toModuleId: 3, source: 'ast' }),
+      ];
+
+      const ctx = buildFlowTracingContext(callGraph, modules, interactions);
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints: EntryPointModuleInfo[] = [
+        {
+          moduleId: 1,
+          modulePath: 'project.frontend',
+          moduleName: 'Frontend',
+          memberDefinitions: [{ id: 10, name: 'login', kind: 'function', actionType: 'process', targetEntity: 'auth' }],
+        },
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
+      // Should include the AST interaction from the traced module (backend.api → backend.services)
+      expect(flows[0].interactionIds).toContain(101);
+    });
+
+    it('stops expansion at depth 3', () => {
+      // Chain: M1 → M2 → M3 → M4 → M5 → M6 → M7
+      // Definition steps only cover M1 → M2, so M1 and M2 are seeds at depth 0
+      // Expansion from seeds at depth 0:
+      //   M2→M3 added, M3 enqueued at depth 1
+      //   M3→M4 added, M4 enqueued at depth 2
+      //   M4→M5 added, M5 enqueued at depth 3
+      //   M5→M6 added (interactions from depth-3 module are still followed),
+      //     but M6 NOT enqueued (depth 4 > maxExpansionDepth)
+      //   M6→M7 never reached — M6 not in queue
+      const callGraph = new Map<number, number[]>();
+      callGraph.set(10, [20]); // M1 → M2 via call graph
+
+      const modules = [
+        { id: 1, fullPath: 'mod.m1', members: [{ definitionId: 10 }] },
+        { id: 2, fullPath: 'mod.m2', members: [{ definitionId: 20 }] },
+        { id: 3, fullPath: 'mod.m3', members: [{ definitionId: 30 }] },
+        { id: 4, fullPath: 'mod.m4', members: [{ definitionId: 40 }] },
+        { id: 5, fullPath: 'mod.m5', members: [{ definitionId: 50 }] },
+        { id: 6, fullPath: 'mod.m6', members: [{ definitionId: 60 }] },
+        { id: 7, fullPath: 'mod.m7', members: [{ definitionId: 70 }] },
+      ];
+
+      const interactions = [
+        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'ast' }),
+        makeInteraction({ id: 101, fromModuleId: 2, toModuleId: 3, source: 'ast' }),
+        makeInteraction({ id: 102, fromModuleId: 3, toModuleId: 4, source: 'ast' }),
+        makeInteraction({ id: 103, fromModuleId: 4, toModuleId: 5, source: 'ast' }),
+        makeInteraction({ id: 104, fromModuleId: 5, toModuleId: 6, source: 'ast' }),
+        makeInteraction({ id: 105, fromModuleId: 6, toModuleId: 7, source: 'ast' }),
+      ];
+
+      const ctx = buildFlowTracingContext(callGraph, modules, interactions);
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints: EntryPointModuleInfo[] = [
+        {
+          moduleId: 1,
+          modulePath: 'mod.m1',
+          moduleName: 'M1',
+          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
+        },
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
+      // Interaction 100 (M1→M2) is from definition steps
+      expect(flows[0].interactionIds).toContain(100); // definition step
+      expect(flows[0].interactionIds).toContain(101); // depth 1
+      expect(flows[0].interactionIds).toContain(102); // depth 2
+      expect(flows[0].interactionIds).toContain(103); // depth 3
+      expect(flows[0].interactionIds).toContain(104); // from depth-3 module (M5→M6)
+      expect(flows[0].interactionIds).not.toContain(105); // M6→M7 — M6 never enqueued
+    });
+
     it('sets entry point info on flow', () => {
       const ctx = buildSimpleContext();
       const tracer = new FlowTracer(ctx);

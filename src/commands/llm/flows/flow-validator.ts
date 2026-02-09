@@ -10,7 +10,7 @@ import type { InteractionWithPaths, Module } from '../../../db/schema.js';
 import { parseCSVLine } from '../_shared/csv-utils.js';
 import { groupModulesByEntity } from '../_shared/entity-utils.js';
 import { type LlmLogOptions, logLlmRequest, logLlmResponse, logVerbose } from '../_shared/llm-utils.js';
-import type { FlowSuggestion, LlmOptions } from './types.js';
+import type { EntryPointModuleInfo, FlowSuggestion, LlmOptions } from './types.js';
 
 interface CoverageGateFailure {
   gate: string;
@@ -35,13 +35,23 @@ export class FlowValidator {
     interactions: InteractionWithPaths[],
     model: string,
     llmOptions: LlmOptions,
-    gateFailures?: CoverageGateFailure[]
+    gateFailures?: CoverageGateFailure[],
+    entryPointModules?: EntryPointModuleInfo[]
   ): Promise<FlowSuggestion[]> {
     const modules = this.db.getAllModules();
     const moduleByPath = new Map(modules.map((m) => [m.fullPath, m]));
 
+    const coveredInteractionIds = new Set(existingFlows.flatMap((f) => f.interactionIds));
+
     const systemPrompt = this.buildValidationSystemPrompt();
-    const userPrompt = this.buildValidationUserPrompt(existingFlows, interactions, modules, gateFailures);
+    const userPrompt = this.buildValidationUserPrompt(
+      existingFlows,
+      interactions,
+      modules,
+      coveredInteractionIds,
+      gateFailures,
+      entryPointModules
+    );
 
     const logOptions: LlmLogOptions = {
       showRequests: llmOptions.showLlmRequests,
@@ -69,6 +79,7 @@ export class FlowValidator {
 1. A list of detected flows with their entry points and steps
 2. The full module interaction graph
 3. Module descriptions
+4. Entry point definitions showing what operations actually exist in code
 
 ## Your Task
 Identify MISSING user stories — important user-facing workflows that should exist
@@ -80,6 +91,13 @@ Common patterns to check:
 - Cross-entity side effects (e.g., creating a sale updates vehicle status)
 - Dashboard / analytics / reporting views
 - Admin-specific operations
+
+## CRITICAL CONSTRAINTS
+- [AST] interactions are statically verified from source code — reliable
+- [INFERRED] interactions are LLM-estimated — may not exist in actual code
+- The "Entry Point Definitions" section shows what operations ACTUALLY exist
+- Do NOT propose flows for operations not listed in Entry Point Definitions
+- Prefer building flows from [AST] interactions when possible
 
 ## Output Format
 \`\`\`csv
@@ -97,7 +115,9 @@ Only report flows where the module interactions to support them actually EXIST i
     existingFlows: FlowSuggestion[],
     interactions: InteractionWithPaths[],
     modules: Module[],
-    gateFailures?: CoverageGateFailure[]
+    coveredInteractionIds: Set<number>,
+    gateFailures?: CoverageGateFailure[],
+    entryPointModules?: EntryPointModuleInfo[]
   ): string {
     const parts: string[] = [];
 
@@ -127,12 +147,50 @@ Only report flows where the module interactions to support them actually EXIST i
       parts.push('');
     }
 
-    // Interaction graph summary
-    parts.push(`## Interactions (${interactions.length})`);
+    // Entry point definitions section
+    if (entryPointModules && entryPointModules.length > 0) {
+      parts.push('## Entry Point Definitions (operations that exist in code)');
+      parts.push('ONLY create flows for operations listed below. Do NOT invent operations.');
+      parts.push('');
+      for (const ep of entryPointModules) {
+        const defs = ep.memberDefinitions
+          .map((d) => {
+            const action = d.actionType ?? 'unclassified';
+            const entity = d.targetEntity ?? '?';
+            return `  - ${d.name} [${action}/${entity}]`;
+          })
+          .join('\n');
+        parts.push(`### ${ep.modulePath}`);
+        parts.push(defs);
+        parts.push('');
+      }
+    }
+
+    // Interaction graph summary with coverage annotations
+    const uncoveredInteractions = interactions.filter((i) => !coveredInteractionIds.has(i.id));
+    const coveredCount = interactions.length - uncoveredInteractions.length;
+    parts.push(
+      `## Interactions (${interactions.length} total, ${coveredCount} covered, ${uncoveredInteractions.length} uncovered)`
+    );
     for (const i of interactions) {
-      parts.push(`- ${i.fromModulePath} → ${i.toModulePath}${i.semantic ? `: ${i.semantic}` : ''}`);
+      const coverTag = coveredInteractionIds.has(i.id) ? '[COVERED]' : '[UNCOVERED]';
+      const srcTag = i.source === 'llm-inferred' ? '[INFERRED]' : '[AST]';
+      parts.push(
+        `- ${coverTag} ${srcTag} ${i.fromModulePath} → ${i.toModulePath}${i.semantic ? `: ${i.semantic}` : ''}`
+      );
     }
     parts.push('');
+
+    // Priority section: uncovered interactions only
+    if (uncoveredInteractions.length > 0) {
+      parts.push('## Uncovered Interactions — PRIORITY');
+      parts.push('These interactions are NOT yet covered by any flow. Create flows that include them:');
+      for (const i of uncoveredInteractions) {
+        const srcTag = i.source === 'llm-inferred' ? '[INFERRED]' : '[AST]';
+        parts.push(`- ${srcTag} ${i.fromModulePath} → ${i.toModulePath}${i.semantic ? `: ${i.semantic}` : ''}`);
+      }
+      parts.push('');
+    }
 
     // Gate failure context for retries
     if (gateFailures && gateFailures.length > 0) {

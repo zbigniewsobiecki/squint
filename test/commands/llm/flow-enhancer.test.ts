@@ -161,7 +161,7 @@ Home,"user views ""dashboard""","Shows the ""main"" dashboard"
     it('preserves non-name/slug/description fields from original', () => {
       const response = `\`\`\`csv
 entry_point,name,description
-Home,"user views dashboard","Dashboard view"
+Home,"admin views dashboard","Dashboard view"
 \`\`\``;
 
       const original = makeFlow({
@@ -181,6 +181,30 @@ Home,"user views dashboard","Dashboard view"
       expect(result[0].interactionIds).toEqual([1, 2, 3]);
       expect(result[0].actionType).toBe('view');
       expect(result[0].targetEntity).toBe('dashboard');
+    });
+
+    it('derives stakeholder from LLM-generated name', () => {
+      const response = `\`\`\`csv
+entry_point,name,description
+Home,"system processes batch job","Runs scheduled batch processing"
+\`\`\``;
+
+      const original = makeFlow({ stakeholder: 'user' });
+      const result = parseCSV(response, [original]);
+
+      expect(result[0].stakeholder).toBe('system');
+    });
+
+    it('preserves original stakeholder when name has no valid stakeholder prefix', () => {
+      const response = `\`\`\`csv
+entry_point,name,description
+Home,"unknown action here","Some description"
+\`\`\``;
+
+      const original = makeFlow({ stakeholder: 'admin' });
+      const result = parseCSV(response, [original]);
+
+      expect(result[0].stakeholder).toBe('admin');
     });
 
     it('handles more flows than CSV lines', () => {

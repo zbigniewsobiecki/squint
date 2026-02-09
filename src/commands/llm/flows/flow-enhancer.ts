@@ -162,11 +162,23 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-|-$/g, '');
 
+          // Extract stakeholder from the LLM-generated name (format: "[stakeholder] [verb]s [entity]")
+          const validStakeholders: Record<string, FlowSuggestion['stakeholder']> = {
+            user: 'user',
+            admin: 'admin',
+            system: 'system',
+            developer: 'developer',
+            external: 'external',
+          };
+          const firstWord = newName.split(' ')[0]?.toLowerCase();
+          const derivedStakeholder = validStakeholders[firstWord] ?? null;
+
           results.push({
             ...original,
             name: newName || original.name,
             slug: newSlug || original.slug,
             description: fields[2].trim().replace(/"/g, '') || original.description,
+            ...(derivedStakeholder ? { stakeholder: derivedStakeholder } : {}),
           });
           continue;
         }

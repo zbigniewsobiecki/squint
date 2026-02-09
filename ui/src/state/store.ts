@@ -17,12 +17,14 @@ export interface AppState {
   interactionsData: InteractionsResponse | null;
 
   // UI state
-  currentView: 'force' | 'sunburst' | 'modules' | 'flows' | 'interactions' | 'files';
+  currentView: 'symbols' | 'sunburst' | 'modules' | 'flows' | 'interactions' | 'files';
   selectedGrouping: RelationshipType;
   selectedFlowId: number | null; // Currently viewed flow (for detail view)
   selectedFlows: Set<number>;
   expandedModules: Set<number>;
   sidebarCollapsed: boolean;
+  selectedSymbolId: number | null;
+  symbolSearchQuery: string;
 
   // Loading states
   loading: boolean;
@@ -47,12 +49,14 @@ export function createStore(): Store {
     flowsData: null,
     flowsDagData: null,
     interactionsData: null,
-    currentView: 'force',
+    currentView: 'symbols',
     selectedGrouping: 'structure',
     selectedFlowId: null,
     selectedFlows: new Set(),
     expandedModules: new Set(),
     sidebarCollapsed: false,
+    selectedSymbolId: null,
+    symbolSearchQuery: '',
     loading: true,
     error: null,
   };
@@ -129,4 +133,12 @@ export function clearFlowSelection(store: Store) {
 export function selectFlow(store: Store, flowId: number | null) {
   const selectedFlows = flowId ? new Set([flowId]) : new Set<number>();
   store.setState({ selectedFlowId: flowId, selectedFlows });
+}
+
+export function selectSymbol(store: Store, id: number | null) {
+  store.setState({ selectedSymbolId: id });
+}
+
+export function setSymbolSearch(store: Store, query: string) {
+  store.setState({ symbolSearchQuery: query });
 }

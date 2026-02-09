@@ -198,3 +198,151 @@ header h1 {
 .tree-container {
   position: relative;
 }
+
+/* Symbols Container */
+.symbols-container {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Symbols Sidebar */
+.symbols-sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-primary);
+  display: flex;
+  flex-direction: column;
+  transition: margin-left var(--transition-normal) ease;
+  overflow: hidden;
+}
+
+.symbols-sidebar.collapsed {
+  margin-left: -280px;
+}
+
+.symbols-sidebar-header {
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.symbols-sidebar-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+  flex: 1;
+}
+
+.symbols-search {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.symbols-search input {
+  width: 100%;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  padding: 6px 10px;
+  font-size: 12px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.symbols-search input:focus {
+  border-color: var(--accent-blue);
+}
+
+.symbols-search input::placeholder {
+  color: var(--text-dimmed);
+}
+
+.symbols-sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-sm) 0;
+}
+
+.symbol-kind-header {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--bg-primary);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.symbol-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.symbol-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.symbol-item.selected {
+  background: #2a3540;
+}
+
+.symbol-item-kind {
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  min-width: 50px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.symbol-item-name {
+  font-size: 12px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.symbol-item-file {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100px;
+}
+
+/* Symbols Main Area */
+.symbols-main {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+}
+
+.symbols-main svg {
+  width: 100%;
+  flex: 1;
+}
+
+.symbols-sidebar.collapsed + .symbols-main .sidebar-expand-btn {
+  display: flex;
+}

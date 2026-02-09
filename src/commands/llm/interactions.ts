@@ -175,11 +175,11 @@ export default class Interactions extends Command {
         }
       }
 
-      // Tag test-internal interactions: if both modules are test, override pattern
+      // Tag test-internal interactions: if either module is a test module, override pattern
       const testModuleIds = db.getTestModuleIds();
       if (testModuleIds.size > 0) {
         for (const interaction of interactions) {
-          if (testModuleIds.has(interaction.fromModuleId) && testModuleIds.has(interaction.toModuleId)) {
+          if (testModuleIds.has(interaction.fromModuleId) || testModuleIds.has(interaction.toModuleId)) {
             interaction.pattern = 'test-internal';
           }
         }
