@@ -101,32 +101,6 @@ marker path {
   font-weight: 600;
 }
 
-/* Layer colors for DAG nodes */
-.dag-node.layer-controller rect {
-  fill: var(--layer-controller);
-  stroke: #5a7a9a;
-}
-.dag-node.layer-service rect {
-  fill: var(--layer-service);
-  stroke: #7a5a9a;
-}
-.dag-node.layer-repository rect {
-  fill: var(--layer-repository);
-  stroke: #5a9a6a;
-}
-.dag-node.layer-adapter rect {
-  fill: var(--layer-adapter);
-  stroke: #9a8a5a;
-}
-.dag-node.layer-utility rect {
-  fill: var(--layer-utility);
-  stroke: #6a8690;
-}
-.dag-node.layer-default rect {
-  fill: var(--layer-default);
-  stroke: #6a6a6a;
-}
-
 /* DAG links */
 .dag-link {
   fill: none;
@@ -722,6 +696,25 @@ marker path {
 .chord-sidebar-badge.weight {
   background: var(--bg-elevated);
   color: var(--accent-blue);
+}
+
+.chord-sidebar-badge.ast {
+  background: var(--kind-interface);
+  color: var(--kind-interface-text);
+}
+
+.chord-sidebar-badge.inferred {
+  background: var(--kind-class);
+  color: var(--kind-class-text);
+}
+
+/* Process group summary */
+.process-group-summary {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .chord-sidebar-semantic {

@@ -628,6 +628,38 @@ export class IndexDatabase implements IIndexWriter {
     return this.interactions.getUncoveredModulePairs();
   }
 
+  hasModuleImportPath(fromModuleId: number, toModuleId: number): boolean {
+    return this.interactions.hasModuleImportPath(fromModuleId, toModuleId);
+  }
+
+  getModuleImportedSymbols(fromModuleId: number, toModuleId: number): Array<{ name: string; kind: string }> {
+    return this.interactions.getModuleImportedSymbols(fromModuleId, toModuleId);
+  }
+
+  getRuntimeImportEdges(): Array<{ fromFileId: number; toFileId: number }> {
+    return this.interactions.getRuntimeImportEdges();
+  }
+
+  getFileToModuleMap(): Map<number, number> {
+    return this.interactions.getFileToModuleMap();
+  }
+
+  validateInferredInteractions(isSameProcess?: (fromModuleId: number, toModuleId: number) => boolean) {
+    return this.interactions.validateInferredInteractions(isSameProcess);
+  }
+
+  getRelationshipDetailsForModulePair(fromModuleId: number, toModuleId: number) {
+    return this.interactions.getRelationshipDetailsForModulePair(fromModuleId, toModuleId);
+  }
+
+  hasReverseInteraction(fromModuleId: number, toModuleId: number): boolean {
+    return this.interactions.hasReverseInteraction(fromModuleId, toModuleId);
+  }
+
+  getRelationshipSymbolsForPair(fromModuleId: number, toModuleId: number): string[] {
+    return this.interactions.getRelationshipSymbolsForPair(fromModuleId, toModuleId);
+  }
+
   // ============================================================
   // Flow Operations
   // ============================================================

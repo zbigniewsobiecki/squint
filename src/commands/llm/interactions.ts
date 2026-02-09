@@ -2,11 +2,18 @@ import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { LLMist } from 'llmist';
 import type { IndexDatabase } from '../../db/database-facade.js';
-import type { EnrichedModuleCallEdge, Module, ModuleCallEdge } from '../../db/schema.js';
+import type { EnrichedModuleCallEdge, Module, ModuleCallEdge, ModuleWithMembers } from '../../db/schema.js';
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
 import { parseCSVLine } from './_shared/csv-utils.js';
-import { groupModulesByEntity } from './_shared/entity-utils.js';
+import {
+  type ProcessGroups,
+  areSameProcess,
+  computeProcessGroups,
+  getCrossProcessGroupPairs,
+  getProcessDescription,
+  getProcessGroupLabel,
+} from './_shared/process-utils.js';
 import { getErrorMessage } from './_shared/llm-utils.js';
 
 interface InteractionSuggestion {
@@ -105,7 +112,7 @@ export default class Interactions extends BaseLlmCommand {
       const batch = enrichedEdges.slice(i, i + batchSize);
 
       try {
-        const suggestions = await this.generateInteractionSemantics(batch, model);
+        const suggestions = await this.generateInteractionSemantics(batch, model, db);
         interactions.push(...suggestions);
 
         if (!isJson && verbose) {
@@ -165,17 +172,28 @@ export default class Interactions extends BaseLlmCommand {
       }
     }
 
-    // Step 3: Infer logical (non-AST) interactions
+    // Compute process groups for Steps 3 and 4
+    const processGroups = computeProcessGroups(db);
+
+    // Step 3: Infer cross-process (non-AST) interactions
     if (!isJson) {
       this.log('');
-      this.log(chalk.bold('Step 3: Inferring Logical Connections (LLM Analysis)'));
+      this.log(chalk.bold('Step 3: Inferring Cross-Process Connections (LLM Analysis)'));
+      if (verbose) {
+        this.log(chalk.gray(`  Detected ${processGroups.groupCount} process group(s)`));
+        for (const [, mods] of processGroups.groupToModules) {
+          const label = getProcessGroupLabel(mods);
+          this.log(chalk.gray(`    Group "${label}": ${mods.length} modules`));
+        }
+      }
     }
 
     // Get existing edges to avoid duplicates
     const existingEdges = db.getModuleCallGraph();
 
-    const logicalInteractions = await this.inferLogicalInteractions(
+    const logicalInteractions = await this.inferCrossProcessInteractions(
       db,
+      processGroups,
       existingEdges,
       model,
       showLlmRequests,
@@ -186,9 +204,20 @@ export default class Interactions extends BaseLlmCommand {
     if (!dryRun && logicalInteractions.length > 0) {
       for (const li of logicalInteractions) {
         try {
+          // Derive symbols from target module's exported definitions
+          const toModuleWithMembers = db.getModuleWithMembers(li.toModuleId);
+          const symbols = toModuleWithMembers
+            ? toModuleWithMembers.members
+                .filter((m) => m.kind === 'function' || m.kind === 'class')
+                .slice(0, 10)
+                .map((m) => m.name)
+            : [];
+
           db.upsertInteraction(li.fromModuleId, li.toModuleId, {
             semantic: li.reason,
             source: 'llm-inferred',
+            pattern: 'business',
+            symbols: symbols.length > 0 ? symbols : undefined,
             weight: 1,
           });
           inferredCount++;
@@ -218,6 +247,8 @@ export default class Interactions extends BaseLlmCommand {
     if (!dryRun) {
       const minRelCoverage = flags['min-relationship-coverage'] as number;
       const maxGateRetries = flags['max-gate-retries'] as number;
+      const allModules = db.getAllModules();
+      const moduleMap = new Map(allModules.map((m) => [m.id, m]));
 
       for (let attempt = 0; attempt < maxGateRetries; attempt++) {
         const coverageCheck = db.getRelationshipCoverage();
@@ -242,8 +273,73 @@ export default class Interactions extends BaseLlmCommand {
         const uncoveredPairs = db.getUncoveredModulePairs();
         if (uncoveredPairs.length === 0) break;
 
+        // Pre-filter: partition into auto-skip, auto-flip, and needs-llm
+        const needsLlm: typeof uncoveredPairs = [];
+        let autoSkipCount = 0;
+
+        for (const pair of uncoveredPairs) {
+          const fromMod = moduleMap.get(pair.fromModuleId);
+          const toMod = moduleMap.get(pair.toModuleId);
+
+          if (!fromMod || !toMod) {
+            autoSkipCount++;
+            continue;
+          }
+
+          // Cross-process pairs ALWAYS go to LLM (they communicate via runtime protocols)
+          if (!areSameProcess(pair.fromModuleId, pair.toModuleId, processGroups)) {
+            needsLlm.push(pair);
+            continue;
+          }
+
+          // Same-layer: check import paths
+          const hasForwardImports = db.hasModuleImportPath(pair.fromModuleId, pair.toModuleId);
+
+          if (hasForwardImports) {
+            // Has forward imports → send to LLM for confirmation
+            needsLlm.push(pair);
+            continue;
+          }
+
+          // No forward imports for same-layer pair
+          const hasReverseAst = db.hasReverseInteraction(pair.fromModuleId, pair.toModuleId);
+          if (hasReverseAst) {
+            // Direction confusion: reverse AST interaction exists → auto-skip
+            if (verbose && !isJson) {
+              this.log(chalk.gray(`  Auto-skip (reversed): ${pair.fromPath} → ${pair.toPath}`));
+            }
+            autoSkipCount++;
+            continue;
+          }
+
+          const hasReverseImports = db.hasModuleImportPath(pair.toModuleId, pair.fromModuleId);
+          if (hasReverseImports) {
+            // No forward, but reverse imports → direction confusion, auto-skip
+            if (verbose && !isJson) {
+              this.log(chalk.gray(`  Auto-skip (reverse imports): ${pair.fromPath} → ${pair.toPath}`));
+            }
+            autoSkipCount++;
+            continue;
+          }
+
+          // No imports in either direction for same-layer → auto-skip
+          autoSkipCount++;
+          if (verbose && !isJson) {
+            this.log(chalk.gray(`  Auto-skip (no imports): ${pair.fromPath} → ${pair.toPath}`));
+          }
+        }
+
+        if (!isJson && autoSkipCount > 0) {
+          this.log(chalk.gray(`  Pre-filtered: ${autoSkipCount} pairs auto-skipped, ${needsLlm.length} sent to LLM`));
+        }
+
+        if (needsLlm.length === 0) break;
+
         const targetedResults = await this.inferTargetedInteractions(
-          uncoveredPairs,
+          db,
+          needsLlm,
+          moduleMap,
+          processGroups,
           model,
           showLlmRequests,
           showLlmResponses
@@ -252,9 +348,20 @@ export default class Interactions extends BaseLlmCommand {
         let targetedCount = 0;
         for (const ti of targetedResults) {
           try {
+            // Derive symbols from imports or relationship annotations
+            const importedSymbols = db.getModuleImportedSymbols(ti.fromModuleId, ti.toModuleId);
+            let symbols: string[];
+            if (importedSymbols.length > 0) {
+              symbols = importedSymbols.map((s) => s.name);
+            } else {
+              symbols = db.getRelationshipSymbolsForPair(ti.fromModuleId, ti.toModuleId);
+            }
+
             db.upsertInteraction(ti.fromModuleId, ti.toModuleId, {
               semantic: ti.reason,
               source: 'llm-inferred',
+              pattern: 'business',
+              symbols: symbols.length > 0 ? symbols : undefined,
               weight: 1,
             });
             targetedCount++;
@@ -320,7 +427,8 @@ export default class Interactions extends BaseLlmCommand {
    */
   private async generateInteractionSemantics(
     edges: EnrichedModuleCallEdge[],
-    model: string
+    model: string,
+    db: IndexDatabase
   ): Promise<InteractionSuggestion[]> {
     const systemPrompt = `You are a software architect analyzing module-level dependencies.
 
@@ -340,12 +448,27 @@ Guidelines:
 - Keep descriptions concise (under 80 chars)
 - Focus on the business purpose, not implementation details`;
 
-    // Build edge descriptions with symbol details
+    // Build module lookup for descriptions
+    const allModules = db.getAllModules();
+    const moduleMap = new Map(allModules.map((m) => [m.id, m]));
+
+    // Build edge descriptions with symbol details and module context
     const edgeDescriptions = edges
       .map((e, i) => {
-        const symbolList = e.calledSymbols.map((s) => s.name).join(', ');
+        const symbolList = e.calledSymbols
+          .map((s) => `${s.name} (${s.kind}, ${s.callCount} calls)`)
+          .join(', ');
         const patternInfo = `[${e.edgePattern.toUpperCase()}]`;
-        return `${i + 1}. ${patternInfo} ${e.fromModulePath} → ${e.toModulePath} (${e.weight} calls)\n   Symbols: ${symbolList}`;
+        const fromMod = moduleMap.get(e.fromModuleId);
+        const toMod = moduleMap.get(e.toModuleId);
+        const fromDesc = fromMod ? `${fromMod.name}${fromMod.description ? ` - ${fromMod.description}` : ''}` : '';
+        const toDesc = toMod ? `${toMod.name}${toMod.description ? ` - ${toMod.description}` : ''}` : '';
+
+        let desc = `${i + 1}. ${patternInfo} ${e.fromModulePath} → ${e.toModulePath} (${e.weight} calls)`;
+        if (fromDesc) desc += `\n   From: "${fromDesc}"`;
+        if (toDesc) desc += `\n   To: "${toDesc}"`;
+        desc += `\n   Symbols: ${symbolList}`;
+        return desc;
       })
       .join('\n');
 
@@ -431,22 +554,29 @@ Generate semantic descriptions for each interaction in CSV format.`;
   }
 
   // ============================================================
-  // Step 3: Logical Interaction Inference
+  // Step 3: Cross-Process Interaction Inference
   // ============================================================
 
   /**
-   * Infer logical (non-AST) interactions between modules using LLM analysis.
-   * These are connections that exist at runtime but aren't in the static call graph,
-   * such as HTTP calls between frontend and backend.
+   * Infer cross-process interactions between modules in different process groups.
+   * Uses import graph connectivity (union-find) to detect process boundaries,
+   * then asks LLM to identify runtime connections between separate processes.
    */
-  private async inferLogicalInteractions(
+  private async inferCrossProcessInteractions(
     db: IndexDatabase,
+    processGroups: ProcessGroups,
     existingEdges: ModuleCallEdge[],
     model: string,
     showLlmRequests: boolean,
     showLlmResponses: boolean
   ): Promise<InferredInteraction[]> {
+    if (processGroups.groupCount < 2) {
+      this.log(chalk.gray('  Single process group — no cross-process inference needed'));
+      return [];
+    }
+
     const modules = db.getAllModules();
+    const modulesWithMembers = db.getAllModulesWithMembers();
 
     // Build existing edge lookup to avoid duplicates
     const existingPairs = new Set(existingEdges.map((e) => `${e.fromModuleId}->${e.toModuleId}`));
@@ -457,40 +587,56 @@ Generate semantic descriptions for each interaction in CSV format.`;
       existingPairs.add(`${interaction.fromModuleId}->${interaction.toModuleId}`);
     }
 
-    // Classify modules by layer
-    const frontend = modules.filter((m) => this.isModuleInLayer(m, 'frontend'));
-    const backend = modules.filter((m) => this.isModuleInLayer(m, 'backend'));
+    // Build members lookup for enriched prompt
+    const membersMap = new Map(modulesWithMembers.map((m) => [m.id, m]));
 
-    if (frontend.length === 0 || backend.length === 0) {
-      return [];
+    const allResults: InferredInteraction[] = [];
+    const crossProcessPairs = getCrossProcessGroupPairs(processGroups);
+
+    for (const [groupA, groupB] of crossProcessPairs) {
+      const labelA = getProcessGroupLabel(groupA);
+      const labelB = getProcessGroupLabel(groupB);
+
+      const systemPrompt = this.buildCrossProcessSystemPrompt();
+      const userPrompt = this.buildCrossProcessUserPrompt(
+        groupA,
+        groupB,
+        labelA,
+        labelB,
+        existingEdges,
+        modules,
+        membersMap
+      );
+
+      if (showLlmRequests) {
+        this.log(chalk.cyan('═'.repeat(60)));
+        this.log(chalk.cyan(`LLM REQUEST - inferCrossProcessInteractions (${labelA} ↔ ${labelB})`));
+        this.log(chalk.gray(systemPrompt));
+        this.log(chalk.gray(userPrompt));
+      }
+
+      const response = await LLMist.complete(userPrompt, { model, systemPrompt, temperature: 0 });
+
+      if (showLlmResponses) {
+        this.log(chalk.green('═'.repeat(60)));
+        this.log(chalk.green('LLM RESPONSE'));
+        this.log(chalk.gray(response));
+      }
+
+      const results = this.parseLogicalInteractionCSV(response, modules, existingPairs);
+      allResults.push(...results);
     }
 
-    const systemPrompt = this.buildLogicalInferenceSystemPrompt();
-    const userPrompt = this.buildLogicalInferenceUserPrompt(frontend, backend, existingEdges, modules);
-
-    if (showLlmRequests) {
-      this.log(chalk.cyan('═'.repeat(60)));
-      this.log(chalk.cyan('LLM REQUEST - inferLogicalInteractions'));
-      this.log(chalk.gray(systemPrompt));
-      this.log(chalk.gray(userPrompt));
-    }
-
-    const response = await LLMist.complete(userPrompt, { model, systemPrompt, temperature: 0 });
-
-    if (showLlmResponses) {
-      this.log(chalk.green('═'.repeat(60)));
-      this.log(chalk.green('LLM RESPONSE'));
-      this.log(chalk.gray(response));
-    }
-
-    return this.parseLogicalInteractionCSV(response, modules, existingPairs);
+    return allResults;
   }
 
   /**
    * Infer targeted interactions for specific uncovered module pairs.
    * These are module pairs with symbol-level relationships but no detected interaction.
+   * Prompt is enriched with module descriptions, import evidence, and relationship details.
    */
   private async inferTargetedInteractions(
+    db: IndexDatabase,
     uncoveredPairs: Array<{
       fromModuleId: number;
       toModuleId: number;
@@ -498,6 +644,8 @@ Generate semantic descriptions for each interaction in CSV format.`;
       toPath: string;
       relationshipCount: number;
     }>,
+    moduleMap: Map<number, Module>,
+    processGroups: ProcessGroups,
     model: string,
     showLlmRequests: boolean,
     showLlmResponses: boolean
@@ -506,6 +654,13 @@ Generate semantic descriptions for each interaction in CSV format.`;
 
     const systemPrompt = `You are reviewing module pairs that have symbol-level relationships but no detected interaction.
 For each pair, determine if a real runtime interaction exists and describe it.
+
+## Decision Rules (CRITICAL)
+- If "Forward imports: NONE" AND "Process: same-process" → SKIP (no static dependency exists)
+- If "Reverse AST interaction: YES" → SKIP (the relationship direction is reversed; the reverse is already detected)
+- If "Forward imports: YES" → CONFIRM is likely valid
+- If "Process: separate-process" → use module descriptions and relationship semantics to decide
+- When in doubt about same-process pairs with no imports → SKIP (trust static analysis)
 
 ## Output Format
 \`\`\`csv
@@ -516,10 +671,51 @@ project.shared.types,project.backend.models,SKIP,"Shared type definitions, no ru
 
 For each pair:
 - CONFIRM if a real interaction exists (provide a semantic description as reason)
-- SKIP if it's an artifact (shared types, transitive dependency, test-only)`;
+- SKIP if it's an artifact (shared types, transitive dependency, test-only, or no static evidence)`;
 
+    // Build enriched pair descriptions
     const pairDescriptions = uncoveredPairs
-      .map((p, i) => `${i + 1}. ${p.fromPath} → ${p.toPath} (${p.relationshipCount} relationships)`)
+      .map((p, i) => {
+        const fromMod = moduleMap.get(p.fromModuleId);
+        const toMod = moduleMap.get(p.toModuleId);
+
+        // Module descriptions
+        const fromDesc = fromMod ? `${fromMod.name}${fromMod.description ? ` - ${fromMod.description}` : ''}` : '';
+        const toDesc = toMod ? `${toMod.name}${toMod.description ? ` - ${toMod.description}` : ''}` : '';
+
+        // Process info
+        const processDesc = getProcessDescription(p.fromModuleId, p.toModuleId, processGroups);
+
+        // Import evidence
+        const hasForwardImports = db.hasModuleImportPath(p.fromModuleId, p.toModuleId);
+        const hasReverseImports = db.hasModuleImportPath(p.toModuleId, p.fromModuleId);
+        const forwardImportStr = hasForwardImports ? 'YES' : 'NONE';
+        const reverseImportStr = hasReverseImports ? 'YES' : 'NONE';
+
+        // Reverse AST interaction
+        const hasReverseAst = db.hasReverseInteraction(p.fromModuleId, p.toModuleId);
+
+        // Relationship details
+        const relDetails = db.getRelationshipDetailsForModulePair(p.fromModuleId, p.toModuleId);
+
+        let desc = `${i + 1}. ${p.fromPath} → ${p.toPath}`;
+        if (fromDesc) desc += `\n   From: "${fromDesc}"`;
+        if (toDesc) desc += `\n   To: "${toDesc}"`;
+        desc += `\n   Process: ${processDesc}`;
+        desc += `\n   Forward imports: ${forwardImportStr} | Reverse imports: ${reverseImportStr} | Reverse AST interaction: ${hasReverseAst ? 'YES' : 'NO'}`;
+
+        if (relDetails.length > 0) {
+          desc += `\n   Relationship symbols (${relDetails.length}):`;
+          for (const rd of relDetails.slice(0, 5)) {
+            desc += `\n     - ${rd.fromName} → ${rd.toName}: "${rd.semantic}"`;
+          }
+          if (relDetails.length > 5) {
+            desc += `\n     (+${relDetails.length - 5} more)`;
+          }
+        }
+
+        return desc;
+      })
       .join('\n');
 
     const userPrompt = `## Module Pairs to Evaluate (${uncoveredPairs.length})
@@ -574,74 +770,28 @@ Evaluate each pair and output CONFIRM or SKIP in CSV format.`;
   }
 
   /**
-   * Determine if a module belongs to frontend or backend layer based on path patterns.
+   * Build system prompt for cross-process inference.
    */
-  private isModuleInLayer(module: Module, layer: 'frontend' | 'backend'): boolean {
-    const path = module.fullPath.toLowerCase();
-    if (layer === 'frontend') {
-      return (
-        path.includes('frontend') ||
-        path.includes('screen') ||
-        path.includes('page') ||
-        path.includes('hook') ||
-        path.includes('component') ||
-        path.includes('ui') ||
-        path.includes('view') ||
-        path.includes('client')
-      );
-    }
-    return (
-      path.includes('backend') ||
-      path.includes('api') ||
-      path.includes('route') ||
-      path.includes('controller') ||
-      path.includes('handler') ||
-      path.includes('server') ||
-      path.includes('service') ||
-      path.includes('repository') ||
-      path.includes('model')
-    );
-  }
+  private buildCrossProcessSystemPrompt(): string {
+    return `You identify LOGICAL runtime connections between modules in separate processes.
+These modules have NO import connectivity — they communicate via runtime protocols
+(HTTP/REST, gRPC, WebSocket, IPC, message queues, CLI invocation, file I/O, etc.).
 
-  /**
-   * Build system prompt for logical inference.
-   */
-  private buildLogicalInferenceSystemPrompt(): string {
-    return `You identify LOGICAL module connections that exist at runtime but aren't in static analysis.
+For each connection:
+- Identify the SOURCE module (the one initiating the call/request)
+- Identify the TARGET module (the one handling/receiving)
+- Describe the communication mechanism and purpose
 
-## Architecture Boundary Rules (CRITICAL)
-Frontend and backend are separated by an HTTP boundary. Frontend code makes HTTP requests to backend API endpoints.
+Use entity/name matching to pair modules:
+- "useCustomers" (process A) likely calls "customerController" (process B)
+- Match by entity name, action verbs, and module descriptions
 
-VALID cross-boundary connections (frontend → backend):
-- Frontend modules → API routes/controllers (the HTTP entry points)
-- Example: hooks.data-fetching.sales → api.routes OR api.controllers
-
-INVALID connections (DO NOT INFER):
-- Frontend → Backend Services (services are internal to backend, not exposed via HTTP)
-- Frontend → Backend Repositories/Data layers (internal to backend)
-- Frontend → Backend Models (internal to backend)
-
-## What to Detect
-- Frontend screens/hooks calling backend API endpoints via HTTP/fetch
-- Only connect frontend to the backend's HTTP boundary (routes, controllers, API)
-
-## Matching Patterns
-- Entity names: "useVehicles" hook likely calls "vehicleRoutes" or "vehicleController"
-- Data fetching hooks call API endpoints, NOT services directly
-- The backend call chain is: Routes → Controllers → Services (internal to backend)
-
-## Entity-Based Matching (IMPORTANT)
-When inferring connections, prefer entity-specific targets over generic ones:
-- hooks.data-fetching.users → api.controllers.users (if exists)
-- hooks.useProducts → api.controllers.products (if exists)
-- Only fall back to generic module (e.g., api.controllers) if no entity-specific module exists
-
-Extract entity name from source module path and match to target.
+Only report connections with medium or high confidence.
 
 ## Output Format
 \`\`\`csv
 from_module_path,to_module_path,reason,confidence
-project.frontend.hooks.useCustomers,project.backend.api.controllers,"Customer data hooks call customer API controllers",high
+project.frontend.hooks.useCustomers,project.backend.api.controllers,"Customer data hooks call customer API controllers via HTTP",high
 \`\`\`
 
 Confidence levels:
@@ -650,58 +800,69 @@ Confidence levels:
 - Skip low confidence - only report likely connections
 
 DO NOT report:
-- Frontend → Services (WRONG: services are internal to backend)
-- Frontend → Repositories (WRONG: repos are internal to backend)
-- Same-layer connections (frontend→frontend, backend→backend)
-- Utility modules (logging, config, etc.)`;
+- Connections within the same process group (those are visible via static analysis)
+- Utility modules (logging, config, etc.)
+- Shared type definitions (no runtime interaction)`;
   }
 
   /**
-   * Build user prompt with module lists for logical inference.
+   * Build user prompt for cross-process inference between two process groups.
+   * Includes member names for entity pattern matching.
    */
-  private buildLogicalInferenceUserPrompt(
-    frontend: Module[],
-    backend: Module[],
+  private buildCrossProcessUserPrompt(
+    groupA: Module[],
+    groupB: Module[],
+    labelA: string,
+    labelB: string,
     existingEdges: ModuleCallEdge[],
-    allModules: Module[]
+    allModules: Module[],
+    membersMap: Map<number, ModuleWithMembers>
   ): string {
     const parts: string[] = [];
 
-    parts.push('## Frontend Modules');
-    for (const m of frontend) {
-      parts.push(`- ${m.fullPath}: ${m.name}${m.description ? ` - ${m.description}` : ''}`);
+    const MAX_MEMBERS = 8;
+    const KIND_PRIORITY: Record<string, number> = { function: 0, class: 1, variable: 2 };
+
+    const formatMembers = (moduleId: number): string => {
+      const modWithMembers = membersMap.get(moduleId);
+      if (!modWithMembers || modWithMembers.members.length === 0) return '';
+      const sorted = [...modWithMembers.members].sort(
+        (a, b) => (KIND_PRIORITY[a.kind] ?? 3) - (KIND_PRIORITY[b.kind] ?? 3)
+      );
+      const shown = sorted.slice(0, MAX_MEMBERS);
+      const memberList = shown.map((m) => `${m.name} (${m.kind})`).join(', ');
+      const extra = sorted.length > MAX_MEMBERS ? ` (+${sorted.length - MAX_MEMBERS} more)` : '';
+      return `\n  Members: ${memberList}${extra}`;
+    };
+
+    const groupAIds = new Set(groupA.map((m) => m.id));
+    const groupBIds = new Set(groupB.map((m) => m.id));
+
+    parts.push(`## Process Group: "${labelA}" (${groupA.length} modules)`);
+    for (const m of groupA) {
+      parts.push(`- ${m.fullPath}: "${m.name}"${m.description ? ` - ${m.description}` : ''}${formatMembers(m.id)}`);
     }
 
     parts.push('');
-    parts.push('## Backend Modules (grouped by entity)');
-
-    // Group backend modules by entity pattern for better LLM matching
-    const entityGroups = groupModulesByEntity(backend);
-
-    for (const [entity, modules] of entityGroups) {
-      if (entity === '_generic') {
-        parts.push('### Generic/Shared');
-      } else {
-        parts.push(`### ${entity}-related`);
-      }
-      for (const m of modules) {
-        parts.push(`- ${m.fullPath}: ${m.name}${m.description ? ` - ${m.description}` : ''}`);
-      }
-      parts.push('');
+    parts.push(`## Process Group: "${labelB}" (${groupB.length} modules)`);
+    for (const m of groupB) {
+      parts.push(`- ${m.fullPath}: "${m.name}"${m.description ? ` - ${m.description}` : ''}${formatMembers(m.id)}`);
     }
 
     parts.push('');
-    parts.push('## Existing AST-Detected Connections (for reference)');
-    const crossLayerEdges = existingEdges.filter((e) => {
-      const from = allModules.find((m) => m.id === e.fromModuleId);
-      const to = allModules.find((m) => m.id === e.toModuleId);
-      return from && to && this.isModuleInLayer(from, 'frontend') !== this.isModuleInLayer(to, 'frontend');
+    parts.push('## Existing AST-Detected Cross-Process Connections (for reference)');
+    const crossProcessEdges = existingEdges.filter((e) => {
+      const fromInA = groupAIds.has(e.fromModuleId);
+      const fromInB = groupBIds.has(e.fromModuleId);
+      const toInA = groupAIds.has(e.toModuleId);
+      const toInB = groupBIds.has(e.toModuleId);
+      return (fromInA && toInB) || (fromInB && toInA);
     });
 
-    if (crossLayerEdges.length === 0) {
+    if (crossProcessEdges.length === 0) {
       parts.push('(None detected - this is why we need inference!)');
     } else {
-      for (const e of crossLayerEdges) {
+      for (const e of crossProcessEdges) {
         const from = allModules.find((m) => m.id === e.fromModuleId);
         const to = allModules.find((m) => m.id === e.toModuleId);
         if (from && to) {
@@ -711,7 +872,7 @@ DO NOT report:
     }
 
     parts.push('');
-    parts.push('Identify frontend→backend logical connections that likely exist at runtime.');
+    parts.push('Identify runtime connections between these two process groups.');
 
     return parts.join('\n');
   }

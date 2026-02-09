@@ -41,19 +41,6 @@
   --kind-method: #4a6670;
   --kind-method-text: #b8d4dc;
 
-  /* Layer colors */
-  --layer-controller: #3d5a80;
-  --layer-controller-text: #a8d0e6;
-  --layer-service: #5a3d80;
-  --layer-service-text: #d0a8e6;
-  --layer-repository: #3d8050;
-  --layer-repository-text: #a8e6b4;
-  --layer-adapter: #806a3d;
-  --layer-adapter-text: #e6d4a8;
-  --layer-utility: #4a6670;
-  --layer-utility-text: #b8d4dc;
-  --layer-default: #4a4a4a;
-
   /* Hierarchy colors */
   --hierarchy-directory: #2d4a5a;
   --hierarchy-file: #3d4a5a;

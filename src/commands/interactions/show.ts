@@ -69,6 +69,7 @@ export default class InteractionsShow extends Command {
       this.log(`To: ${chalk.cyan(interactionWithPaths.toModulePath)}`);
       this.log(`Direction: ${interaction.direction === 'bi' ? 'Bi-directional' : 'Uni-directional'}`);
       this.log(`Pattern: ${interaction.pattern ?? 'unclassified'}`);
+      this.log(`Source: ${interaction.source === 'llm-inferred' ? 'LLM-inferred' : 'AST-detected'}`);
       this.log(`Weight: ${interaction.weight} calls`);
 
       if (interaction.semantic) {

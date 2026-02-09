@@ -488,4 +488,226 @@ describe('InteractionRepository', () => {
       expect(map.size).toBe(0);
     });
   });
+
+  // ============================================================
+  // Process Group Detection Methods
+  // ============================================================
+
+  describe('getRuntimeImportEdges', () => {
+    let fileId2: number;
+
+    beforeEach(() => {
+      fileId2 = fileRepo.insert({
+        path: '/test/file2.ts',
+        language: 'typescript',
+        contentHash: 'def456',
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+    });
+
+    it('returns empty array when no imports exist', () => {
+      const edges = repo.getRuntimeImportEdges();
+      expect(edges).toHaveLength(0);
+    });
+
+    it('returns only non-type-only imports', () => {
+      const fileId1 = db
+        .prepare("SELECT id FROM files WHERE path = '/test/file.ts'")
+        .get() as { id: number };
+
+      // Runtime import
+      db.prepare(
+        'INSERT INTO imports (from_file_id, to_file_id, type, source, is_external, is_type_only, line, column) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(fileId1.id, fileId2, 'import', './file2', 0, 0, 1, 0);
+
+      // Type-only import
+      db.prepare(
+        'INSERT INTO imports (from_file_id, to_file_id, type, source, is_external, is_type_only, line, column) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(fileId2, fileId1.id, 'import', './file', 0, 1, 1, 0);
+
+      const edges = repo.getRuntimeImportEdges();
+      expect(edges).toHaveLength(1);
+      expect(edges[0].fromFileId).toBe(fileId1.id);
+      expect(edges[0].toFileId).toBe(fileId2);
+    });
+
+    it('excludes imports where to_file_id is NULL (external)', () => {
+      const fileId1 = db
+        .prepare("SELECT id FROM files WHERE path = '/test/file.ts'")
+        .get() as { id: number };
+
+      // External import (to_file_id = NULL)
+      db.prepare(
+        'INSERT INTO imports (from_file_id, to_file_id, type, source, is_external, is_type_only, line, column) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(fileId1.id, null, 'import', 'lodash', 1, 0, 1, 0);
+
+      // Internal import
+      db.prepare(
+        'INSERT INTO imports (from_file_id, to_file_id, type, source, is_external, is_type_only, line, column) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(fileId1.id, fileId2, 'import', './file2', 0, 0, 2, 0);
+
+      const edges = repo.getRuntimeImportEdges();
+      expect(edges).toHaveLength(1);
+      expect(edges[0].toFileId).toBe(fileId2);
+    });
+
+    it('returns distinct edges', () => {
+      const fileId1 = db
+        .prepare("SELECT id FROM files WHERE path = '/test/file.ts'")
+        .get() as { id: number };
+
+      // Two imports between same files
+      db.prepare(
+        'INSERT INTO imports (from_file_id, to_file_id, type, source, is_external, is_type_only, line, column) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(fileId1.id, fileId2, 'import', './file2', 0, 0, 1, 0);
+      db.prepare(
+        'INSERT INTO imports (from_file_id, to_file_id, type, source, is_external, is_type_only, line, column) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(fileId1.id, fileId2, 'import', './file2', 0, 0, 3, 0);
+
+      const edges = repo.getRuntimeImportEdges();
+      expect(edges).toHaveLength(1);
+    });
+  });
+
+  describe('getFileToModuleMap', () => {
+    it('returns map with entries from beforeEach setup', () => {
+      // beforeEach already assigns defId1→moduleId1, defId2→moduleId2, defId3→moduleId3
+      // All definitions are in the same file, so the map has 1 entry
+      const map = repo.getFileToModuleMap();
+      expect(map.size).toBe(1);
+    });
+
+    it('maps file IDs to module IDs correctly', () => {
+      const map = repo.getFileToModuleMap();
+      const fileId1 = db
+        .prepare("SELECT id FROM files WHERE path = '/test/file.ts'")
+        .get() as { id: number };
+
+      expect(map.has(fileId1.id)).toBe(true);
+    });
+
+    it('handles definitions in multiple files', () => {
+      const fileId2 = fileRepo.insert({
+        path: '/test/file2.ts',
+        language: 'typescript',
+        contentHash: 'xyz789',
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+      const defId4 = fileRepo.insertDefinition(fileId2, {
+        name: 'NewService',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+      moduleRepo.assignSymbol(defId4, moduleId2);
+
+      const map = repo.getFileToModuleMap();
+      expect(map.has(fileId2)).toBe(true);
+      expect(map.get(fileId2)).toBe(moduleId2);
+    });
+  });
+
+  describe('validateInferredInteractions', () => {
+    let fileId2: number;
+
+    beforeEach(() => {
+      // Create a second file for import paths
+      fileId2 = fileRepo.insert({
+        path: '/test/file2.ts',
+        language: 'typescript',
+        contentHash: 'validate456',
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+    });
+
+    it('flags REVERSED when AST interaction exists in reverse direction', () => {
+      // AST interaction: moduleId2 → moduleId1
+      repo.insert(moduleId2, moduleId1, { source: 'ast' });
+      // LLM-inferred interaction: moduleId1 → moduleId2 (reverse)
+      repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
+
+      const issues = repo.validateInferredInteractions();
+      expect(issues).toHaveLength(1);
+      expect(issues[0].issue).toContain('REVERSED');
+    });
+
+    it('with isSameProcess callback: skips import checks for separate-process pairs', () => {
+      // LLM-inferred interaction with no import path
+      repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
+
+      const isSameProcess = () => false; // All pairs are separate-process
+      const issues = repo.validateInferredInteractions(isSameProcess);
+
+      // Should skip import checks for separate-process
+      const importIssues = issues.filter(
+        (i) => i.issue.includes('NO_IMPORTS') || i.issue.includes('DIRECTION_CONFUSED')
+      );
+      expect(importIssues).toHaveLength(0);
+    });
+
+    it('with isSameProcess callback: applies import checks for same-process pairs', () => {
+      // LLM-inferred interaction with no import path
+      repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
+
+      const isSameProcess = () => true; // All pairs are same-process
+      const issues = repo.validateInferredInteractions(isSameProcess);
+
+      // Should report NO_IMPORTS since no import path exists
+      expect(issues.some((i) => i.issue.includes('NO_IMPORTS'))).toBe(true);
+    });
+
+    it('without callback: treats all as same-process (backward compat)', () => {
+      // LLM-inferred interaction with no import path
+      repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
+
+      const issues = repo.validateInferredInteractions();
+
+      // Should apply import checks (same-process assumption)
+      expect(issues.some((i) => i.issue.includes('NO_IMPORTS'))).toBe(true);
+    });
+
+    it('separate-process pair with no imports: no issue reported', () => {
+      repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
+
+      const isSameProcess = () => false;
+      const issues = repo.validateInferredInteractions(isSameProcess);
+
+      expect(issues).toHaveLength(0);
+    });
+
+    it('same-process pair with reverse imports: DIRECTION_CONFUSED reported', () => {
+      const fileId1 = db
+        .prepare("SELECT id FROM files WHERE path = '/test/file.ts'")
+        .get() as { id: number };
+
+      // Put moduleId2's definition in file2 so module→file mapping is distinct
+      const defId4 = fileRepo.insertDefinition(fileId2, {
+        name: 'ApiRouter',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+      moduleRepo.assignSymbol(defId4, moduleId2);
+
+      // Create import from file2 → file1 (reverse: moduleId2 imports from moduleId1)
+      db.prepare(
+        'INSERT INTO imports (from_file_id, to_file_id, type, source, is_external, is_type_only, line, column) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(fileId2, fileId1.id, 'import', './file', 0, 0, 1, 0);
+
+      // LLM-inferred: moduleId1 → moduleId2 (but imports go moduleId2 → moduleId1)
+      repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
+
+      const isSameProcess = () => true;
+      const issues = repo.validateInferredInteractions(isSameProcess);
+
+      expect(issues.some((i) => i.issue.includes('DIRECTION_CONFUSED'))).toBe(true);
+    });
+  });
 });

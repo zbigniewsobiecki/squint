@@ -259,27 +259,6 @@
   font-weight: 500;
 }
 
-.card-badge.layer-controller {
-  background: var(--layer-controller);
-  color: var(--layer-controller-text);
-}
-.card-badge.layer-service {
-  background: var(--layer-service);
-  color: var(--layer-service-text);
-}
-.card-badge.layer-repository {
-  background: var(--layer-repository);
-  color: var(--layer-repository-text);
-}
-.card-badge.layer-adapter {
-  background: var(--layer-adapter);
-  color: var(--layer-adapter-text);
-}
-.card-badge.layer-utility {
-  background: var(--layer-utility);
-  color: var(--layer-utility-text);
-}
-
 .card-description {
   font-size: 12px;
   color: var(--text-muted);

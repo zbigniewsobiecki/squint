@@ -16,7 +16,15 @@ export function initInteractions(store: Store, _api: ApiClient) {
   const container = document.getElementById('graph-container');
   if (!container) return;
 
+  // Build process group summary
+  const pg = data.processGroups;
+  const processGroupHtml =
+    pg && pg.groupCount >= 2
+      ? `<div class="process-group-summary">${pg.groupCount} process groups: ${pg.groups.map((g) => g.label).join(', ')}</div>`
+      : '';
+
   container.innerHTML = `
+    ${processGroupHtml}
     <div class="chord-container" id="chord-main">
       <svg id="chord-svg"></svg>
       <div class="chord-sidebar hidden" id="chord-sidebar"></div>
@@ -82,6 +90,8 @@ function renderInteractionItem(ix: Interaction): string {
   const patternClass = ix.pattern === 'business' ? 'business' : 'utility';
   const dirLabel = ix.direction === 'bi' ? '↔' : '→';
   const symbols = ix.symbols ? ix.symbols.split(',').map((s) => s.trim()) : [];
+  const sourceLabel = ix.source === 'llm-inferred' ? 'inferred' : 'ast';
+  const sourceClass = ix.source === 'llm-inferred' ? 'inferred' : 'ast';
 
   return `
     <div class="chord-sidebar-item">
@@ -91,6 +101,7 @@ function renderInteractionItem(ix: Interaction): string {
         <span class="chord-sidebar-module">${escapeHtml(toName)}</span>
         <span class="chord-sidebar-badge ${patternClass}">${ix.pattern || 'utility'}</span>
         <span class="chord-sidebar-badge weight">×${ix.weight}</span>
+        <span class="chord-sidebar-badge ${sourceClass}">${sourceLabel}</span>
       </div>
       ${ix.semantic ? `<div class="chord-sidebar-semantic">${escapeHtml(ix.semantic)}</div>` : ''}
       ${symbols.length > 0 ? `<div class="chord-sidebar-symbols">${symbols.map((s) => `<span class="chord-sidebar-symbol">${escapeHtml(s)}</span>`).join('')}</div>` : ''}

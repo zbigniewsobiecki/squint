@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { computeProcessGroups, getProcessGroupLabel } from '../commands/llm/_shared/process-utils.js';
 import type { IndexDatabase } from '../db/database.js';
 
 // Calculate UI dist path relative to this file
@@ -99,6 +100,8 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
         } else {
           notFound(res, 'Module not found');
         }
+      } else if (path === '/api/process-groups') {
+        jsonResponse(res, getProcessGroupsData(db));
       } else if (path === '/api/interactions') {
         jsonResponse(res, getInteractionsData(db));
       } else if (path === '/api/interactions/stats') {
@@ -414,6 +417,7 @@ function getInteractionsData(database: IndexDatabase): {
     pattern: string | null;
     symbols: string | null;
     semantic: string | null;
+    source: string;
   }>;
   stats: {
     totalCount: number;
@@ -429,11 +433,16 @@ function getInteractionsData(database: IndexDatabase): {
     orphanedCount: number;
     coveragePercent: number;
   };
+  processGroups: {
+    groups: Array<{ id: number; label: string; moduleIds: number[]; moduleCount: number }>;
+    groupCount: number;
+  };
 } {
   try {
     const interactions = database.getAllInteractions();
     const stats = database.getInteractionStats();
     const relationshipCoverage = database.getRelationshipCoverage();
+    const processGroupData = getProcessGroupsData(database);
 
     return {
       interactions: interactions.map((i) => ({
@@ -447,9 +456,11 @@ function getInteractionsData(database: IndexDatabase): {
         pattern: i.pattern,
         symbols: i.symbols,
         semantic: i.semantic,
+        source: i.source,
       })),
       stats,
       relationshipCoverage,
+      processGroups: processGroupData,
     };
   } catch {
     return {
@@ -467,6 +478,10 @@ function getInteractionsData(database: IndexDatabase): {
         sameModuleCount: 0,
         orphanedCount: 0,
         coveragePercent: 0,
+      },
+      processGroups: {
+        groups: [],
+        groupCount: 0,
       },
     };
   }
@@ -689,5 +704,34 @@ function getFlowsDagData(database: IndexDatabase): {
     return { modules, edges, flows, features };
   } catch {
     return { modules: [], edges: [], flows: [], features: [] };
+  }
+}
+
+/**
+ * Build process group data from import graph connectivity.
+ */
+function getProcessGroupsData(database: IndexDatabase): {
+  groups: Array<{ id: number; label: string; moduleIds: number[]; moduleCount: number }>;
+  groupCount: number;
+} {
+  try {
+    const processGroups = computeProcessGroups(database);
+
+    const groups = Array.from(processGroups.groupToModules.entries()).map(([groupId, modules]) => ({
+      id: groupId,
+      label: getProcessGroupLabel(modules),
+      moduleIds: modules.map((m) => m.id),
+      moduleCount: modules.length,
+    }));
+
+    return {
+      groups,
+      groupCount: processGroups.groupCount,
+    };
+  } catch {
+    return {
+      groups: [],
+      groupCount: 0,
+    };
   }
 }

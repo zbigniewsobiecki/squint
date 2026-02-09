@@ -22,6 +22,10 @@ export default class Interactions extends Command {
     module: Flags.string({
       description: 'Filter by module (from or to)',
     }),
+    source: Flags.string({
+      description: 'Filter by source type',
+      options: ['ast', 'llm-inferred'],
+    }),
   };
 
   public async run(): Promise<void> {
@@ -44,6 +48,10 @@ export default class Interactions extends Command {
           (i) =>
             i.fromModulePath.toLowerCase().includes(moduleFilter) || i.toModulePath.toLowerCase().includes(moduleFilter)
         );
+      }
+
+      if (flags.source) {
+        interactions = interactions.filter((i) => i.source === flags.source);
       }
 
       if (interactions.length === 0) {
@@ -114,6 +122,7 @@ export default class Interactions extends Command {
     symbols: string | null;
     semantic: string | null;
     direction: string;
+    source: string;
   }): void {
     const arrow = interaction.direction === 'bi' ? '↔' : '→';
     const patternLabel =
@@ -122,11 +131,13 @@ export default class Interactions extends Command {
         : interaction.pattern === 'utility'
           ? chalk.yellow('[utility]')
           : '';
+    const sourceLabel =
+      interaction.source === 'llm-inferred' ? chalk.magenta('[inferred]') : chalk.gray('[ast]');
 
     const fromShort = interaction.fromModulePath.split('.').slice(-2).join('.');
     const toShort = interaction.toModulePath.split('.').slice(-2).join('.');
 
-    this.log(`  ${fromShort} ${arrow} ${toShort} ${patternLabel}`);
+    this.log(`  ${fromShort} ${arrow} ${toShort} ${patternLabel} ${sourceLabel}`);
 
     if (interaction.semantic) {
       this.log(`    ${chalk.gray(`"${interaction.semantic}"`)}`);

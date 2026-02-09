@@ -4,11 +4,9 @@ import {
   FLOW_COLORS,
   HIERARCHY_COLORS,
   KIND_COLORS,
-  LAYER_COLORS,
   getFlowColor,
   getHierarchyColor,
   getKindColor,
-  getLayerFromPath,
   getNodeRadius,
   getStrokeColor,
 } from './colors';
@@ -42,24 +40,6 @@ describe('colors', () => {
     it('has colors for directory and file', () => {
       expect(HIERARCHY_COLORS.directory).toBeDefined();
       expect(HIERARCHY_COLORS.file).toBeDefined();
-    });
-  });
-
-  describe('LAYER_COLORS', () => {
-    it('has colors for architectural layers', () => {
-      expect(LAYER_COLORS.controller).toBeDefined();
-      expect(LAYER_COLORS.service).toBeDefined();
-      expect(LAYER_COLORS.repository).toBeDefined();
-      expect(LAYER_COLORS.adapter).toBeDefined();
-      expect(LAYER_COLORS.utility).toBeDefined();
-      expect(LAYER_COLORS.default).toBeDefined();
-    });
-
-    it('each layer has fill and stroke colors', () => {
-      for (const layer of Object.values(LAYER_COLORS)) {
-        expect(layer.fill).toBeDefined();
-        expect(layer.stroke).toBeDefined();
-      }
     });
   });
 
@@ -181,47 +161,6 @@ describe('colors', () => {
       });
 
       expect(getStrokeColor(node as any)).toBe('#3c3c3c');
-    });
-  });
-
-  describe('getLayerFromPath', () => {
-    it('returns controller for controller-like paths', () => {
-      expect(getLayerFromPath('src/controllers/UserController.ts')).toBe('controller');
-      expect(getLayerFromPath('handlers/auth.ts')).toBe('controller');
-      expect(getLayerFromPath('routes/api.ts')).toBe('controller');
-    });
-
-    it('returns service for service-like paths', () => {
-      expect(getLayerFromPath('src/services/UserService.ts')).toBe('service');
-      expect(getLayerFromPath('usecases/CreateUser.ts')).toBe('service');
-    });
-
-    it('returns repository for repository-like paths', () => {
-      expect(getLayerFromPath('src/repositories/UserRepo.ts')).toBe('repository');
-      expect(getLayerFromPath('dao/UserDAO.ts')).toBe('repository');
-    });
-
-    it('returns adapter for adapter-like paths', () => {
-      expect(getLayerFromPath('adapters/PaymentAdapter.ts')).toBe('adapter');
-      expect(getLayerFromPath('gateways/EmailGateway.ts')).toBe('adapter');
-      expect(getLayerFromPath('clients/ApiClient.ts')).toBe('adapter');
-    });
-
-    it('returns utility for utility-like paths', () => {
-      expect(getLayerFromPath('utils/string.ts')).toBe('utility');
-      expect(getLayerFromPath('helpers/format.ts')).toBe('utility');
-      expect(getLayerFromPath('lib/crypto.ts')).toBe('utility');
-    });
-
-    it('returns default for unrecognized paths', () => {
-      expect(getLayerFromPath('src/models/User.ts')).toBe('default');
-      expect(getLayerFromPath('components/Button.tsx')).toBe('default');
-      expect(getLayerFromPath('index.ts')).toBe('default');
-    });
-
-    it('is case insensitive', () => {
-      expect(getLayerFromPath('CONTROLLERS/User.ts')).toBe('controller');
-      expect(getLayerFromPath('Services/Auth.ts')).toBe('service');
     });
   });
 

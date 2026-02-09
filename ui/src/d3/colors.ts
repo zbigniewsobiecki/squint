@@ -24,18 +24,6 @@ export const HIERARCHY_COLORS = {
 };
 
 /**
- * Layer colors for module visualization
- */
-export const LAYER_COLORS: Record<string, { fill: string; stroke: string }> = {
-  controller: { fill: '#3d5a80', stroke: '#5a7a9a' },
-  service: { fill: '#5a3d80', stroke: '#7a5a9a' },
-  repository: { fill: '#3d8050', stroke: '#5a9a6a' },
-  adapter: { fill: '#806a3d', stroke: '#9a8a5a' },
-  utility: { fill: '#4a6670', stroke: '#6a8690' },
-  default: { fill: '#4a4a4a', stroke: '#6a6a6a' },
-};
-
-/**
  * Flow colors palette
  */
 export const FLOW_COLORS = ['#4fc1ff', '#ce9178', '#6a9955', '#c586c0', '#dcdcaa', '#9cdcfe', '#d7ba7d', '#b5cea8'];
@@ -79,31 +67,6 @@ export function getStrokeColor(d: d3.HierarchyNode<HierarchyNode>): string {
     return '#6a9955';
   }
   return '#3c3c3c';
-}
-
-/**
- * Get layer color for a module path
- */
-export function getLayerFromPath(path: string): keyof typeof LAYER_COLORS {
-  const lowerPath = path.toLowerCase();
-
-  if (lowerPath.includes('controller') || lowerPath.includes('handler') || lowerPath.includes('route')) {
-    return 'controller';
-  }
-  if (lowerPath.includes('service') || lowerPath.includes('usecase')) {
-    return 'service';
-  }
-  if (lowerPath.includes('repository') || lowerPath.includes('repo') || lowerPath.includes('dao')) {
-    return 'repository';
-  }
-  if (lowerPath.includes('adapter') || lowerPath.includes('gateway') || lowerPath.includes('client')) {
-    return 'adapter';
-  }
-  if (lowerPath.includes('util') || lowerPath.includes('helper') || lowerPath.includes('lib')) {
-    return 'utility';
-  }
-
-  return 'default';
 }
 
 /**

@@ -908,6 +908,262 @@ export class InteractionRepository {
   }
 
   // ============================================================
+  // Process Group Detection Methods
+  // ============================================================
+
+  /**
+   * Get all non-type-only, internal file import edges.
+   * Used to build the import graph for process group detection.
+   */
+  getRuntimeImportEdges(): Array<{ fromFileId: number; toFileId: number }> {
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT from_file_id as fromFileId, to_file_id as toFileId
+      FROM imports
+      WHERE to_file_id IS NOT NULL AND is_type_only = 0
+    `);
+
+    return stmt.all() as Array<{ fromFileId: number; toFileId: number }>;
+  }
+
+  /**
+   * Get file-to-module mapping via module_members → definitions → files.
+   * Returns a Map from fileId to moduleId.
+   */
+  getFileToModuleMap(): Map<number, number> {
+    ensureModulesTables(this.db);
+
+    const rows = this.db
+      .prepare(`
+        SELECT DISTINCT d.file_id, mm.module_id
+        FROM module_members mm
+        JOIN definitions d ON mm.definition_id = d.id
+      `)
+      .all() as Array<{ file_id: number; module_id: number }>;
+
+    const result = new Map<number, number>();
+    for (const row of rows) {
+      result.set(row.file_id, row.module_id);
+    }
+    return result;
+  }
+
+  // ============================================================
+  // Import Path & Validation Methods
+  // ============================================================
+
+  /**
+   * Check if any file in fromModule imports from any file in toModule.
+   * Join: module_members → definitions → files → imports → files → definitions → module_members
+   */
+  hasModuleImportPath(fromModuleId: number, toModuleId: number): boolean {
+    ensureModulesTables(this.db);
+
+    const stmt = this.db.prepare(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM module_members from_mm
+        JOIN definitions from_d ON from_mm.definition_id = from_d.id
+        JOIN files from_f ON from_d.file_id = from_f.id
+        JOIN imports i ON i.from_file_id = from_f.id
+        JOIN files to_f ON i.to_file_id = to_f.id
+        JOIN definitions to_d ON to_d.file_id = to_f.id
+        JOIN module_members to_mm ON to_mm.definition_id = to_d.id
+        WHERE from_mm.module_id = ? AND to_mm.module_id = ?
+      ) as has_path
+    `);
+
+    const row = stmt.get(fromModuleId, toModuleId) as { has_path: number };
+    return row.has_path === 1;
+  }
+
+  /**
+   * Get actual symbols that fromModule imports from toModule.
+   * Returns symbol names and kinds for enriching prompts and deriving `symbols` field.
+   */
+  getModuleImportedSymbols(
+    fromModuleId: number,
+    toModuleId: number
+  ): Array<{ name: string; kind: string }> {
+    ensureModulesTables(this.db);
+
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT to_d.name, to_d.kind
+      FROM module_members from_mm
+      JOIN definitions from_d ON from_mm.definition_id = from_d.id
+      JOIN files from_f ON from_d.file_id = from_f.id
+      JOIN imports imp ON imp.from_file_id = from_f.id
+      JOIN symbols s ON s.reference_id = imp.id AND s.definition_id IS NOT NULL
+      JOIN definitions to_d ON s.definition_id = to_d.id
+      JOIN module_members to_mm ON to_mm.definition_id = to_d.id
+      WHERE from_mm.module_id = ? AND to_mm.module_id = ?
+      ORDER BY to_d.name
+    `);
+
+    return stmt.all(fromModuleId, toModuleId) as Array<{ name: string; kind: string }>;
+  }
+
+  /**
+   * Validate all llm-inferred interactions.
+   * For same-process pairs: flags those with no import path.
+   * For separate-process pairs: skips import checks (runtime communication expected).
+   * Flags those where reverse direction has an AST interaction.
+   *
+   * @param isSameProcess - Function to check if two modules are in the same process group.
+   *   If not provided, all pairs are treated as same-process (conservative: apply import checks).
+   */
+  validateInferredInteractions(
+    isSameProcess?: (fromModuleId: number, toModuleId: number) => boolean
+  ): Array<{
+    interactionId: number;
+    fromModuleId: number;
+    toModuleId: number;
+    fromPath: string;
+    toPath: string;
+    issue: string;
+  }> {
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+
+    const inferred = this.getBySource('llm-inferred');
+    const issues: Array<{
+      interactionId: number;
+      fromModuleId: number;
+      toModuleId: number;
+      fromPath: string;
+      toPath: string;
+      issue: string;
+    }> = [];
+
+    for (const interaction of inferred) {
+      // Check if reverse direction has an AST interaction
+      const reverseInteraction = this.getByModules(interaction.toModuleId, interaction.fromModuleId);
+      if (reverseInteraction && reverseInteraction.source === 'ast') {
+        issues.push({
+          interactionId: interaction.id,
+          fromModuleId: interaction.fromModuleId,
+          toModuleId: interaction.toModuleId,
+          fromPath: interaction.fromModulePath,
+          toPath: interaction.toModulePath,
+          issue: `REVERSED: AST interaction exists in reverse direction (${interaction.toModulePath} → ${interaction.fromModulePath})`,
+        });
+        continue;
+      }
+
+      // Skip import checks for separate-process pairs (they communicate via runtime protocols)
+      const sameProcess = isSameProcess
+        ? isSameProcess(interaction.fromModuleId, interaction.toModuleId)
+        : true;
+
+      if (!sameProcess) continue;
+
+      // Same-process: check if no import path exists
+      const hasImports = this.hasModuleImportPath(interaction.fromModuleId, interaction.toModuleId);
+      if (!hasImports) {
+        // Check if reverse imports exist (direction confusion)
+        const hasReverseImports = this.hasModuleImportPath(interaction.toModuleId, interaction.fromModuleId);
+        if (hasReverseImports) {
+          issues.push({
+            interactionId: interaction.id,
+            fromModuleId: interaction.fromModuleId,
+            toModuleId: interaction.toModuleId,
+            fromPath: interaction.fromModulePath,
+            toPath: interaction.toModulePath,
+            issue: `DIRECTION_CONFUSED: No forward imports, but reverse imports exist (${interaction.toModulePath} imports from ${interaction.fromModulePath})`,
+          });
+        } else {
+          issues.push({
+            interactionId: interaction.id,
+            fromModuleId: interaction.fromModuleId,
+            toModuleId: interaction.toModuleId,
+            fromPath: interaction.fromModulePath,
+            toPath: interaction.toModulePath,
+            issue: 'NO_IMPORTS: No import path exists in either direction between these modules',
+          });
+        }
+      }
+    }
+
+    return issues;
+  }
+
+  /**
+   * Get detailed relationship annotation rows between two modules' members.
+   * Returns definition names, kinds, and semantics for each relationship.
+   */
+  getRelationshipDetailsForModulePair(
+    fromModuleId: number,
+    toModuleId: number
+  ): Array<{
+    fromName: string;
+    fromKind: string;
+    toName: string;
+    toKind: string;
+    semantic: string;
+    relationshipType: string;
+  }> {
+    ensureModulesTables(this.db);
+
+    const stmt = this.db.prepare(`
+      SELECT
+        from_d.name as fromName,
+        from_d.kind as fromKind,
+        to_d.name as toName,
+        to_d.kind as toKind,
+        ra.semantic,
+        ra.relationship_type as relationshipType
+      FROM relationship_annotations ra
+      JOIN module_members from_mm ON ra.from_definition_id = from_mm.definition_id
+      JOIN module_members to_mm ON ra.to_definition_id = to_mm.definition_id
+      JOIN definitions from_d ON ra.from_definition_id = from_d.id
+      JOIN definitions to_d ON ra.to_definition_id = to_d.id
+      WHERE from_mm.module_id = ? AND to_mm.module_id = ?
+      ORDER BY ra.relationship_type, from_d.name
+    `);
+
+    return stmt.all(fromModuleId, toModuleId) as Array<{
+      fromName: string;
+      fromKind: string;
+      toName: string;
+      toKind: string;
+      semantic: string;
+      relationshipType: string;
+    }>;
+  }
+
+  /**
+   * Check if an interaction exists in the reverse direction (toModuleId → fromModuleId).
+   */
+  hasReverseInteraction(fromModuleId: number, toModuleId: number): boolean {
+    ensureInteractionsTables(this.db);
+
+    const stmt = this.db.prepare(`
+      SELECT EXISTS (
+        SELECT 1 FROM interactions
+        WHERE from_module_id = ? AND to_module_id = ?
+      ) as has_reverse
+    `);
+
+    const row = stmt.get(toModuleId, fromModuleId) as { has_reverse: number };
+    return row.has_reverse === 1;
+  }
+
+  /**
+   * Get symbols from relationship annotations for a module pair.
+   * Fallback for deriving symbols when import data is unavailable.
+   */
+  getRelationshipSymbolsForPair(
+    fromModuleId: number,
+    toModuleId: number
+  ): string[] {
+    const details = this.getRelationshipDetailsForModulePair(fromModuleId, toModuleId);
+    const symbols = new Set<string>();
+    for (const d of details) {
+      symbols.add(d.toName);
+    }
+    return Array.from(symbols);
+  }
+
+  // ============================================================
   // Private helpers
   // ============================================================
 

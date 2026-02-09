@@ -77,6 +77,7 @@ export interface Interaction {
   pattern: string | null;
   symbols: string | null;
   semantic: string | null;
+  source: string;
 }
 
 export interface InteractionStats {
@@ -95,10 +96,18 @@ export interface RelationshipCoverage {
   coveragePercent: number;
 }
 
+export interface ProcessGroup {
+  id: number;
+  label: string;
+  moduleIds: number[];
+  moduleCount: number;
+}
+
 export interface InteractionsResponse {
   interactions: Interaction[];
   stats: InteractionStats;
   relationshipCoverage: RelationshipCoverage;
+  processGroups: { groups: ProcessGroup[]; groupCount: number };
 }
 
 // Flow types
