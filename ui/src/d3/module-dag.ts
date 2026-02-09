@@ -3,12 +3,7 @@ import type { DagModule } from '../types/api';
 
 export interface ModuleTreeNode extends DagModule {
   children: ModuleTreeNode[];
-  _width?: number;
-  _height?: number;
-  _isLeaf?: boolean;
-  _rows?: { children: ModuleTreeNode[]; width: number }[];
-  _x?: number;
-  _y?: number;
+  _value?: number;
 }
 
 export interface ModuleDagResult {
@@ -16,13 +11,6 @@ export interface ModuleDagResult {
   zoomGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
   svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any>;
 }
-
-// Layout constants
-const HEADER_HEIGHT = 28;
-const PADDING = 12;
-const MIN_LEAF_WIDTH = 100;
-const MIN_LEAF_HEIGHT = 50;
-const GAP = 8;
 
 // Branch hue palette for depth-1 subtrees
 const BRANCH_HUES: { hue: number; fillSat: number; strokeSat: number }[] = [
@@ -47,10 +35,18 @@ export function getBoxColors(depth: number, branchIndex: number): { fill: string
   };
 }
 
+function computeValue(node: ModuleTreeNode): number {
+  const childrenSum = node.children.reduce((s, c) => s + computeValue(c), 0);
+  node._value = node.memberCount + childrenSum;
+  if (node._value === 0) node._value = 1;
+  return node._value;
+}
+
 export function renderModuleDag(
   svgSelector: string,
   containerSelector: string,
-  modules: DagModule[]
+  modules: DagModule[],
+  onSelect?: (moduleId: number | null) => void
 ): ModuleDagResult | null {
   const modulePositions = new Map<number, { x: number; y: number; width: number; height: number }>();
 
@@ -89,116 +85,8 @@ export function renderModuleDag(
     rootModule = moduleById.get(modules[0].id)!;
   }
 
-  // Calculate sizes recursively
-  function calculateSize(node: ModuleTreeNode) {
-    if (node.children.length === 0) {
-      const textWidth = Math.max(MIN_LEAF_WIDTH, node.name.length * 7 + 20);
-      node._width = textWidth;
-      node._height = MIN_LEAF_HEIGHT;
-      node._isLeaf = true;
-      return;
-    }
-
-    for (const child of node.children) {
-      calculateSize(child);
-    }
-
-    const maxRowWidth = Math.min(800, width - 100);
-    const rows: { children: ModuleTreeNode[]; width: number }[] = [];
-    let currentRow: ModuleTreeNode[] = [];
-    let currentRowWidth = 0;
-
-    const sortedChildren = [...node.children].sort((a, b) => {
-      if (a._isLeaf && !b._isLeaf) return 1;
-      if (!a._isLeaf && b._isLeaf) return -1;
-      return (b._width || 0) - (a._width || 0);
-    });
-
-    for (const child of sortedChildren) {
-      if (currentRow.length > 0 && currentRowWidth + (child._width || 0) + GAP > maxRowWidth) {
-        rows.push({ children: currentRow, width: currentRowWidth });
-        currentRow = [];
-        currentRowWidth = 0;
-      }
-      currentRow.push(child);
-      currentRowWidth += (child._width || 0) + (currentRow.length > 1 ? GAP : 0);
-    }
-    if (currentRow.length > 0) {
-      rows.push({ children: currentRow, width: currentRowWidth });
-    }
-
-    node._rows = rows;
-
-    const contentWidth = Math.max(...rows.map((r) => r.width));
-    const contentHeight = rows.reduce((sum, row) => {
-      const rowHeight = Math.max(...row.children.map((c) => c._height || 0));
-      return sum + rowHeight + GAP;
-    }, 0);
-
-    node._width = contentWidth + PADDING * 2;
-    node._height = contentHeight + HEADER_HEIGHT + PADDING;
-  }
-
-  calculateSize(rootModule);
-
-  // Position nodes
-  function positionNodes(node: ModuleTreeNode, x: number, y: number) {
-    node._x = x;
-    node._y = y;
-
-    modulePositions.set(node.id, {
-      x: x,
-      y: y,
-      width: node._width || 0,
-      height: node._height || 0,
-    });
-
-    if (!node._rows) return;
-
-    let currentY = y + HEADER_HEIGHT;
-    for (const row of node._rows) {
-      let currentX = x + PADDING;
-      const rowHeight = Math.max(...row.children.map((c) => c._height || 0));
-
-      for (const child of row.children) {
-        positionNodes(child, currentX, currentY);
-        currentX += (child._width || 0) + GAP;
-      }
-      currentY += rowHeight + GAP;
-    }
-  }
-
-  const startX = (width - (rootModule._width || 0)) / 2;
-  const startY = (height - (rootModule._height || 0)) / 2;
-  positionNodes(rootModule, startX, startY);
-
-  // Create zoom group
-  const g = svg.append('g');
-
-  // Define arrowhead marker
-  svg
-    .append('defs')
-    .append('marker')
-    .attr('id', 'arrowhead')
-    .attr('viewBox', '0 -5 10 10')
-    .attr('refX', 8)
-    .attr('refY', 0)
-    .attr('markerWidth', 6)
-    .attr('markerHeight', 6)
-    .attr('orient', 'auto')
-    .append('path')
-    .attr('d', 'M0,-5L10,0L0,5')
-    .attr('fill', 'currentColor');
-
-  // Setup zoom
-  const zoom = d3
-    .zoom<SVGSVGElement, unknown>()
-    .scaleExtent([0.1, 4])
-    .on('zoom', (event) => {
-      g.attr('transform', event.transform.toString());
-    });
-
-  svg.call(zoom);
+  // Compute cumulative values
+  computeValue(rootModule);
 
   // Build branch index map: each depth-1 node gets a sibling index, propagated to descendants
   const branchIndexByModuleId = new Map<number, number>();
@@ -212,48 +100,155 @@ export function renderModuleDag(
     assignBranchIndex(rootModule.children[i], i);
   }
 
-  // Draw module boxes
-  function drawModuleBoxes(node: ModuleTreeNode, depth = 0) {
-    const isLeaf = node.children.length === 0;
-    const branchIndex = branchIndexByModuleId.get(node.id) ?? 0;
-    const colors = getBoxColors(depth, branchIndex);
-    const group = g
-      .append('g')
-      .attr('class', `module-box depth-${depth}${isLeaf ? ' leaf' : ''}`)
-      .attr('data-module-id', node.id);
+  // D3 pack layout
+  const size = Math.min(width, height);
+  const hierarchy = d3
+    .hierarchy(rootModule)
+    .sum((d) => (d.children.length === 0 ? (d._value ?? 1) : 0))
+    .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
 
-    group
-      .append('rect')
-      .attr('x', node._x || 0)
-      .attr('y', node._y || 0)
-      .attr('width', node._width || 0)
-      .attr('height', node._height || 0)
-      .attr('fill', colors.fill)
-      .attr('stroke', colors.stroke);
+  const pack = d3.pack<ModuleTreeNode>().size([size, size]).padding(3);
 
-    group
-      .append('text')
-      .attr('class', `module-box-header depth-${depth}`)
-      .attr('x', (node._x || 0) + PADDING)
-      .attr('y', (node._y || 0) + 18)
-      .text(node.name);
+  const root = pack(hierarchy);
 
-    if (node.memberCount > 0) {
-      group
-        .append('text')
-        .attr('class', 'module-box-count')
-        .attr('x', (node._x || 0) + (node._width || 0) - PADDING)
-        .attr('y', (node._y || 0) + 18)
-        .attr('text-anchor', 'end')
-        .text(`${node.memberCount}`);
-    }
-
-    for (const child of node.children) {
-      drawModuleBoxes(child, depth + 1);
-    }
+  // Color function for circles — all nodes use branch colors
+  function getCircleColor(d: d3.HierarchyCircularNode<ModuleTreeNode>): string {
+    const branchIndex = branchIndexByModuleId.get(d.data.id) ?? 0;
+    return getBoxColors(d.depth, branchIndex).fill;
   }
 
-  drawModuleBoxes(rootModule);
+  function getCircleStroke(d: d3.HierarchyCircularNode<ModuleTreeNode>): string {
+    const branchIndex = branchIndexByModuleId.get(d.data.id) ?? 0;
+    return getBoxColors(d.depth, branchIndex).stroke;
+  }
+
+  // Create zoom group
+  const g = svg.append('g');
+
+  // Populate modulePositions
+  for (const d of root.descendants()) {
+    modulePositions.set(d.data.id, {
+      x: d.x - d.r,
+      y: d.y - d.r,
+      width: d.r * 2,
+      height: d.r * 2,
+    });
+  }
+
+  // Separate layers: circles below, labels above (so labels aren't covered by circles)
+  const circleLayer = g.append('g').attr('class', 'circle-layer');
+  const labelLayer = g.append('g').attr('class', 'label-layer').style('pointer-events', 'none');
+
+  const descendants = root.descendants();
+
+  // Circle nodes (clickable)
+  const circleNode = circleLayer
+    .selectAll<SVGGElement, d3.HierarchyCircularNode<ModuleTreeNode>>('g')
+    .data(descendants)
+    .join('g')
+    .attr('class', (d) => {
+      const classes = ['module-circle'];
+      if (!d.children) classes.push('leaf');
+      return classes.join(' ');
+    })
+    .attr('data-module-id', (d) => d.data.id);
+
+  const circle = circleNode
+    .append('circle')
+    .attr('fill', (d) => getCircleColor(d))
+    .attr('stroke', (d) => getCircleStroke(d));
+
+  // Label nodes (non-interactive, rendered on top)
+  const labelNode = labelLayer
+    .selectAll<SVGGElement, d3.HierarchyCircularNode<ModuleTreeNode>>('g')
+    .data(descendants)
+    .join('g');
+
+  const label = labelNode
+    .append('text')
+    .attr('class', 'module-circle-label')
+    .style('display', (d) => (d.parent === root ? 'inline' : 'none'))
+    .style('fill-opacity', (d) => (d.parent === root ? 1 : 0))
+    .text((d) => d.data.name);
+
+  // Count labels for all non-root circles with symbols
+  const countLabel = labelNode
+    .filter((d) => d !== root && (d.data._value ?? 0) > 0)
+    .append('text')
+    .attr('class', 'module-circle-count')
+    .style('display', (d) => (d.parent === root ? 'inline' : 'none'))
+    .style('fill-opacity', (d) => (d.parent === root ? 1 : 0))
+    .attr('dy', '1.2em')
+    .text((d) => `${d.data._value ?? 0} symbols`);
+
+  // Click-to-zoom interaction
+  let focus = root;
+  let view: [number, number, number] = [root.x, root.y, root.r * 2];
+
+  function zoomTo(v: [number, number, number]) {
+    const k = size / v[2];
+    view = v;
+    const translate = (d: d3.HierarchyCircularNode<ModuleTreeNode>) =>
+      `translate(${(d.x - v[0]) * k + width / 2},${(d.y - v[1]) * k + height / 2})`;
+    circleNode.attr('transform', translate);
+    labelNode.attr('transform', translate);
+    circle.attr('r', (d) => d.r * k);
+  }
+
+  function zoom(_event: MouseEvent | null, d: d3.HierarchyCircularNode<ModuleTreeNode>) {
+    focus = d;
+
+    const transition = svg
+      .transition()
+      .duration(750)
+      .tween('zoom', () => {
+        const i = d3.interpolateZoom(view, [focus.x, focus.y, focus.r * 2]);
+        return (t: number) => zoomTo(i(t));
+      });
+
+    label
+      .filter(function (d) {
+        return d.parent === focus || (this as SVGTextElement).style.display === 'inline';
+      })
+      .transition(transition as any)
+      .style('fill-opacity', (d) => (d.parent === focus ? 1 : 0))
+      .on('start', function (d) {
+        if (d.parent === focus) (this as SVGTextElement).style.display = 'inline';
+      })
+      .on('end', function (d) {
+        if (d.parent !== focus) (this as SVGTextElement).style.display = 'none';
+      });
+
+    countLabel
+      .filter(function (d) {
+        return d.parent === focus || (this as SVGTextElement).style.display === 'inline';
+      })
+      .transition(transition as any)
+      .style('fill-opacity', (d) => (d.parent === focus ? 1 : 0))
+      .on('start', function (d) {
+        if (d.parent === focus) (this as SVGTextElement).style.display = 'inline';
+      })
+      .on('end', function (d) {
+        if (d.parent !== focus) (this as SVGTextElement).style.display = 'none';
+      });
+  }
+
+  // Click handlers
+  circleNode.on('click', (event, d) => {
+    if (d.children && focus !== d) {
+      zoom(event, d);
+    }
+    onSelect?.(d.data.id);
+    event.stopPropagation();
+  });
+
+  svg.on('click', () => {
+    zoom(null, root);
+    onSelect?.(null);
+  });
+
+  // Initial zoom
+  zoomTo([root.x, root.y, root.r * 2]);
 
   return { modulePositions, zoomGroup: g, svg };
 }

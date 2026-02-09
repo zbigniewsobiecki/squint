@@ -182,78 +182,32 @@ marker path {
   font-size: 12px;
 }
 
-/* Nested Module Boxes */
-.module-box {
+/* Circle Packing Module Nodes */
+.module-circle {
   cursor: pointer;
 }
-
-.module-box > rect {
-  rx: 8;
-  ry: 8;
+.module-circle circle {
   transition: stroke var(--transition-fast), stroke-width var(--transition-fast);
+  stroke-width: 1;
 }
-
-.module-box:hover > rect {
-  stroke-width: 3;
+.module-circle:hover circle {
+  stroke-width: 2;
 }
-
-.module-box.highlighted > rect {
-  stroke-width: 3;
-  filter: brightness(1.2);
-}
-
-/* Fill/stroke colors are applied inline by the renderer based on branch identity */
-
-.module-box-header {
-  font-size: 12px;
-  fill: var(--text-primary);
+.module-circle-label {
   font-weight: 600;
+  text-anchor: middle;
   pointer-events: none;
-}
-
-.module-box-header.depth-0 {
-  font-size: 16px;
-  fill: var(--text-secondary);
-}
-.module-box-header.depth-1 {
-  font-size: 14px;
   fill: var(--text-primary);
 }
-.module-box-header.depth-2 {
-  font-size: 12px;
-  fill: #c0c0c0;
-}
-.module-box-header.depth-3 {
-  font-size: 11px;
-  fill: #b0b0b0;
-}
-
-.module-box-count {
-  font-size: 9px;
+.module-circle-count {
+  font-size: 14px;
   fill: var(--text-muted);
+  text-anchor: middle;
   pointer-events: none;
 }
-
-/* Leaf module (no children) — fill/stroke applied inline */
-
-.module-box.leaf .module-box-header {
-  font-size: 10px;
-  fill: #b0b0b0;
-}
-
-/* Dimmed modules (not part of selected flow) */
-.module-box.module-dimmed rect {
-  opacity: 0.3;
-}
-
-.module-box.module-dimmed text {
-  opacity: 0.3;
-}
-
-.module-box.module-dimmed:hover rect,
-.module-box.module-dimmed:hover text {
-  opacity: 0.5;
-}
+/* Dimmed state (for flow highlighting) */
+.module-circle.module-dimmed circle { opacity: 0.3; }
+.module-circle.module-dimmed text { opacity: 0.3; }
 
 /* Flow Arrows */
 .flow-arrow {
@@ -325,11 +279,113 @@ marker path {
   position: relative;
   overflow: hidden;
   background: var(--bg-primary);
+  display: flex;
 }
 
 .modules-dag-container svg {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   height: 100%;
+}
+
+/* Modules Sidebar */
+.modules-sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-primary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modules-sidebar-placeholder {
+  padding: var(--spacing-lg);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  margin-top: var(--spacing-xl);
+}
+
+.modules-sidebar-header {
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.modules-sidebar-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 2px 0;
+}
+
+.modules-sidebar-path {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.modules-sidebar-desc {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  line-height: 1.4;
+}
+
+.modules-sidebar-members {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modules-sidebar-members-title {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.modules-sidebar-members-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-xs) 0;
+}
+
+.modules-sidebar-member {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  padding: 3px var(--spacing-lg);
+  font-size: 12px;
+}
+
+.modules-sidebar-member .member-kind {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  min-width: 48px;
+}
+
+.modules-sidebar-member .member-name {
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.modules-sidebar-member .member-from {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.modules-sidebar-empty {
+  padding: var(--spacing-lg);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 /* ==============================
