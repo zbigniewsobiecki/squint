@@ -175,10 +175,19 @@ export interface DagFlow {
   steps: DagFlowStep[];
 }
 
+export interface DagFeature {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  flowIds: number[];
+}
+
 export interface FlowsDagResponse {
   modules: DagModule[];
   edges: DagEdge[];
   flows: DagFlow[];
+  features: DagFeature[];
 }
 
 // Database stats types

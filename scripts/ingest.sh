@@ -47,3 +47,6 @@ wait_for_enter "modules done"
 wait_for_enter "interactions done"
 
 ./bin/dev.js llm flows -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+wait_for_enter "flows done"
+
+./bin/dev.js llm features -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"

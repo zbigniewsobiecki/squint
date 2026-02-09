@@ -168,6 +168,7 @@ describe('store', () => {
             { id: 2, name: 'Flow 2', stakeholder: null, description: null, stepCount: 3, steps: [], tier: 1 },
             { id: 3, name: 'Flow 3', stakeholder: null, description: null, stepCount: 1, steps: [], tier: 0 },
           ],
+          features: [],
         },
       });
 

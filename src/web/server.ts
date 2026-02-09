@@ -589,6 +589,13 @@ function getFlowsDagData(database: IndexDatabase): {
       toDefName: string | null;
     }>;
   }>;
+  features: Array<{
+    id: number;
+    name: string;
+    slug: string;
+    description: string | null;
+    flowIds: number[];
+  }>;
 } {
   try {
     // Get all modules
@@ -661,8 +668,26 @@ function getFlowsDagData(database: IndexDatabase): {
       };
     });
 
-    return { modules, edges, flows };
+    // Get features with their associated flow IDs
+    let features: Array<{ id: number; name: string; slug: string; description: string | null; flowIds: number[] }> = [];
+    try {
+      const allFeatures = database.getAllFeatures();
+      features = allFeatures.map((f) => {
+        const withFlows = database.getFeatureWithFlows(f.id);
+        return {
+          id: f.id,
+          name: f.name,
+          slug: f.slug,
+          description: f.description,
+          flowIds: withFlows ? withFlows.flows.map((fl) => fl.id) : [],
+        };
+      });
+    } catch {
+      // Features not available (e.g. llm features hasn't been run)
+    }
+
+    return { modules, edges, flows, features };
   } catch {
-    return { modules: [], edges: [], flows: [] };
+    return { modules: [], edges: [], flows: [], features: [] };
   }
 }

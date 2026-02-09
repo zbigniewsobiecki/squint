@@ -66,10 +66,21 @@ function renderFlowsDagView(store: Store) {
     const tierFlows = flowsDagData.flows.filter((f) => f.tier === tier);
     if (tierFlows.length === 0) continue;
 
-    // Group by stakeholder within the tier
+    // Group by feature within the tier (fall back to stakeholder if no features)
+    const flowIdToFeature = new Map<number, string>();
+    if (flowsDagData.features && flowsDagData.features.length > 0) {
+      for (const feature of flowsDagData.features) {
+        for (const flowId of feature.flowIds) {
+          flowIdToFeature.set(flowId, feature.name);
+        }
+      }
+    }
+    const hasFeatures = flowIdToFeature.size > 0;
     const flowsByDomain = new Map<string, DagFlow[]>();
     for (const flow of tierFlows) {
-      const domain = flow.stakeholder || 'Uncategorized';
+      const domain = hasFeatures
+        ? flowIdToFeature.get(flow.id) || 'Uncategorized'
+        : flow.stakeholder || 'Uncategorized';
       if (!flowsByDomain.has(domain)) {
         flowsByDomain.set(domain, []);
       }
@@ -88,7 +99,11 @@ function renderFlowsDagView(store: Store) {
         <div class="flow-tier-content">
     `;
 
-    const sortedDomains = [...flowsByDomain.keys()].sort();
+    const sortedDomains = [...flowsByDomain.keys()].sort((a, b) => {
+      if (a === 'Uncategorized') return 1;
+      if (b === 'Uncategorized') return -1;
+      return a.localeCompare(b);
+    });
     for (const domain of sortedDomains) {
       const flows = flowsByDomain.get(domain)!;
       sidebarHtml += `
