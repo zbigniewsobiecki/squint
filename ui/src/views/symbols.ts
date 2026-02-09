@@ -445,6 +445,7 @@ function renderNeighborhoodGraph(store: Store, symbolId: number) {
 
   // Click on neighbor node to navigate
   node.on('click', (_event, d) => {
+    tooltip.style('display', 'none');
     if (d.id !== symbolId) {
       selectSymbol(store, d.id);
       highlightSelected(d.id);

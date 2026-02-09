@@ -633,7 +633,7 @@ function getFlowsDagData(database: IndexDatabase): {
               interactionId: null,
               fromModuleId: step.fromModuleId as number,
               toModuleId: step.toModuleId as number,
-              semantic: null,
+              semantic: step.semantic ?? null,
               fromDefName: step.fromDefinitionName,
               toDefName: step.toDefinitionName,
             })),

@@ -343,6 +343,166 @@ describe('flow-tracer', () => {
       expect(flows).toHaveLength(2);
     });
 
+    it('bridges via inferred interaction at leaf', () => {
+      // Call graph: 10→20 (M1→M2), def 20 is leaf
+      // Inferred interaction: M2→M3, M3 has defs 30→40 (M3→M4)
+      const callGraph = new Map<number, number[]>();
+      callGraph.set(10, [20]); // M1→M2 via call graph
+      callGraph.set(30, [40]); // M3→M4 via call graph (reachable after bridge)
+
+      const modules = [
+        { id: 1, fullPath: 'mod.m1', members: [{ definitionId: 10 }] },
+        { id: 2, fullPath: 'mod.m2', members: [{ definitionId: 20 }] },
+        { id: 3, fullPath: 'mod.m3', members: [{ definitionId: 30 }] },
+        { id: 4, fullPath: 'mod.m4', members: [{ definitionId: 40 }] },
+      ];
+
+      const interactions = [
+        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'ast' }),
+        makeInteraction({ id: 101, fromModuleId: 2, toModuleId: 3, source: 'llm-inferred' }),
+        makeInteraction({ id: 102, fromModuleId: 3, toModuleId: 4, source: 'ast' }),
+      ];
+
+      const ctx = buildFlowTracingContext(callGraph, modules, interactions);
+      const tracer = new FlowTracer(ctx);
+
+      const atomics = [
+        makeAtomicFlow({ slug: 'm1-m2', interactionIds: [100] }),
+        makeAtomicFlow({ slug: 'm2-m3', interactionIds: [101] }),
+        makeAtomicFlow({ slug: 'm3-m4', interactionIds: [102] }),
+      ];
+
+      const entryPoints: EntryPointModuleInfo[] = [
+        {
+          moduleId: 1,
+          modulePath: 'mod.m1',
+          moduleName: 'M1',
+          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
+        },
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, atomics);
+      expect(flows).toHaveLength(1);
+      // All three module pairs should be covered
+      expect(flows[0].interactionIds).toContain(100); // M1→M2 (call graph)
+      expect(flows[0].interactionIds).toContain(101); // M2→M3 (inferred bridge)
+      expect(flows[0].interactionIds).toContain(102); // M3→M4 (call graph after bridge)
+      expect(flows[0].inferredSteps.length).toBeGreaterThan(0);
+      expect(flows[0].inferredSteps[0]).toEqual({
+        fromModuleId: 2,
+        toModuleId: 3,
+        source: 'llm-inferred',
+      });
+    });
+
+    it('no duplicate bridges from same module', () => {
+      // Two leaf defs (20, 21) in same module M2, both with inferred interaction to M3
+      const callGraph = new Map<number, number[]>();
+      callGraph.set(10, [20, 21]); // M1 calls both defs in M2
+
+      const modules = [
+        { id: 1, fullPath: 'mod.m1', members: [{ definitionId: 10 }] },
+        { id: 2, fullPath: 'mod.m2', members: [{ definitionId: 20 }, { definitionId: 21 }] },
+        { id: 3, fullPath: 'mod.m3', members: [{ definitionId: 30 }] },
+      ];
+
+      const interactions = [
+        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'ast' }),
+        makeInteraction({ id: 101, fromModuleId: 2, toModuleId: 3, source: 'llm-inferred' }),
+      ];
+
+      const ctx = buildFlowTracingContext(callGraph, modules, interactions);
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints: EntryPointModuleInfo[] = [
+        {
+          moduleId: 1,
+          modulePath: 'mod.m1',
+          moduleName: 'M1',
+          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
+        },
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
+      // Only one bridge step, not two
+      const bridgeSteps = flows[0].inferredSteps.filter(
+        (s) => s.fromModuleId === 2 && s.toModuleId === 3
+      );
+      expect(bridgeSteps).toHaveLength(1);
+    });
+
+    it('no bridge at non-leaf (definition has outgoing call graph edges)', () => {
+      // Def 20 has outgoing call graph edge (not a leaf), even though M2 has inferred interaction
+      const callGraph = new Map<number, number[]>();
+      callGraph.set(10, [20]);
+      callGraph.set(20, [30]); // Not a leaf
+
+      const modules = [
+        { id: 1, fullPath: 'mod.m1', members: [{ definitionId: 10 }] },
+        { id: 2, fullPath: 'mod.m2', members: [{ definitionId: 20 }] },
+        { id: 3, fullPath: 'mod.m3', members: [{ definitionId: 30 }] },
+        { id: 4, fullPath: 'mod.m4', members: [{ definitionId: 40 }] },
+      ];
+
+      const interactions = [
+        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'ast' }),
+        makeInteraction({ id: 101, fromModuleId: 2, toModuleId: 4, source: 'llm-inferred' }),
+        makeInteraction({ id: 102, fromModuleId: 2, toModuleId: 3, source: 'ast' }),
+      ];
+
+      const ctx = buildFlowTracingContext(callGraph, modules, interactions);
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints: EntryPointModuleInfo[] = [
+        {
+          moduleId: 1,
+          modulePath: 'mod.m1',
+          moduleName: 'M1',
+          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
+        },
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
+      // No inferred steps — def 20 is not a leaf
+      expect(flows[0].inferredSteps).toHaveLength(0);
+      // Should not contain the inferred interaction
+      expect(flows[0].interactionIds).not.toContain(101);
+    });
+
+    it('no infinite loop through bridge cycle', () => {
+      // M1 infers→M2, M2 infers→M1 — should terminate
+      const callGraph = new Map<number, number[]>();
+      // No call graph edges — both are leaves
+
+      const modules = [
+        { id: 1, fullPath: 'mod.m1', members: [{ definitionId: 10 }] },
+        { id: 2, fullPath: 'mod.m2', members: [{ definitionId: 20 }] },
+      ];
+
+      const interactions = [
+        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'llm-inferred' }),
+        makeInteraction({ id: 101, fromModuleId: 2, toModuleId: 1, source: 'llm-inferred' }),
+      ];
+
+      const ctx = buildFlowTracingContext(callGraph, modules, interactions);
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints: EntryPointModuleInfo[] = [
+        {
+          moduleId: 1,
+          modulePath: 'mod.m1',
+          moduleName: 'M1',
+          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
+        },
+      ];
+
+      // Should not hang
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
+      expect(flows).toHaveLength(1);
+      // Should have bridged at least one direction
+      expect(flows[0].inferredSteps.length).toBeGreaterThanOrEqual(1);
+    });
+
     it('does not perform BFS expansion — only uses definition-derived interactions', () => {
       // Chain: M1 → M2 → M3 → M4, but definition call graph only covers M1 → M2
       // The tracer should NOT expand beyond the definition graph

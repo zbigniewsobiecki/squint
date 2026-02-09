@@ -51,7 +51,7 @@ function renderFlowsDagView(store: Store) {
 
   // Group flows by tier, then by stakeholder/domain
   const tierNames: Record<number, string> = { 0: 'Atomic', 1: 'Operations', 2: 'Journeys' };
-  const tiers = [1, 2, 0]; // Show operations first, journeys, then atomics
+  const tiers = [1, 2]; // Show operations and journeys only (atomics are sub-steps)
 
   // Build sidebar HTML
   let sidebarHtml = '';
@@ -375,7 +375,7 @@ function renderSequenceDiagram(store: Store) {
         .attr('x', fromX + SELF_CALL_WIDTH + 8)
         .attr('y', y + SELF_CALL_HEIGHT / 2)
         .attr('dominant-baseline', 'central')
-        .text(step.toDefName || step.semantic || `Step ${stepIdx + 1}`);
+        .text(step.semantic || step.toDefName || `Step ${stepIdx + 1}`);
     } else {
       // Normal arrow between two lifelines
       const arrowMargin = 2;
@@ -400,7 +400,7 @@ function renderSequenceDiagram(store: Store) {
         .attr('x', labelX)
         .attr('y', y - 10)
         .attr('text-anchor', 'middle')
-        .text(step.toDefName || step.semantic || `Step ${stepIdx + 1}`);
+        .text(step.semantic || step.toDefName || `Step ${stepIdx + 1}`);
     }
 
     // Step number badge
@@ -543,7 +543,7 @@ function showFlowSteps(store: Store, flowId: number) {
         <div class="step-item step-tree" data-step-idx="${idx}">
           <div class="step-tree-header">
             <span class="step-number">${idx + 1}</span>
-            <span class="step-semantic">${step.toDefName || step.semantic || `Step ${idx + 1}`}</span>
+            <span class="step-semantic">${step.semantic || step.toDefName || `Step ${idx + 1}`}</span>
           </div>
           <div class="step-tree-path">
             <span class="step-module from">${step.fromDefName || fromModule?.name || 'Unknown'}</span>

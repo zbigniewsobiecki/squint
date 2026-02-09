@@ -289,6 +289,7 @@ export interface FlowDefinitionStepWithDetails extends FlowDefinitionStep {
   toLine: number;
   toModuleId: number | null;
   toModulePath: string | null;
+  semantic: string | null;
 }
 
 /**

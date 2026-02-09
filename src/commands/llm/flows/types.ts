@@ -81,6 +81,7 @@ export interface FlowTracingContext {
   interactionByModulePair: Map<string, number>;
   inferredFromModule: Map<number, InteractionWithPaths[]>;
   allInteractionsFromModule: Map<number, InteractionWithPaths[]>;
+  moduleToDefIds: Map<number, number[]>;
 }
 
 export interface LlmOptions {

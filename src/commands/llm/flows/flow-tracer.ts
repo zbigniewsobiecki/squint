@@ -10,6 +10,7 @@ import type {
   EntryPointModuleInfo,
   FlowSuggestion,
   FlowTracingContext,
+  InferredFlowStep,
   TracedDefinitionStep,
 } from './types.js';
 
@@ -40,7 +41,7 @@ export class FlowTracer {
 
     for (const entryPointModule of entryPointModules) {
       for (const member of entryPointModule.memberDefinitions) {
-        const definitionSteps = this.traceDefinitionFlow(member.id);
+        const { definitionSteps, inferredSteps } = this.traceDefinitionFlow(member.id);
         const derivedInteractionIds = this.deriveInteractionIds(definitionSteps);
 
         // Map interactions to subflow references
@@ -65,7 +66,7 @@ export class FlowTracer {
             description: `Flow starting from ${member.name} in ${entryPointModule.modulePath}`,
             interactionIds: derivedInteractionIds,
             definitionSteps,
-            inferredSteps: [],
+            inferredSteps,
             actionType: member.actionType,
             targetEntity: member.targetEntity,
             tier: 1,
@@ -80,10 +81,16 @@ export class FlowTracer {
 
   /**
    * Trace a flow from a starting definition through the definition-level call graph.
+   * At leaf nodes (no outgoing call graph edges), bridges via LLM-inferred interactions.
    */
-  private traceDefinitionFlow(startDefinitionId: number): TracedDefinitionStep[] {
+  private traceDefinitionFlow(startDefinitionId: number): {
+    definitionSteps: TracedDefinitionStep[];
+    inferredSteps: InferredFlowStep[];
+  } {
     const visited = new Set<number>();
+    const visitedBridgeModules = new Set<number>();
     const steps: TracedDefinitionStep[] = [];
+    const inferredSteps: InferredFlowStep[] = [];
 
     const trace = (
       defId: number,
@@ -112,11 +119,50 @@ export class FlowTracer {
         const nextKnownModule = this.context.defToModule.get(calledDefId) ?? fromModule;
         trace(calledDefId, depth + 1, nextKnownModule);
       }
+
+      // Bridge via inferred interactions at leaf nodes
+      if (calledDefs.length === 0) {
+        const leafModule = this.context.defToModule.get(defId) ?? lastKnownModule;
+        if (!leafModule) return;
+
+        const leafModuleId = leafModule.moduleId;
+        if (visitedBridgeModules.has(leafModuleId)) return;
+        visitedBridgeModules.add(leafModuleId);
+
+        const inferred = this.context.inferredFromModule.get(leafModuleId);
+        if (!inferred) return;
+
+        for (const interaction of inferred) {
+          const targetModuleId = interaction.toModuleId;
+          const targetDefs = this.context.moduleToDefIds.get(targetModuleId);
+          if (!targetDefs || targetDefs.length === 0) continue;
+
+          // Pick representative: first unvisited, fallback first
+          const representative = targetDefs.find((d) => !visited.has(d)) ?? targetDefs[0];
+
+          steps.push({
+            fromDefinitionId: defId,
+            toDefinitionId: representative,
+            fromModuleId: leafModuleId,
+            toModuleId: targetModuleId,
+          });
+
+          inferredSteps.push({
+            fromModuleId: leafModuleId,
+            toModuleId: targetModuleId,
+            source: 'llm-inferred',
+          });
+
+          // Continue tracing from the target definition
+          const targetModule = this.context.defToModule.get(representative) ?? null;
+          trace(representative, depth + 1, targetModule);
+        }
+      }
     };
 
     const startModule = this.context.defToModule.get(startDefinitionId) ?? null;
     trace(startDefinitionId, 0, startModule);
-    return steps;
+    return { definitionSteps: steps, inferredSteps };
   }
 
   /**
@@ -229,11 +275,17 @@ export function buildFlowTracingContext(
   }>,
   interactions: InteractionWithPaths[]
 ): FlowTracingContext {
-  // Build definition-to-module lookup
+  // Build definition-to-module lookup and reverse module-to-definitions lookup
   const defToModule = new Map<number, { moduleId: number; modulePath: string }>();
+  const moduleToDefIds = new Map<number, number[]>();
   for (const mod of allModulesWithMembers) {
+    const defIds: number[] = [];
     for (const member of mod.members) {
       defToModule.set(member.definitionId, { moduleId: mod.id, modulePath: mod.fullPath });
+      defIds.push(member.definitionId);
+    }
+    if (defIds.length > 0) {
+      moduleToDefIds.set(mod.id, defIds);
     }
   }
 
@@ -268,5 +320,6 @@ export function buildFlowTracingContext(
     interactionByModulePair,
     inferredFromModule,
     allInteractionsFromModule,
+    moduleToDefIds,
   };
 }

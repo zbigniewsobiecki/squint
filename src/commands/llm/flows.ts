@@ -23,6 +23,7 @@ import {
 } from './_shared/llm-utils.js';
 import {
   AtomicFlowBuilder,
+  deduplicateByInteractionOverlap,
   EntryPointDetector,
   FlowEnhancer,
   type FlowSuggestion,
@@ -363,6 +364,14 @@ export default class Flows extends Command {
             isJson
           );
         }
+      }
+
+      // Interaction-overlap dedup across all tiers
+      const preDedup = enhancedFlows.length;
+      enhancedFlows = deduplicateByInteractionOverlap(enhancedFlows);
+      const dedupRemoved = preDedup - enhancedFlows.length;
+      if (dedupRemoved > 0) {
+        logVerbose(this, `Interaction-overlap dedup removed ${dedupRemoved} flows`, verbose, isJson);
       }
 
       // Step 7: Persist all tiers (atomics first, then composites with subflow refs)
