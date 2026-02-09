@@ -45,6 +45,8 @@ export class GapFlowGenerator {
         inferredSteps: [], // Gap flows don't have inferred steps
         actionType: null,
         targetEntity: null,
+        tier: 0,
+        subflowSlugs: [],
       });
     }
 

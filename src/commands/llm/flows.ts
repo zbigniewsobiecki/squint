@@ -22,6 +22,7 @@ import {
   logWarning,
 } from './_shared/llm-utils.js';
 import {
+  AtomicFlowBuilder,
   EntryPointDetector,
   FlowEnhancer,
   type FlowSuggestion,
@@ -165,44 +166,62 @@ export default class Flows extends Command {
         this.log(chalk.gray('Gap flows will still be created for uncovered interactions.'));
       }
 
-      // Step 2: Trace flows from entry point modules using definition-level call graph
-      logStep(this, 2, 'Tracing Flows from Entry Point Modules (Definition-Level)', isJson);
+      // Step 2: Build atomic flows (deterministic, no LLM)
+      logStep(this, 2, 'Building Atomic Flows (Tier 0)', isJson);
 
       const interactions = db.getAllInteractions();
+      const allModules = db.getAllModules();
       const allModulesWithMembers = db.getAllModulesWithMembers();
-      const definitionCallGraph = db.getDefinitionCallGraphMap();
 
+      const atomicFlowBuilder = new AtomicFlowBuilder();
+      const atomicFlows = atomicFlowBuilder.buildAtomicFlows(interactions, allModules);
+
+      const atomicCoverage = new Set(atomicFlows.flatMap((f) => f.interactionIds));
+      const relevantInteractions = interactions.filter((i) => i.pattern !== 'test-internal');
+      const atomicCoverageCount = relevantInteractions.filter((i) => atomicCoverage.has(i.id)).length;
+      logVerbose(
+        this,
+        `Built ${atomicFlows.length} atomic flows covering ${atomicCoverageCount}/${relevantInteractions.length} relevant interactions`,
+        verbose,
+        isJson
+      );
+
+      // Step 3: Trace composite flows from entry points (tier 1)
+      logStep(this, 3, 'Tracing Composite Flows from Entry Points (Tier 1)', isJson);
+
+      const definitionCallGraph = db.getDefinitionCallGraphMap();
       const tracingContext = buildFlowTracingContext(definitionCallGraph, allModulesWithMembers, interactions);
       const flowTracer = new FlowTracer(tracingContext);
-      const flowSuggestions = flowTracer.traceFlowsFromEntryPoints(entryPointModules);
+      const flowSuggestions = flowTracer.traceFlowsFromEntryPoints(entryPointModules, atomicFlows);
 
-      logVerbose(this, `Traced ${flowSuggestions.length} potential flows with definition-level steps`, verbose, isJson);
+      logVerbose(this, `Traced ${flowSuggestions.length} composite flows`, verbose, isJson);
 
-      // Step 3: Use LLM to enhance flow metadata
-      logStep(this, 3, 'Enhancing Flow Metadata with LLM', isJson);
+      // Step 4: Enhance composite flow metadata with LLM (skip tier-0)
+      logStep(this, 4, 'Enhancing Composite Flow Metadata with LLM', isJson);
 
       const sharedFlowEnhancer = new FlowEnhancer(this, isJson);
-      let enhancedFlows: FlowSuggestion[] = [];
+      let enhancedFlows: FlowSuggestion[] = [...atomicFlows];
       if (flowSuggestions.length > 0) {
         try {
-          enhancedFlows = await sharedFlowEnhancer.enhanceFlowsWithLLM(
+          const enhanced = await sharedFlowEnhancer.enhanceFlowsWithLLM(
             flowSuggestions,
             interactions,
             model,
             llmOptions
           );
-          logVerbose(this, `Enhanced ${enhancedFlows.length} flows`, verbose, isJson);
+          enhancedFlows.push(...enhanced);
+          logVerbose(this, `Enhanced ${enhanced.length} composite flows`, verbose, isJson);
         } catch (error) {
           const message = getErrorMessage(error);
           if (!isJson) {
             this.log(chalk.yellow(`LLM enhancement failed: ${message}`));
           }
-          enhancedFlows = flowSuggestions;
+          enhancedFlows.push(...flowSuggestions);
         }
       }
 
-      // Step 4: Create gap flows for uncovered interactions
-      logStep(this, 4, 'Creating Gap Flows for Uncovered Interactions', isJson);
+      // Step 5: Create gap flows for uncovered interactions (tier 0)
+      logStep(this, 5, 'Creating Gap Flows for Uncovered Interactions', isJson);
 
       let coveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
       const gapFlowGenerator = new GapFlowGenerator();
@@ -211,8 +230,8 @@ export default class Flows extends Command {
 
       logVerbose(this, `Created ${gapFlows.length} gap flows for uncovered interactions`, verbose, isJson);
 
-      // Step 5: Validate flow completeness (LLM review) with auto-retry loop
-      logStep(this, 5, 'Validating Flow Completeness (LLM Review)', isJson);
+      // Step 6: Validate flow completeness (LLM review) with auto-retry loop
+      logStep(this, 6, 'Validating Flow Completeness (LLM Review)', isJson);
 
       const maxGateRetries = flags['max-gate-retries'];
       const thresholds = {
@@ -236,7 +255,8 @@ export default class Flows extends Command {
             model,
             llmOptions,
             gateResults?.failures,
-            entryPointModules
+            entryPointModules,
+            atomicFlows
           );
 
           // Post-validation gate: reject flows whose actionType doesn't exist in entry point definitions
@@ -345,8 +365,8 @@ export default class Flows extends Command {
         }
       }
 
-      // Step 6: Persist flows
-      logStep(this, 6, 'Persisting Flows', isJson);
+      // Step 7: Persist all tiers (atomics first, then composites with subflow refs)
+      logStep(this, 7, 'Persisting Flows', isJson);
 
       if (!dryRun && enhancedFlows.length > 0) {
         this.persistFlows(db, enhancedFlows, verbose, isJson);
@@ -361,11 +381,16 @@ export default class Flows extends Command {
 
   /**
    * Persist flows to the database.
+   * Persists tier-0 first (to get IDs), then tier-1+ with subflow step refs.
    */
   private persistFlows(db: IndexDatabase, flows: FlowSuggestion[], verbose: boolean, isJson: boolean): void {
     const usedSlugs = new Set<string>();
+    const slugToFlowId = new Map<string, number>();
 
-    for (const flow of flows) {
+    // Sort: tier-0 first, then tier-1, then tier-2
+    const sorted = [...flows].sort((a, b) => a.tier - b.tier);
+
+    for (const flow of sorted) {
       const slug = flow.slug;
       if (usedSlugs.has(slug)) {
         logVerbose(this, `  Skipping duplicate flow: ${flow.name} (slug: ${slug})`, verbose, isJson);
@@ -382,14 +407,17 @@ export default class Flows extends Command {
           description: flow.description,
           actionType: flow.actionType ?? undefined,
           targetEntity: flow.targetEntity ?? undefined,
+          tier: flow.tier,
         });
 
-        // Add module-level steps (for backward compatibility / architecture views)
+        slugToFlowId.set(slug, flowId);
+
+        // Add module-level steps
         if (flow.interactionIds.length > 0) {
           db.addFlowSteps(flowId, flow.interactionIds);
         }
 
-        // Add definition-level steps (for accurate user story tracing)
+        // Add definition-level steps
         if (flow.definitionSteps.length > 0) {
           db.addFlowDefinitionSteps(
             flowId,
@@ -398,6 +426,16 @@ export default class Flows extends Command {
               toDefinitionId: s.toDefinitionId,
             }))
           );
+        }
+
+        // Add subflow step references (for composite flows)
+        if (flow.subflowSlugs.length > 0) {
+          const subflowIds = flow.subflowSlugs
+            .map((s) => slugToFlowId.get(s))
+            .filter((id): id is number => id !== undefined);
+          if (subflowIds.length > 0) {
+            db.addFlowSubflowSteps(flowId, subflowIds);
+          }
         }
       } catch {
         if (verbose && !isJson) {

@@ -26,6 +26,8 @@ function makeFlow(overrides: Partial<FlowSuggestion> = {}): FlowSuggestion {
     inferredSteps: [],
     actionType: 'view',
     targetEntity: 'dashboard',
+    tier: 1,
+    subflowSlugs: [],
     ...overrides,
   };
 }

@@ -164,9 +164,9 @@ describe('store', () => {
           modules: [],
           edges: [],
           flows: [
-            { id: 1, name: 'Flow 1', stakeholder: null, description: null, stepCount: 2, steps: [] },
-            { id: 2, name: 'Flow 2', stakeholder: null, description: null, stepCount: 3, steps: [] },
-            { id: 3, name: 'Flow 3', stakeholder: null, description: null, stepCount: 1, steps: [] },
+            { id: 1, name: 'Flow 1', stakeholder: null, description: null, stepCount: 2, steps: [], tier: 1 },
+            { id: 2, name: 'Flow 2', stakeholder: null, description: null, stepCount: 3, steps: [], tier: 1 },
+            { id: 3, name: 'Flow 3', stakeholder: null, description: null, stepCount: 1, steps: [], tier: 0 },
           ],
         },
       });

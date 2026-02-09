@@ -175,6 +175,9 @@ export function ensureFlowsTables(db: Database.Database): void {
         entry_path TEXT,
         stakeholder TEXT,
         description TEXT,
+        action_type TEXT,
+        target_entity TEXT,
+        tier INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
@@ -194,6 +197,7 @@ export function ensureFlowsTables(db: Database.Database): void {
     if (hasEntryPointId.count === 0) {
       // Old schema detected - drop and recreate
       db.exec(`
+        DROP TABLE IF EXISTS flow_subflow_steps;
         DROP TABLE IF EXISTS flow_definition_steps;
         DROP TABLE IF EXISTS flow_steps;
         DROP TABLE IF EXISTS flows;
@@ -207,6 +211,9 @@ export function ensureFlowsTables(db: Database.Database): void {
           entry_path TEXT,
           stakeholder TEXT,
           description TEXT,
+          action_type TEXT,
+          target_entity TEXT,
+          tier INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -241,6 +248,14 @@ export function ensureFlowsTables(db: Database.Database): void {
         ALTER TABLE flows ADD COLUMN action_type TEXT;
         ALTER TABLE flows ADD COLUMN target_entity TEXT;
       `);
+    }
+
+    // Check for tier column
+    const hasTier = db.prepare("SELECT COUNT(*) as count FROM pragma_table_info('flows') WHERE name='tier'").get() as {
+      count: number;
+    };
+    if (hasTier.count === 0) {
+      db.exec('ALTER TABLE flows ADD COLUMN tier INTEGER NOT NULL DEFAULT 0');
     }
   }
 
@@ -283,6 +298,26 @@ export function ensureFlowsTables(db: Database.Database): void {
 
       CREATE INDEX idx_flow_def_steps_from ON flow_definition_steps(from_definition_id);
       CREATE INDEX idx_flow_def_steps_to ON flow_definition_steps(to_definition_id);
+    `);
+  }
+
+  // Ensure flow_subflow_steps table exists (subflow references for composite flows)
+  const flowSubflowStepsTableExists = db
+    .prepare(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='flow_subflow_steps'
+  `)
+    .get();
+
+  if (!flowSubflowStepsTableExists) {
+    db.exec(`
+      CREATE TABLE flow_subflow_steps (
+        flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+        step_order INTEGER NOT NULL,
+        subflow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+        PRIMARY KEY (flow_id, step_order)
+      );
+
+      CREATE INDEX idx_flow_subflow_steps_subflow ON flow_subflow_steps(subflow_id);
     `);
   }
 }

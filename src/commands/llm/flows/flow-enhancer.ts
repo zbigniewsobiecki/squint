@@ -25,10 +25,17 @@ export class FlowEnhancer {
     model: string,
     llmOptions: LlmOptions
   ): Promise<FlowSuggestion[]> {
+    // Separate tier-0 (atomic) flows — they keep deterministic names
+    const atomicFlows = flows.filter((f) => f.tier === 0);
+    const compositeFlows = flows.filter((f) => f.tier !== 0);
+
+    // If no composite flows to enhance, return all as-is
+    if (compositeFlows.length === 0) return flows;
+
     const interactionMap = new Map(interactions.map((i) => [i.id, i]));
 
     const systemPrompt = this.buildEnhancementSystemPrompt();
-    const userPrompt = this.buildEnhancementUserPrompt(flows, interactionMap);
+    const userPrompt = this.buildEnhancementUserPrompt(compositeFlows, interactionMap);
 
     const logOptions: LlmLogOptions = {
       showRequests: llmOptions.showLlmRequests,
@@ -46,7 +53,8 @@ export class FlowEnhancer {
 
     logLlmResponse(this.command, 'enhanceFlowsWithLLM', response, logOptions);
 
-    return this.parseEnhancedFlowsCSV(response, flows);
+    const enhanced = this.parseEnhancedFlowsCSV(response, compositeFlows);
+    return [...atomicFlows, ...enhanced];
   }
 
   private buildEnhancementSystemPrompt(): string {

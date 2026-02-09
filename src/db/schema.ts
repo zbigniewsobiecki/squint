@@ -241,7 +241,17 @@ export interface Flow {
   description: string | null;
   actionType: string | null;
   targetEntity: string | null;
+  tier: number; // 0 = atomic, 1 = operation, 2 = journey
   createdAt: string;
+}
+
+/**
+ * Subflow step: references a child flow within a composite flow
+ */
+export interface FlowSubflowStep {
+  flowId: number;
+  stepOrder: number;
+  subflowId: number;
 }
 
 /**

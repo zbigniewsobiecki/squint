@@ -36,7 +36,8 @@ export class FlowValidator {
     model: string,
     llmOptions: LlmOptions,
     gateFailures?: CoverageGateFailure[],
-    entryPointModules?: EntryPointModuleInfo[]
+    entryPointModules?: EntryPointModuleInfo[],
+    atomicFlows?: FlowSuggestion[]
   ): Promise<FlowSuggestion[]> {
     const modules = this.db.getAllModules();
     const moduleByPath = new Map(modules.map((m) => [m.fullPath, m]));
@@ -50,7 +51,8 @@ export class FlowValidator {
       modules,
       coveredInteractionIds,
       gateFailures,
-      entryPointModules
+      entryPointModules,
+      atomicFlows
     );
 
     const logOptions: LlmLogOptions = {
@@ -117,7 +119,8 @@ Only report flows where the module interactions to support them actually EXIST i
     modules: Module[],
     coveredInteractionIds: Set<number>,
     gateFailures?: CoverageGateFailure[],
-    entryPointModules?: EntryPointModuleInfo[]
+    entryPointModules?: EntryPointModuleInfo[],
+    atomicFlows?: FlowSuggestion[]
   ): string {
     const parts: string[] = [];
 
@@ -164,6 +167,19 @@ Only report flows where the module interactions to support them actually EXIST i
         parts.push(defs);
         parts.push('');
       }
+    }
+
+    // Available atomic flows
+    if (atomicFlows && atomicFlows.length > 0) {
+      parts.push('## Available Atomic Flows');
+      parts.push('You can compose flows by referencing these atomic building blocks:');
+      for (const af of atomicFlows) {
+        const interactionCount = af.interactionIds.length;
+        parts.push(
+          `- ${af.slug} (${interactionCount} interaction${interactionCount !== 1 ? 's' : ''}): ${af.description}`
+        );
+      }
+      parts.push('');
     }
 
     // Interaction graph summary with coverage annotations
@@ -294,16 +310,11 @@ Only report flows where the module interactions to support them actually EXIST i
         description: description.replace(/"/g, '').trim(),
         interactionIds,
         definitionSteps: [],
-        inferredSteps: interactionIds.map((id) => {
-          const inter = interactions.find((i) => i.id === id);
-          return {
-            fromModuleId: inter?.fromModuleId ?? 0,
-            toModuleId: inter?.toModuleId ?? 0,
-            source: 'llm-inferred' as const,
-          };
-        }),
+        inferredSteps: [],
         actionType: parsedAction,
         targetEntity: targetEntity.replace(/"/g, '').trim() || null,
+        tier: 1,
+        subflowSlugs: [],
       });
     }
 

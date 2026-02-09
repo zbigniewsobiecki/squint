@@ -71,6 +71,8 @@ export interface FlowSuggestion {
   inferredSteps: InferredFlowStep[];
   actionType: ActionType | null;
   targetEntity: string | null;
+  tier: 0 | 1 | 2;
+  subflowSlugs: string[];
 }
 
 export interface FlowTracingContext {

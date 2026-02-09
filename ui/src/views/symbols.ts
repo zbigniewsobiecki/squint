@@ -384,10 +384,7 @@ function renderNeighborhoodGraph(store: Store, symbolId: number) {
     .enter()
     .append('text')
     .attr('class', 'link-label')
-    .text((d) => {
-      const label = d.semantic || '';
-      return label.length > 25 ? `${label.substring(0, 22)}...` : label;
-    });
+    .text((d) => d.semantic || '');
 
   // Draw nodes
   const node = g

@@ -64,6 +64,8 @@ describe('GapFlowGenerator', () => {
       expect(flow.inferredSteps).toEqual([]);
       expect(flow.actionType).toBeNull();
       expect(flow.targetEntity).toBeNull();
+      expect(flow.tier).toBe(0);
+      expect(flow.subflowSlugs).toEqual([]);
       expect(flow.interactionIds).toEqual([1]);
     });
 

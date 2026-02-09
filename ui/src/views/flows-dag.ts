@@ -49,43 +49,74 @@ function renderFlowsDagView(store: Store) {
   const container = document.getElementById('graph-container');
   if (!container) return;
 
-  // Group flows by stakeholder/domain
-  const flowsByDomain = new Map<string, DagFlow[]>();
-  for (const flow of flowsDagData.flows) {
-    const domain = flow.stakeholder || 'Uncategorized';
-    if (!flowsByDomain.has(domain)) {
-      flowsByDomain.set(domain, []);
-    }
-    flowsByDomain.get(domain)!.push(flow);
-  }
-
-  const sortedDomains = [...flowsByDomain.keys()].sort();
+  // Group flows by tier, then by stakeholder/domain
+  const tierNames: Record<number, string> = { 0: 'Atomic', 1: 'Operations', 2: 'Journeys' };
+  const tiers = [1, 2, 0]; // Show operations first, journeys, then atomics
 
   // Build sidebar HTML
   let sidebarHtml = '';
   let flowIndex = 0;
-  for (const domain of sortedDomains) {
-    const flows = flowsByDomain.get(domain)!;
+  // Build global flow index for consistent colors
+  const flowColorMap = new Map<number, number>();
+  for (const flow of flowsDagData.flows) {
+    flowColorMap.set(flow.id, flowIndex++);
+  }
+
+  for (const tier of tiers) {
+    const tierFlows = flowsDagData.flows.filter((f) => f.tier === tier);
+    if (tierFlows.length === 0) continue;
+
+    // Group by stakeholder within the tier
+    const flowsByDomain = new Map<string, DagFlow[]>();
+    for (const flow of tierFlows) {
+      const domain = flow.stakeholder || 'Uncategorized';
+      if (!flowsByDomain.has(domain)) {
+        flowsByDomain.set(domain, []);
+      }
+      flowsByDomain.get(domain)!.push(flow);
+    }
+
+    const tierLabel = tierNames[tier] ?? `Tier ${tier}`;
+    const isCollapsed = tier === 0; // Atomics start collapsed
     sidebarHtml += `
-      <div class="flow-domain-group">
-        <div class="flow-domain-header">${domain}</div>
-        ${flows
-          .map((flow) => {
-            const color = getFlowColor(flowIndex);
-            flowIndex++;
-            const isSelected = state.selectedFlows.has(flow.id);
-            return `
-              <div class="flow-item${isSelected ? ' selected' : ''}" data-flow-id="${flow.id}">
-                <span class="flow-color-dot" style="background: ${color};"></span>
-                <div class="flow-item-content">
-                  <span class="flow-name" title="${flow.name}">${flow.name}</span>
-                  ${flow.description ? `<span class="flow-description">${flow.description}</span>` : ''}
+      <div class="flow-tier-group${isCollapsed ? ' collapsed' : ''}" data-tier="${tier}">
+        <div class="flow-tier-header" data-tier="${tier}">
+          <span class="tier-toggle">${isCollapsed ? '▶' : '▼'}</span>
+          <span class="tier-label">${tierLabel}</span>
+          <span class="tier-count">${tierFlows.length}</span>
+        </div>
+        <div class="flow-tier-content">
+    `;
+
+    const sortedDomains = [...flowsByDomain.keys()].sort();
+    for (const domain of sortedDomains) {
+      const flows = flowsByDomain.get(domain)!;
+      sidebarHtml += `
+        <div class="flow-domain-group">
+          <div class="flow-domain-header">${domain}</div>
+          ${flows
+            .map((flow) => {
+              const colorIdx = flowColorMap.get(flow.id) ?? 0;
+              const color = getFlowColor(colorIdx);
+              const isSelected = state.selectedFlows.has(flow.id);
+              return `
+                <div class="flow-item${isSelected ? ' selected' : ''}" data-flow-id="${flow.id}">
+                  <span class="flow-color-dot" style="background: ${color};"></span>
+                  <div class="flow-item-content">
+                    <span class="flow-name" title="${flow.name}">${flow.name}</span>
+                    ${flow.description ? `<span class="flow-description">${flow.description}</span>` : ''}
+                  </div>
+                  <span class="flow-step-count">${flow.stepCount}</span>
                 </div>
-                <span class="flow-step-count">${flow.stepCount}</span>
-              </div>
-            `;
-          })
-          .join('')}
+              `;
+            })
+            .join('')}
+        </div>
+      `;
+    }
+
+    sidebarHtml += `
+        </div>
       </div>
     `;
   }
@@ -419,6 +450,20 @@ function setupSidebarInteractions(store: Store) {
   document.getElementById('sidebar-expand-btn')?.addEventListener('click', () => {
     document.getElementById('flows-sidebar')?.classList.remove('collapsed');
     store.setState({ sidebarCollapsed: false });
+  });
+
+  // Tier header toggle
+  document.querySelectorAll('.flow-tier-header').forEach((header) => {
+    header.addEventListener('click', () => {
+      const group = header.closest('.flow-tier-group');
+      if (group) {
+        group.classList.toggle('collapsed');
+        const toggle = header.querySelector('.tier-toggle');
+        if (toggle) {
+          toggle.textContent = group.classList.contains('collapsed') ? '▶' : '▼';
+        }
+      }
+    });
   });
 
   // Flow item clicks

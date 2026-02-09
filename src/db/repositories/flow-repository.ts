@@ -8,6 +8,7 @@ import type {
   FlowDefinitionStepWithDetails,
   FlowStakeholder,
   FlowStep,
+  FlowSubflowStep,
   FlowWithDefinitionSteps,
   FlowWithSteps,
   InteractionWithPaths,
@@ -21,6 +22,7 @@ export interface FlowInsertOptions {
   description?: string;
   actionType?: string;
   targetEntity?: string;
+  tier?: number;
 }
 
 export interface FlowUpdateOptions {
@@ -54,8 +56,8 @@ export class FlowRepository {
     ensureFlowsTables(this.db);
 
     const stmt = this.db.prepare(`
-      INSERT INTO flows (name, slug, entry_point_module_id, entry_point_id, entry_path, stakeholder, description, action_type, target_entity)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO flows (name, slug, entry_point_module_id, entry_point_id, entry_path, stakeholder, description, action_type, target_entity, tier)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -67,7 +69,8 @@ export class FlowRepository {
       options?.stakeholder ?? null,
       options?.description ?? null,
       options?.actionType ?? null,
-      options?.targetEntity ?? null
+      options?.targetEntity ?? null,
+      options?.tier ?? 0
     );
 
     return result.lastInsertRowid as number;
@@ -90,6 +93,7 @@ export class FlowRepository {
         description,
         action_type as actionType,
         target_entity as targetEntity,
+        tier,
         created_at as createdAt
       FROM flows
       WHERE id = ?
@@ -115,6 +119,7 @@ export class FlowRepository {
         description,
         action_type as actionType,
         target_entity as targetEntity,
+        tier,
         created_at as createdAt
       FROM flows
       WHERE slug = ?
@@ -140,6 +145,7 @@ export class FlowRepository {
         description,
         action_type as actionType,
         target_entity as targetEntity,
+        tier,
         created_at as createdAt
       FROM flows
       ORDER BY name
@@ -164,6 +170,7 @@ export class FlowRepository {
         description,
         action_type as actionType,
         target_entity as targetEntity,
+        tier,
         created_at as createdAt
       FROM flows
       WHERE stakeholder = ?
@@ -189,6 +196,7 @@ export class FlowRepository {
         description,
         action_type as actionType,
         target_entity as targetEntity,
+        tier,
         created_at as createdAt
       FROM flows
       WHERE entry_point_id = ?
@@ -214,6 +222,7 @@ export class FlowRepository {
         description,
         action_type as actionType,
         target_entity as targetEntity,
+        tier,
         created_at as createdAt
       FROM flows
       WHERE entry_point_module_id = ?
@@ -589,6 +598,79 @@ export class FlowRepository {
   }
 
   // ============================================================
+  // Flow Subflow Steps Operations (composite flow references)
+  // ============================================================
+
+  /**
+   * Add subflow step references to a composite flow.
+   */
+  addSubflowSteps(flowId: number, subflowIds: number[]): void {
+    ensureFlowsTables(this.db);
+
+    const stmt = this.db.prepare(`
+      INSERT INTO flow_subflow_steps (flow_id, step_order, subflow_id)
+      VALUES (?, ?, ?)
+    `);
+
+    for (let i = 0; i < subflowIds.length; i++) {
+      stmt.run(flowId, i + 1, subflowIds[i]);
+    }
+  }
+
+  /**
+   * Get subflow steps for a composite flow.
+   */
+  getSubflowSteps(flowId: number): FlowSubflowStep[] {
+    ensureFlowsTables(this.db);
+    const stmt = this.db.prepare(`
+      SELECT
+        flow_id as flowId,
+        step_order as stepOrder,
+        subflow_id as subflowId
+      FROM flow_subflow_steps
+      WHERE flow_id = ?
+      ORDER BY step_order
+    `);
+    return stmt.all(flowId) as FlowSubflowStep[];
+  }
+
+  /**
+   * Clear all subflow steps from a flow.
+   */
+  clearSubflowSteps(flowId: number): number {
+    ensureFlowsTables(this.db);
+    const stmt = this.db.prepare('DELETE FROM flow_subflow_steps WHERE flow_id = ?');
+    const result = stmt.run(flowId);
+    return result.changes;
+  }
+
+  /**
+   * Get flows by tier.
+   */
+  getByTier(tier: number): Flow[] {
+    ensureFlowsTables(this.db);
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        name,
+        slug,
+        entry_point_module_id as entryPointModuleId,
+        entry_point_id as entryPointId,
+        entry_path as entryPath,
+        stakeholder,
+        description,
+        action_type as actionType,
+        target_entity as targetEntity,
+        tier,
+        created_at as createdAt
+      FROM flows
+      WHERE tier = ?
+      ORDER BY name
+    `);
+    return stmt.all(tier) as Flow[];
+  }
+
+  // ============================================================
   // Expansion and Statistics
   // ============================================================
 
@@ -611,6 +693,7 @@ export class FlowRepository {
         description: flowWithSteps.description,
         actionType: flowWithSteps.actionType,
         targetEntity: flowWithSteps.targetEntity,
+        tier: flowWithSteps.tier,
         createdAt: flowWithSteps.createdAt,
       },
       interactions: flowWithSteps.steps.map((s) => s.interaction),

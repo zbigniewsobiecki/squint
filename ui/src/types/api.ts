@@ -116,6 +116,7 @@ export interface Flow {
   entryPath: string | null;
   stakeholder: string | null;
   description: string | null;
+  tier: number;
   stepCount: number;
   steps: FlowStep[];
 }
@@ -169,6 +170,7 @@ export interface DagFlow {
   name: string;
   stakeholder: string | null;
   description: string | null;
+  tier: number;
   stepCount: number;
   steps: DagFlowStep[];
 }

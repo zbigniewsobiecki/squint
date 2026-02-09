@@ -1,6 +1,7 @@
 /**
  * FlowTracer - Definition-level call graph traversal.
- * Traces flows from entry point definitions through the call graph.
+ * Traces composite tier-1 flows from entry point definitions through the call graph,
+ * mapping interactions to atomic subflow references.
  */
 
 import type { InteractionWithPaths } from '../../../db/schema.js';
@@ -9,32 +10,51 @@ import type {
   EntryPointModuleInfo,
   FlowSuggestion,
   FlowTracingContext,
-  InferredFlowStep,
   TracedDefinitionStep,
 } from './types.js';
 
 export class FlowTracer {
   private readonly maxDepth = 15;
-  private readonly maxExpansionDepth = 3;
 
   constructor(private readonly context: FlowTracingContext) {}
 
   /**
-   * Trace flows from all entry point modules.
+   * Trace composite tier-1 flows from entry point modules.
+   * Maps definition-derived interactions to atomic subflow references.
    */
-  traceFlowsFromEntryPoints(entryPointModules: EntryPointModuleInfo[]): FlowSuggestion[] {
+  traceFlowsFromEntryPoints(
+    entryPointModules: EntryPointModuleInfo[],
+    atomicFlows: FlowSuggestion[]
+  ): FlowSuggestion[] {
+    // Build interaction-to-atomic-flow lookup
+    const interactionToAtomic = new Map<number, FlowSuggestion>();
+    for (const atomic of atomicFlows) {
+      for (const iId of atomic.interactionIds) {
+        if (!interactionToAtomic.has(iId)) {
+          interactionToAtomic.set(iId, atomic);
+        }
+      }
+    }
+
     const flowSuggestions: FlowSuggestion[] = [];
 
     for (const entryPointModule of entryPointModules) {
       for (const member of entryPointModule.memberDefinitions) {
         const definitionSteps = this.traceDefinitionFlow(member.id);
+        const derivedInteractionIds = this.deriveInteractionIds(definitionSteps);
 
-        const { extendedInteractionIds, inferredSteps } = this.extendWithInferredInteractions(definitionSteps);
+        // Map interactions to subflow references
+        const subflowSlugs: string[] = [];
+        const seen = new Set<string>();
+        for (const iId of derivedInteractionIds) {
+          const atomic = interactionToAtomic.get(iId);
+          if (atomic && !seen.has(atomic.slug)) {
+            seen.add(atomic.slug);
+            subflowSlugs.push(atomic.slug);
+          }
+        }
 
-        if (definitionSteps.length > 0 || inferredSteps.length > 0) {
-          const derivedInteractionIds = this.deriveInteractionIds(definitionSteps);
-          const allInteractionIds = [...derivedInteractionIds, ...extendedInteractionIds];
-
+        if (definitionSteps.length > 0 || derivedInteractionIds.length > 0) {
           flowSuggestions.push({
             name: this.generateFlowNameFromModule(entryPointModule, member),
             slug: this.generateFlowSlugFromModule(entryPointModule, member),
@@ -43,11 +63,13 @@ export class FlowTracer {
             entryPath: `${entryPointModule.modulePath}.${member.name}`,
             stakeholder: this.inferStakeholderFromModule(entryPointModule),
             description: `Flow starting from ${member.name} in ${entryPointModule.modulePath}`,
-            interactionIds: allInteractionIds,
+            interactionIds: derivedInteractionIds,
             definitionSteps,
-            inferredSteps,
+            inferredSteps: [],
             actionType: member.actionType,
             targetEntity: member.targetEntity,
+            tier: 1,
+            subflowSlugs,
           });
         }
       }
@@ -116,69 +138,6 @@ export class FlowTracer {
     }
 
     return result;
-  }
-
-  /**
-   * Extend traced definition steps with module-level interactions.
-   * Uses depth-limited BFS (maxExpansionDepth) to follow ALL interactions
-   * (both inferred and AST) from traced modules without unbounded snowballing.
-   * This ensures flows continue through backend layers after crossing the HTTP boundary.
-   */
-  private extendWithInferredInteractions(definitionSteps: TracedDefinitionStep[]): {
-    extendedInteractionIds: number[];
-    inferredSteps: InferredFlowStep[];
-  } {
-    const extendedInteractionIds: number[] = [];
-    const inferredSteps: InferredFlowStep[] = [];
-    const visitedModules = new Set<number>();
-    const addedInteractionIds = new Set<number>();
-
-    // Track interactions already covered by definition steps
-    for (const step of definitionSteps) {
-      if (step.fromModuleId && step.toModuleId) {
-        const key = `${step.fromModuleId}->${step.toModuleId}`;
-        const interactionId = this.context.interactionByModulePair.get(key);
-        if (interactionId) addedInteractionIds.add(interactionId);
-      }
-    }
-
-    // Collect modules from definition steps as depth-0 seeds
-    const tracedModules = new Set<number>();
-    for (const step of definitionSteps) {
-      if (step.fromModuleId) tracedModules.add(step.fromModuleId);
-      if (step.toModuleId) tracedModules.add(step.toModuleId);
-    }
-
-    const queue: Array<{ moduleId: number; depth: number }> = [];
-    for (const moduleId of tracedModules) {
-      queue.push({ moduleId, depth: 0 });
-    }
-
-    while (queue.length > 0) {
-      const { moduleId, depth } = queue.shift()!;
-      if (visitedModules.has(moduleId)) continue;
-      visitedModules.add(moduleId);
-
-      // Follow ALL interactions (inferred + AST) from every module
-      const allInteractions = this.context.allInteractionsFromModule.get(moduleId) ?? [];
-      for (const interaction of allInteractions) {
-        if (addedInteractionIds.has(interaction.id)) continue;
-        addedInteractionIds.add(interaction.id);
-
-        extendedInteractionIds.push(interaction.id);
-        inferredSteps.push({
-          fromModuleId: interaction.fromModuleId,
-          toModuleId: interaction.toModuleId,
-          source: 'llm-inferred',
-        });
-
-        if (depth + 1 <= this.maxExpansionDepth && !visitedModules.has(interaction.toModuleId)) {
-          queue.push({ moduleId: interaction.toModuleId, depth: depth + 1 });
-        }
-      }
-    }
-
-    return { extendedInteractionIds, inferredSteps };
   }
 
   /**
@@ -295,7 +254,7 @@ export function buildFlowTracingContext(
     }
   }
 
-  // Build lookup for ALL interactions by source module (for continuing traces)
+  // Build lookup for ALL interactions by source module
   const allInteractionsFromModule = new Map<number, InteractionWithPaths[]>();
   for (const interaction of interactions) {
     const existing = allInteractionsFromModule.get(interaction.fromModuleId) ?? [];

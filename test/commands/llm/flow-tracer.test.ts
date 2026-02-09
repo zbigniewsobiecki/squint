@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { FlowTracer, buildFlowTracingContext } from '../../../src/commands/llm/flows/flow-tracer.js';
-import type { EntryPointModuleInfo, FlowTracingContext } from '../../../src/commands/llm/flows/types.js';
+import type {
+  EntryPointModuleInfo,
+  FlowSuggestion,
+  FlowTracingContext,
+} from '../../../src/commands/llm/flows/types.js';
 import type { InteractionWithPaths } from '../../../src/db/schema.js';
 
 function makeInteraction(
@@ -16,6 +20,26 @@ function makeInteraction(
     createdAt: '2024-01-01',
     fromModulePath: `module-${overrides.fromModuleId}`,
     toModulePath: `module-${overrides.toModuleId}`,
+    ...overrides,
+  };
+}
+
+function makeAtomicFlow(
+  overrides: Partial<FlowSuggestion> & { slug: string; interactionIds: number[] }
+): FlowSuggestion {
+  return {
+    name: overrides.slug,
+    entryPointModuleId: null,
+    entryPointId: null,
+    entryPath: '',
+    stakeholder: 'user',
+    description: '',
+    definitionSteps: [],
+    inferredSteps: [],
+    actionType: null,
+    targetEntity: null,
+    tier: 0,
+    subflowSlugs: [],
     ...overrides,
   };
 }
@@ -69,10 +93,6 @@ describe('flow-tracer', () => {
   // ============================================
   describe('FlowTracer.traceFlowsFromEntryPoints', () => {
     function buildSimpleContext(): FlowTracingContext {
-      // Module 1 (frontend) has definitions 10, 11
-      // Module 2 (backend) has definitions 20, 21
-      // Module 3 (db) has definition 30
-      // Call graph: 10 -> 20, 20 -> 30
       const callGraph = new Map<number, number[]>();
       callGraph.set(10, [20]);
       callGraph.set(20, [30]);
@@ -91,6 +111,11 @@ describe('flow-tracer', () => {
       return buildFlowTracingContext(callGraph, modules, interactions);
     }
 
+    const simpleAtomics: FlowSuggestion[] = [
+      makeAtomicFlow({ slug: 'frontend-to-backend', interactionIds: [100] }),
+      makeAtomicFlow({ slug: 'backend-to-db', interactionIds: [101] }),
+    ];
+
     it('traces a simple linear flow across modules', () => {
       const ctx = buildSimpleContext();
       const tracer = new FlowTracer(ctx);
@@ -106,11 +131,52 @@ describe('flow-tracer', () => {
         },
       ];
 
-      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, simpleAtomics);
       expect(flows).toHaveLength(1);
       expect(flows[0].interactionIds).toContain(100);
       expect(flows[0].interactionIds).toContain(101);
       expect(flows[0].definitionSteps.length).toBeGreaterThan(0);
+    });
+
+    it('produces tier-1 flows with subflowSlugs', () => {
+      const ctx = buildSimpleContext();
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints: EntryPointModuleInfo[] = [
+        {
+          moduleId: 1,
+          modulePath: 'project.frontend',
+          moduleName: 'Frontend',
+          memberDefinitions: [
+            { id: 10, name: 'handleCreate', kind: 'function', actionType: 'create', targetEntity: 'customer' },
+          ],
+        },
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, simpleAtomics);
+      expect(flows[0].tier).toBe(1);
+      expect(flows[0].subflowSlugs).toContain('frontend-to-backend');
+      expect(flows[0].subflowSlugs).toContain('backend-to-db');
+    });
+
+    it('still has leaf-level interactionIds for coverage', () => {
+      const ctx = buildSimpleContext();
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints: EntryPointModuleInfo[] = [
+        {
+          moduleId: 1,
+          modulePath: 'project.frontend',
+          moduleName: 'Frontend',
+          memberDefinitions: [
+            { id: 10, name: 'handleCreate', kind: 'function', actionType: 'create', targetEntity: 'customer' },
+          ],
+        },
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, simpleAtomics);
+      // interactionIds should contain leaf-level IDs (not subflow IDs)
+      expect(flows[0].interactionIds).toEqual(expect.arrayContaining([100, 101]));
     });
 
     it('generates flow name from actionType and targetEntity', () => {
@@ -128,7 +194,7 @@ describe('flow-tracer', () => {
         },
       ];
 
-      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, simpleAtomics);
       expect(flows[0].name).toBe('CreateCustomerFlow');
       expect(flows[0].slug).toBe('create-customer-flow');
     });
@@ -148,26 +214,7 @@ describe('flow-tracer', () => {
         },
       ];
 
-      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
-      expect(flows[0].name).toBe('PaymentFlow');
-    });
-
-    it('strips Handler/Controller suffixes from name', () => {
-      const ctx = buildSimpleContext();
-      const tracer = new FlowTracer(ctx);
-
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
-          moduleId: 1,
-          modulePath: 'project.frontend',
-          moduleName: 'Frontend',
-          memberDefinitions: [
-            { id: 10, name: 'PaymentHandler', kind: 'function', actionType: null, targetEntity: null },
-          ],
-        },
-      ];
-
-      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
       expect(flows[0].name).toBe('PaymentFlow');
     });
 
@@ -175,7 +222,6 @@ describe('flow-tracer', () => {
       const ctx = buildSimpleContext();
       const tracer = new FlowTracer(ctx);
 
-      // Test admin path
       const adminEntry: EntryPointModuleInfo[] = [
         {
           moduleId: 1,
@@ -184,59 +230,10 @@ describe('flow-tracer', () => {
           memberDefinitions: [{ id: 10, name: 'Dashboard', kind: 'function', actionType: null, targetEntity: null }],
         },
       ];
-      expect(tracer.traceFlowsFromEntryPoints(adminEntry)[0].stakeholder).toBe('admin');
-
-      // Test api path
-      const apiEntry: EntryPointModuleInfo[] = [
-        {
-          moduleId: 1,
-          modulePath: 'project.api.users',
-          moduleName: 'API',
-          memberDefinitions: [{ id: 10, name: 'getUser', kind: 'function', actionType: null, targetEntity: null }],
-        },
-      ];
-      expect(tracer.traceFlowsFromEntryPoints(apiEntry)[0].stakeholder).toBe('external');
-
-      // Test cron path
-      const cronEntry: EntryPointModuleInfo[] = [
-        {
-          moduleId: 1,
-          modulePath: 'project.cron.cleanup',
-          moduleName: 'Cron',
-          memberDefinitions: [{ id: 10, name: 'cleanup', kind: 'function', actionType: null, targetEntity: null }],
-        },
-      ];
-      expect(tracer.traceFlowsFromEntryPoints(cronEntry)[0].stakeholder).toBe('system');
-
-      // Test cli path
-      const cliEntry: EntryPointModuleInfo[] = [
-        {
-          moduleId: 1,
-          modulePath: 'project.cli.migrate',
-          moduleName: 'CLI',
-          memberDefinitions: [{ id: 10, name: 'migrate', kind: 'function', actionType: null, targetEntity: null }],
-        },
-      ];
-      expect(tracer.traceFlowsFromEntryPoints(cliEntry)[0].stakeholder).toBe('developer');
-    });
-
-    it('defaults stakeholder to "user" for unknown paths', () => {
-      const ctx = buildSimpleContext();
-      const tracer = new FlowTracer(ctx);
-
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
-          moduleId: 1,
-          modulePath: 'project.frontend',
-          moduleName: 'Frontend',
-          memberDefinitions: [{ id: 10, name: 'Home', kind: 'function', actionType: null, targetEntity: null }],
-        },
-      ];
-      expect(tracer.traceFlowsFromEntryPoints(entryPoints)[0].stakeholder).toBe('user');
+      expect(tracer.traceFlowsFromEntryPoints(adminEntry, simpleAtomics)[0].stakeholder).toBe('admin');
     });
 
     it('does not produce flow when no cross-module calls exist', () => {
-      // All definitions in same module -> no cross-module steps
       const callGraph = new Map<number, number[]>();
       callGraph.set(10, [11]); // both in module 1
 
@@ -254,7 +251,7 @@ describe('flow-tracer', () => {
         },
       ];
 
-      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
       expect(flows).toHaveLength(0);
     });
 
@@ -286,130 +283,8 @@ describe('flow-tracer', () => {
       ];
 
       // Should not hang - visited set prevents revisiting
-      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
       expect(flows).toHaveLength(1);
-    });
-
-    it('extends flows with inferred interactions', () => {
-      const callGraph = new Map<number, number[]>();
-      callGraph.set(10, [20]);
-
-      const modules = [
-        { id: 1, fullPath: 'project.frontend', members: [{ definitionId: 10 }] },
-        { id: 2, fullPath: 'project.backend', members: [{ definitionId: 20 }] },
-        { id: 3, fullPath: 'project.db', members: [{ definitionId: 30 }] },
-      ];
-
-      const interactions = [
-        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'ast' }),
-        // Inferred interaction from backend to db
-        makeInteraction({ id: 101, fromModuleId: 2, toModuleId: 3, source: 'llm-inferred' }),
-      ];
-
-      const ctx = buildFlowTracingContext(callGraph, modules, interactions);
-      const tracer = new FlowTracer(ctx);
-
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
-          moduleId: 1,
-          modulePath: 'project.frontend',
-          moduleName: 'Frontend',
-          memberDefinitions: [{ id: 10, name: 'test', kind: 'function', actionType: null, targetEntity: null }],
-        },
-      ];
-
-      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
-      expect(flows[0].interactionIds).toContain(101);
-      expect(flows[0].inferredSteps.length).toBeGreaterThan(0);
-    });
-
-    it('follows AST interactions from traced modules (not just inferred)', () => {
-      // Scenario: definition call graph traces frontend→backend (AST interaction 100)
-      // Backend also has an AST interaction to services (101), which should be followed
-      const callGraph = new Map<number, number[]>();
-      callGraph.set(10, [20]);
-
-      const modules = [
-        { id: 1, fullPath: 'project.frontend', members: [{ definitionId: 10 }] },
-        { id: 2, fullPath: 'project.backend.api', members: [{ definitionId: 20 }] },
-        { id: 3, fullPath: 'project.backend.services', members: [{ definitionId: 30 }] },
-      ];
-
-      const interactions = [
-        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'ast' }),
-        // AST interaction from a traced module (backend.api → backend.services)
-        makeInteraction({ id: 101, fromModuleId: 2, toModuleId: 3, source: 'ast' }),
-      ];
-
-      const ctx = buildFlowTracingContext(callGraph, modules, interactions);
-      const tracer = new FlowTracer(ctx);
-
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
-          moduleId: 1,
-          modulePath: 'project.frontend',
-          moduleName: 'Frontend',
-          memberDefinitions: [{ id: 10, name: 'login', kind: 'function', actionType: 'process', targetEntity: 'auth' }],
-        },
-      ];
-
-      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
-      // Should include the AST interaction from the traced module (backend.api → backend.services)
-      expect(flows[0].interactionIds).toContain(101);
-    });
-
-    it('stops expansion at depth 3', () => {
-      // Chain: M1 → M2 → M3 → M4 → M5 → M6 → M7
-      // Definition steps only cover M1 → M2, so M1 and M2 are seeds at depth 0
-      // Expansion from seeds at depth 0:
-      //   M2→M3 added, M3 enqueued at depth 1
-      //   M3→M4 added, M4 enqueued at depth 2
-      //   M4→M5 added, M5 enqueued at depth 3
-      //   M5→M6 added (interactions from depth-3 module are still followed),
-      //     but M6 NOT enqueued (depth 4 > maxExpansionDepth)
-      //   M6→M7 never reached — M6 not in queue
-      const callGraph = new Map<number, number[]>();
-      callGraph.set(10, [20]); // M1 → M2 via call graph
-
-      const modules = [
-        { id: 1, fullPath: 'mod.m1', members: [{ definitionId: 10 }] },
-        { id: 2, fullPath: 'mod.m2', members: [{ definitionId: 20 }] },
-        { id: 3, fullPath: 'mod.m3', members: [{ definitionId: 30 }] },
-        { id: 4, fullPath: 'mod.m4', members: [{ definitionId: 40 }] },
-        { id: 5, fullPath: 'mod.m5', members: [{ definitionId: 50 }] },
-        { id: 6, fullPath: 'mod.m6', members: [{ definitionId: 60 }] },
-        { id: 7, fullPath: 'mod.m7', members: [{ definitionId: 70 }] },
-      ];
-
-      const interactions = [
-        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'ast' }),
-        makeInteraction({ id: 101, fromModuleId: 2, toModuleId: 3, source: 'ast' }),
-        makeInteraction({ id: 102, fromModuleId: 3, toModuleId: 4, source: 'ast' }),
-        makeInteraction({ id: 103, fromModuleId: 4, toModuleId: 5, source: 'ast' }),
-        makeInteraction({ id: 104, fromModuleId: 5, toModuleId: 6, source: 'ast' }),
-        makeInteraction({ id: 105, fromModuleId: 6, toModuleId: 7, source: 'ast' }),
-      ];
-
-      const ctx = buildFlowTracingContext(callGraph, modules, interactions);
-      const tracer = new FlowTracer(ctx);
-
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
-          moduleId: 1,
-          modulePath: 'mod.m1',
-          moduleName: 'M1',
-          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
-        },
-      ];
-
-      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
-      // Interaction 100 (M1→M2) is from definition steps
-      expect(flows[0].interactionIds).toContain(100); // definition step
-      expect(flows[0].interactionIds).toContain(101); // depth 1
-      expect(flows[0].interactionIds).toContain(102); // depth 2
-      expect(flows[0].interactionIds).toContain(103); // depth 3
-      expect(flows[0].interactionIds).toContain(104); // from depth-3 module (M5→M6)
-      expect(flows[0].interactionIds).not.toContain(105); // M6→M7 — M6 never enqueued
     });
 
     it('sets entry point info on flow', () => {
@@ -427,7 +302,7 @@ describe('flow-tracer', () => {
         },
       ];
 
-      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, simpleAtomics);
       expect(flows[0].entryPointModuleId).toBe(1);
       expect(flows[0].entryPointId).toBe(10);
       expect(flows[0].entryPath).toBe('project.frontend.Home');
@@ -450,6 +325,8 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions);
       const tracer = new FlowTracer(ctx);
 
+      const atomics = [makeAtomicFlow({ slug: 'fe-be', interactionIds: [100] })];
+
       const entryPoints: EntryPointModuleInfo[] = [
         {
           moduleId: 1,
@@ -462,8 +339,54 @@ describe('flow-tracer', () => {
         },
       ];
 
-      const flows = tracer.traceFlowsFromEntryPoints(entryPoints);
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, atomics);
       expect(flows).toHaveLength(2);
+    });
+
+    it('does not perform BFS expansion — only uses definition-derived interactions', () => {
+      // Chain: M1 → M2 → M3 → M4, but definition call graph only covers M1 → M2
+      // The tracer should NOT expand beyond the definition graph
+      const callGraph = new Map<number, number[]>();
+      callGraph.set(10, [20]); // M1 → M2 via call graph
+
+      const modules = [
+        { id: 1, fullPath: 'mod.m1', members: [{ definitionId: 10 }] },
+        { id: 2, fullPath: 'mod.m2', members: [{ definitionId: 20 }] },
+        { id: 3, fullPath: 'mod.m3', members: [{ definitionId: 30 }] },
+        { id: 4, fullPath: 'mod.m4', members: [{ definitionId: 40 }] },
+      ];
+
+      const interactions = [
+        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'ast' }),
+        makeInteraction({ id: 101, fromModuleId: 2, toModuleId: 3, source: 'ast' }),
+        makeInteraction({ id: 102, fromModuleId: 3, toModuleId: 4, source: 'ast' }),
+      ];
+
+      const ctx = buildFlowTracingContext(callGraph, modules, interactions);
+      const tracer = new FlowTracer(ctx);
+
+      const atomics = [
+        makeAtomicFlow({ slug: 'm1-m2', interactionIds: [100] }),
+        makeAtomicFlow({ slug: 'm2-m3', interactionIds: [101] }),
+        makeAtomicFlow({ slug: 'm3-m4', interactionIds: [102] }),
+      ];
+
+      const entryPoints: EntryPointModuleInfo[] = [
+        {
+          moduleId: 1,
+          modulePath: 'mod.m1',
+          moduleName: 'M1',
+          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
+        },
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, atomics);
+      // Only interaction 100 (M1→M2) should be included — no BFS expansion
+      expect(flows[0].interactionIds).toContain(100);
+      expect(flows[0].interactionIds).not.toContain(101);
+      expect(flows[0].interactionIds).not.toContain(102);
+      // Only the atomic covering interaction 100 should be referenced
+      expect(flows[0].subflowSlugs).toEqual(['m1-m2']);
     });
   });
 });

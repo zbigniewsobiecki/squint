@@ -19,6 +19,7 @@ import {
   type FlowDefinitionStep,
   type FlowStakeholder,
   type FlowStep,
+  type FlowSubflowStep,
   type FlowWithDefinitionSteps,
   type FlowWithSteps,
   type IIndexWriter,
@@ -756,6 +757,24 @@ export class IndexDatabase implements IIndexWriter {
 
   getFlowDefinitionStepCount(flowId: number): number {
     return this.flows.getDefinitionStepCount(flowId);
+  }
+
+  // Flow Subflow Steps Operations
+
+  addFlowSubflowSteps(flowId: number, subflowIds: number[]): void {
+    this.flows.addSubflowSteps(flowId, subflowIds);
+  }
+
+  getFlowSubflowSteps(flowId: number): FlowSubflowStep[] {
+    return this.flows.getSubflowSteps(flowId);
+  }
+
+  clearFlowSubflowSteps(flowId: number): number {
+    return this.flows.clearSubflowSteps(flowId);
+  }
+
+  getFlowsByTier(tier: number): Flow[] {
+    return this.flows.getByTier(tier);
   }
 
   // Definition-Level Call Graph

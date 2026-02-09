@@ -31,6 +31,7 @@ export {
   type InteractionWithPaths,
   type Flow,
   type FlowStep,
+  type FlowSubflowStep,
   type FlowWithSteps,
   type FlowStakeholder,
   type FlowTreeNode,

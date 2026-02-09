@@ -520,6 +520,7 @@ function getFlowsData(database: IndexDatabase): {
           entryPath: flow.entryPath,
           stakeholder: flow.stakeholder,
           description: flow.description,
+          tier: flow.tier,
           stepCount: steps.length,
           steps: steps.map((step) => ({
             stepOrder: step.stepOrder,
@@ -577,6 +578,7 @@ function getFlowsDagData(database: IndexDatabase): {
     name: string;
     stakeholder: string | null;
     description: string | null;
+    tier: number;
     stepCount: number;
     steps: Array<{
       interactionId: number | null;
@@ -623,6 +625,7 @@ function getFlowsDagData(database: IndexDatabase): {
           name: flow.name,
           stakeholder: flow.stakeholder,
           description: flow.description,
+          tier: flow.tier,
           stepCount: defSteps.length,
           steps: defSteps
             .filter((step) => step.fromModuleId != null && step.toModuleId != null)
@@ -645,6 +648,7 @@ function getFlowsDagData(database: IndexDatabase): {
         name: flow.name,
         stakeholder: flow.stakeholder,
         description: flow.description,
+        tier: flow.tier,
         stepCount: steps.length,
         steps: steps.map((step) => ({
           interactionId: step.interactionId,
