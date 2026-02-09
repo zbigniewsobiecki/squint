@@ -1,6 +1,8 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { parseContent } from '../../src/parser/ast-parser.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { parseContent, parseFile, parseFiles } from '../../src/parser/ast-parser.js';
 
 describe('parseContent', () => {
   it('parses TypeScript content and extracts definitions', () => {
@@ -156,5 +158,181 @@ export type UserId = string;
 
     const userIdDef = result.definitions.find((d) => d.name === 'UserId');
     expect(userIdDef?.kind).toBe('type');
+  });
+
+  it('extracts internal usages of local definitions', () => {
+    const content = `
+function helper() {
+  return 42;
+}
+
+export function main() {
+  return helper();
+}
+`;
+    const filePath = '/project/utils.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.internalUsages.length).toBeGreaterThanOrEqual(1);
+    const helperUsage = result.internalUsages.find((u) => u.definitionName === 'helper');
+    expect(helperUsage).toBeDefined();
+    expect(helperUsage?.usages.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('extracts enum definitions', () => {
+    const content = `
+export enum Color {
+  Red = 'red',
+  Blue = 'blue',
+}
+`;
+    const filePath = '/project/enums.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.definitions).toHaveLength(1);
+    expect(result.definitions[0].name).toBe('Color');
+    expect(result.definitions[0].kind).toBe('enum');
+    expect(result.definitions[0].isExported).toBe(true);
+  });
+
+  it('extracts arrow function definitions', () => {
+    const content = `
+export const multiply = (a: number, b: number): number => a * b;
+`;
+    const filePath = '/project/math.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.definitions).toHaveLength(1);
+    expect(result.definitions[0].name).toBe('multiply');
+    expect(result.definitions[0].isExported).toBe(true);
+  });
+
+  it('handles empty files', () => {
+    const content = '';
+    const filePath = '/project/empty.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: 0, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.definitions).toEqual([]);
+    expect(result.references).toEqual([]);
+    expect(result.internalUsages).toEqual([]);
+    expect(result.sizeBytes).toBe(0);
+  });
+
+  it('handles files with only comments', () => {
+    const content = `
+// This is a comment
+/* Multi-line
+   comment */
+`;
+    const filePath = '/project/comments.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.definitions).toEqual([]);
+  });
+});
+
+describe('parseFile', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-parser-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('parses a real TypeScript file from disk', async () => {
+    const filePath = path.join(tmpDir, 'test.ts');
+    fs.writeFileSync(filePath, `export function greet(name: string): string { return 'Hello ' + name; }`);
+
+    const result = await parseFile(filePath);
+
+    expect(result.language).toBe('typescript');
+    expect(result.definitions).toHaveLength(1);
+    expect(result.definitions[0].name).toBe('greet');
+    expect(result.sizeBytes).toBeGreaterThan(0);
+    expect(result.modifiedAt).toBeTruthy();
+  });
+
+  it('parses a JavaScript file from disk', async () => {
+    const filePath = path.join(tmpDir, 'test.js');
+    fs.writeFileSync(filePath, 'function add(a, b) { return a + b; }');
+
+    const result = await parseFile(filePath);
+
+    expect(result.language).toBe('javascript');
+    expect(result.definitions).toHaveLength(1);
+    expect(result.definitions[0].name).toBe('add');
+  });
+
+  it('resolves imports using knownFiles', async () => {
+    const utilsPath = path.join(tmpDir, 'utils.ts');
+    const mainPath = path.join(tmpDir, 'main.ts');
+    fs.writeFileSync(utilsPath, 'export function helper() { return 1; }');
+    fs.writeFileSync(mainPath, `import { helper } from './utils';\nhelper();`);
+
+    const result = await parseFile(mainPath, new Set([utilsPath]));
+
+    expect(result.references).toHaveLength(1);
+    expect(result.references[0].resolvedPath).toBe(utilsPath);
+  });
+});
+
+describe('parseFiles', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-parser-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('parses multiple files and returns a map', async () => {
+    const file1 = path.join(tmpDir, 'a.ts');
+    const file2 = path.join(tmpDir, 'b.ts');
+    fs.writeFileSync(file1, 'export function foo() {}');
+    fs.writeFileSync(file2, 'export function bar() {}');
+
+    const results = await parseFiles([file1, file2]);
+
+    expect(results.size).toBe(2);
+    expect(results.get(file1)?.definitions[0].name).toBe('foo');
+    expect(results.get(file2)?.definitions[0].name).toBe('bar');
+  });
+
+  it('cross-resolves imports between parsed files', async () => {
+    const utilsPath = path.join(tmpDir, 'utils.ts');
+    const mainPath = path.join(tmpDir, 'main.ts');
+    fs.writeFileSync(utilsPath, 'export function helper() { return 1; }');
+    fs.writeFileSync(mainPath, `import { helper } from './utils';\nhelper();`);
+
+    const results = await parseFiles([utilsPath, mainPath]);
+
+    const mainResult = results.get(mainPath);
+    expect(mainResult?.references).toHaveLength(1);
+    expect(mainResult?.references[0].resolvedPath).toBe(utilsPath);
+  });
+
+  it('returns empty map for empty input', async () => {
+    const results = await parseFiles([]);
+    expect(results.size).toBe(0);
   });
 });

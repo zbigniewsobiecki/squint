@@ -191,7 +191,7 @@ export function buildFlowConstructionUserPrompt(contexts: FlowConstructionContex
   // List existing flows for context
   if (contexts.length > 0 && contexts[0].existingFlows.length > 0) {
     parts.push('## Existing Flows');
-    for (const flow of contexts[0].existingFlows.slice(0, 10)) {
+    for (const flow of contexts[0].existingFlows) {
       const desc = flow.description ? `: ${flow.description}` : '';
       parts.push(`- ${flow.name}${desc}`);
     }
@@ -218,28 +218,22 @@ export function buildFlowConstructionUserPrompt(contexts: FlowConstructionContex
 
     // Show neighborhood nodes
     parts.push('**Call Graph Neighborhood:**');
-    for (const node of ctx.neighborhood.nodes.slice(0, 20)) {
+    for (const node of ctx.neighborhood.nodes) {
       const purpose = node.purpose ? ` - "${node.purpose}"` : '';
       const role = node.role ? ` [${node.role}]` : '';
       parts.push(`- #${node.id}: ${node.name} (${node.kind})${role}${purpose}`);
-    }
-    if (ctx.neighborhood.nodes.length > 20) {
-      parts.push(`  ... and ${ctx.neighborhood.nodes.length - 20} more nodes`);
     }
     parts.push('');
 
     // Show edges with semantic annotations
     parts.push('**Call Relationships:**');
-    for (const edge of ctx.neighborhood.edges.slice(0, 20)) {
+    for (const edge of ctx.neighborhood.edges) {
       const fromNode = ctx.neighborhood.nodes.find((n) => n.id === edge.fromId);
       const toNode = ctx.neighborhood.nodes.find((n) => n.id === edge.toId);
       if (fromNode && toNode) {
         const semantic = edge.semantic ? `: "${edge.semantic}"` : '';
         parts.push(`- ${fromNode.name} (#${edge.fromId}) → ${toNode.name} (#${edge.toId})${semantic}`);
       }
-    }
-    if (ctx.neighborhood.edges.length > 20) {
-      parts.push(`  ... and ${ctx.neighborhood.edges.length - 20} more edges`);
     }
     parts.push('');
   }
@@ -339,7 +333,7 @@ export function buildGapFillingUserPrompt(context: GapFillingContext): string {
   parts.push(`## Uncovered Important Symbols (${context.uncoveredSymbols.length})`);
   parts.push('');
 
-  for (const sym of context.uncoveredSymbols.slice(0, 30)) {
+  for (const sym of context.uncoveredSymbols) {
     parts.push(`### #${sym.id}: ${sym.name} (${sym.kind})`);
     parts.push(`File: ${sym.filePath}`);
     parts.push(`Connectivity: ${sym.incomingDeps} incoming, ${sym.outgoingDeps} outgoing`);
@@ -353,11 +347,6 @@ export function buildGapFillingUserPrompt(context: GapFillingContext): string {
     if (sym.role) {
       parts.push(`Role: ${sym.role}`);
     }
-    parts.push('');
-  }
-
-  if (context.uncoveredSymbols.length > 30) {
-    parts.push(`... and ${context.uncoveredSymbols.length - 30} more uncovered symbols`);
     parts.push('');
   }
 

@@ -15,7 +15,7 @@ import type {
 export interface InteractionInsertOptions {
   direction?: 'uni' | 'bi';
   weight?: number;
-  pattern?: 'utility' | 'business';
+  pattern?: 'utility' | 'business' | 'test-internal';
   symbols?: string[];
   semantic?: string;
   source?: InteractionSource;
@@ -23,7 +23,7 @@ export interface InteractionInsertOptions {
 
 export interface InteractionUpdateOptions {
   direction?: 'uni' | 'bi';
-  pattern?: 'utility' | 'business';
+  pattern?: 'utility' | 'business' | 'test-internal';
   symbols?: string[];
   semantic?: string;
 }
@@ -581,6 +581,10 @@ export class InteractionRepository {
     // Convert to EnrichedModuleCallEdge with classification
     const result: EnrichedModuleCallEdge[] = [];
 
+    // Get test module IDs for test-internal classification
+    const testModuleRows = this.db.prepare('SELECT id FROM modules WHERE is_test = 1').all() as Array<{ id: number }>;
+    const testModuleIds = new Set(testModuleRows.map((r) => r.id));
+
     for (const edge of edgeMap.values()) {
       const calledSymbols = Array.from(edge.symbols.values()).sort((a, b) => b.callCount - a.callCount);
 
@@ -589,9 +593,15 @@ export class InteractionRepository {
       const distinctCallers = edge.callers.size;
       const isHighFrequency = edge.weight > 10;
 
-      // Classify edge as utility or business logic
-      const hasClassCall = calledSymbols.some((s) => s.kind === 'class');
-      const isLikelyUtility = isHighFrequency && distinctCallers >= 3 && avgCallsPerSymbol > 3 && !hasClassCall;
+      // Classify edge: test-internal if both modules are test, otherwise utility/business
+      let edgePattern: 'utility' | 'business' | 'test-internal';
+      if (testModuleIds.has(edge.fromModuleId) && testModuleIds.has(edge.toModuleId)) {
+        edgePattern = 'test-internal';
+      } else {
+        const hasClassCall = calledSymbols.some((s) => s.kind === 'class');
+        const isLikelyUtility = isHighFrequency && distinctCallers >= 3 && avgCallsPerSymbol > 3 && !hasClassCall;
+        edgePattern = isLikelyUtility ? 'utility' : 'business';
+      }
 
       result.push({
         fromModuleId: edge.fromModuleId,
@@ -603,7 +613,7 @@ export class InteractionRepository {
         avgCallsPerSymbol,
         distinctCallers,
         isHighFrequency,
-        edgePattern: isLikelyUtility ? 'utility' : 'business',
+        edgePattern,
         minUsageLine: edge.minUsageLine,
       });
     }
@@ -792,6 +802,47 @@ export class InteractionRepository {
     }
 
     return result;
+  }
+
+  /**
+   * Get cross-module relationship pairs that have no corresponding interaction.
+   * These are module pairs with symbol-level relationships but no detected interaction.
+   */
+  getUncoveredModulePairs(): Array<{
+    fromModuleId: number;
+    toModuleId: number;
+    fromPath: string;
+    toPath: string;
+    relationshipCount: number;
+  }> {
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT mm1.module_id as fromModuleId, mm2.module_id as toModuleId,
+             m1.full_path as fromPath, m2.full_path as toPath,
+             COUNT(*) as relationshipCount
+      FROM relationship_annotations ra
+      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
+      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
+      JOIN modules m1 ON mm1.module_id = m1.id
+      JOIN modules m2 ON mm2.module_id = m2.id
+      WHERE mm1.module_id != mm2.module_id
+        AND NOT EXISTS (
+          SELECT 1 FROM interactions i
+          WHERE i.from_module_id = mm1.module_id AND i.to_module_id = mm2.module_id
+        )
+      GROUP BY mm1.module_id, mm2.module_id
+      ORDER BY relationshipCount DESC
+    `);
+
+    return stmt.all() as Array<{
+      fromModuleId: number;
+      toModuleId: number;
+      fromPath: string;
+      toPath: string;
+      relationshipCount: number;
+    }>;
   }
 
   /**

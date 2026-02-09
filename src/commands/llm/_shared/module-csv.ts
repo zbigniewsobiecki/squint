@@ -37,6 +37,7 @@ export interface ModuleDefinitionRow {
   slug: string;
   name: string;
   description: string;
+  isTest: boolean;
 }
 
 export interface TreeParseResult {
@@ -46,7 +47,8 @@ export interface TreeParseResult {
 
 /**
  * Parse Phase 1 LLM response (tree structure).
- * Expected CSV format: type,parent_path,slug,name,description
+ * Expected CSV format: type,parent_path,slug,name,description,is_test
+ * Also accepts legacy 5-column format without is_test.
  */
 export function parseTreeCsv(content: string): TreeParseResult {
   const modules: ModuleDefinitionRow[] = [];
@@ -68,13 +70,13 @@ export function parseTreeCsv(content: string): TreeParseResult {
   // Parse header
   const headerLine = lines[0];
   const header = parseRow(headerLine);
-  if (!header || header.length !== 5) {
-    errors.push(`Invalid header row: expected "type,parent_path,slug,name,description", got "${headerLine}"`);
+  if (!header || (header.length !== 5 && header.length !== 6)) {
+    errors.push(`Invalid header row: expected "type,parent_path,slug,name,description,is_test", got "${headerLine}"`);
     return { modules, errors };
   }
 
-  const expectedHeaders = ['type', 'parent_path', 'slug', 'name', 'description'];
   const normalizedHeaders = header.map((h) => h.toLowerCase().trim().replace(/_/g, '_'));
+  const hasIsTestColumn = header.length === 6;
 
   // Check headers (allow some flexibility)
   const headerOk =
@@ -82,12 +84,18 @@ export function parseTreeCsv(content: string): TreeParseResult {
     (normalizedHeaders[1] === 'parent_path' || normalizedHeaders[1] === 'parentpath') &&
     normalizedHeaders[2] === 'slug' &&
     normalizedHeaders[3] === 'name' &&
-    (normalizedHeaders[4] === 'description' || normalizedHeaders[4] === 'desc');
+    (normalizedHeaders[4] === 'description' || normalizedHeaders[4] === 'desc') &&
+    (!hasIsTestColumn || normalizedHeaders[5] === 'is_test' || normalizedHeaders[5] === 'istest');
 
   if (!headerOk) {
+    const expectedHeaders = hasIsTestColumn
+      ? ['type', 'parent_path', 'slug', 'name', 'description', 'is_test']
+      : ['type', 'parent_path', 'slug', 'name', 'description'];
     errors.push(`Invalid header columns: expected "${expectedHeaders.join(',')}", got "${header.join(',')}"`);
     return { modules, errors };
   }
+
+  const expectedColCount = hasIsTestColumn ? 6 : 5;
 
   // Parse data rows
   for (let i = 1; i < lines.length; i++) {
@@ -100,12 +108,20 @@ export function parseTreeCsv(content: string): TreeParseResult {
       continue;
     }
 
-    if (parsed.length !== 5) {
-      errors.push(`Line ${i + 1}: Expected 5 columns, got ${parsed.length}: ${line.substring(0, 50)}...`);
+    if (parsed.length !== expectedColCount) {
+      errors.push(
+        `Line ${i + 1}: Expected ${expectedColCount} columns, got ${parsed.length}: ${line.substring(0, 50)}...`
+      );
       continue;
     }
 
-    const [rowType, parentPath, slug, name, description] = parsed.map((v) => v.trim());
+    const trimmed = parsed.map((v) => v.trim());
+    const rowType = trimmed[0];
+    const parentPath = trimmed[1];
+    const slug = trimmed[2];
+    const name = trimmed[3];
+    const description = trimmed[4];
+    const isTestStr = hasIsTestColumn ? trimmed[5] : 'false';
 
     if (rowType !== 'module') {
       errors.push(`Line ${i + 1}: Unknown type "${rowType}", expected "module"`);
@@ -134,6 +150,7 @@ export function parseTreeCsv(content: string): TreeParseResult {
       slug,
       name,
       description: description || '',
+      isTest: isTestStr.toLowerCase() === 'true',
     });
   }
 

@@ -39,14 +39,25 @@ The tree should reflect logical groupings of functionality, not just mirror the 
 Respond with **only** a CSV table:
 
 \`\`\`csv
-type,parent_path,slug,name,description
-module,project,frontend,"Frontend","UI components and screens"
-module,project,backend,"Backend","Server-side logic and APIs"
-module,project.frontend,screens,"Screens","Application screens"
-module,project.frontend,components,"Components","Reusable UI components"
-module,project.backend,services,"Services","Business logic services"
-module,project.backend,api,"API","HTTP endpoint handlers"
+type,parent_path,slug,name,description,is_test
+module,project,frontend,"Frontend","UI components and screens",false
+module,project,backend,"Backend","Server-side logic and APIs",false
+module,project,testing,"Testing","Test utilities and helpers",true
+module,project.frontend,screens,"Screens","Application screens",false
+module,project.frontend,components,"Components","Reusable UI components",false
+module,project.backend,services,"Services","Business logic services",false
+module,project.backend,api,"API","HTTP endpoint handlers",false
+module,project.testing,factories,"Test Factories","Mock data generators for tests",true
 \`\`\`
+
+## Test Classification
+For each module, set is_test to "true" if the module exists solely to support testing:
+- Test utilities, mock factories, fixture generators, test helpers
+- Test data builders, spec runners, integration test support
+- Anything that wouldn't ship in a production build
+
+Set is_test to "false" for all production code modules.
+Test classification is inherited: if a parent is test, children should also be test.
 
 ## Slug Rules
 - Must start with lowercase letter
@@ -66,7 +77,26 @@ module,project.backend,api,"API","HTTP endpoint handlers"
   - backend.api.controllers.users (not just backend.api.controllers)
   - backend.api.controllers.products
   - backend.services.user-management
-  This enables accurate per-entity flow tracing.`;
+  This enables accurate per-entity flow tracing.
+
+## Business Domain Parity (CRITICAL)
+- Every business entity domain MUST be a first-class branch.
+  If the codebase has customers, vehicles, and sales — each gets equal treatment.
+  Do NOT bury one domain under "Infrastructure" or "Misc" while others get their own branch.
+  The domains list below tells you which business entities exist — ensure each one appears
+  in the tree at the same structural level.
+
+## Test Code Segregation
+- Test/spec code MUST go in its own top-level branch (e.g., project.testing).
+  Do NOT mix test helpers, mocks, fixtures, or data generators into business domain branches.
+  Use the symbol names, file paths, purposes, and domain tags to determine what is test code —
+  look for test utilities, mock factories, fixture generators, and spec helpers.
+
+## Infrastructure Scope
+- The "infrastructure" or "utility" branch should ONLY contain true cross-cutting concerns:
+  database connections, logging, configuration, error handling base classes.
+  Business logic services, controllers, and routes are NOT infrastructure —
+  they belong under their respective business domain branches.`;
 }
 
 /**
@@ -86,20 +116,17 @@ export function buildTreeUserPrompt(context: TreeGenerationContext): string {
   for (const domain of context.domains) {
     parts.push(`### ${domain.domain} (${domain.count} symbols)`);
     parts.push('Sample symbols:');
-    for (const sym of domain.sampleSymbols.slice(0, 5)) {
+    for (const sym of domain.sampleSymbols) {
       const roleStr = sym.role ? ` [${sym.role}]` : '';
       parts.push(`- ${sym.name} (${sym.kind})${roleStr}`);
     }
     parts.push('');
   }
 
-  // Directory structure overview
+  // Directory structure (full — the LLM needs the complete picture to design modules)
   parts.push('## Directory Structure');
-  for (const dir of context.directoryStructure.slice(0, 30)) {
+  for (const dir of context.directoryStructure) {
     parts.push(`- ${dir}`);
-  }
-  if (context.directoryStructure.length > 30) {
-    parts.push(`... and ${context.directoryStructure.length - 30} more directories`);
   }
   parts.push('');
 

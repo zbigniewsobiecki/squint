@@ -116,6 +116,7 @@ export interface Module {
   description: string | null;
   depth: number;
   colorIndex: number;
+  isTest: boolean;
   createdAt: string;
 }
 
@@ -167,7 +168,7 @@ export interface Interaction {
   toModuleId: number;
   direction: 'uni' | 'bi'; // uni-directional or bi-directional
   weight: number; // Number of symbol-level calls
-  pattern: 'utility' | 'business' | null; // Classification based on call patterns
+  pattern: 'utility' | 'business' | 'test-internal' | null; // Classification based on call patterns
   symbols: string | null; // JSON array of symbol names
   semantic: string | null; // What happens in this interaction
   source: InteractionSource; // How this interaction was detected
@@ -210,7 +211,7 @@ export interface EnrichedModuleCallEdge extends ModuleCallEdge {
   avgCallsPerSymbol: number;
   distinctCallers: number; // Number of unique callers from source module
   isHighFrequency: boolean; // > 10 calls = likely utility
-  edgePattern: 'utility' | 'business'; // Classification based on call patterns
+  edgePattern: 'utility' | 'business' | 'test-internal'; // Classification based on call patterns
   minUsageLine: number; // Earliest line where this call occurs (for ordering)
 }
 
@@ -590,6 +591,8 @@ CREATE TABLE modules (
   name TEXT NOT NULL,                    -- Human-readable: "Login Screen"
   description TEXT,                      -- Free text description
   depth INTEGER NOT NULL DEFAULT 0,      -- 0 for root, 1 for children, etc.
+  color_index INTEGER NOT NULL DEFAULT 0,
+  is_test INTEGER NOT NULL DEFAULT 0,    -- 1 if module exists solely for testing
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(parent_id, slug)
 );

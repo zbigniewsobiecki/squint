@@ -442,8 +442,8 @@ export class IndexDatabase implements IIndexWriter {
     return this.modules.ensureRoot();
   }
 
-  insertModule(parentId: number | null, slug: string, name: string, description?: string): number {
-    return this.modules.insert(parentId, slug, name, description);
+  insertModule(parentId: number | null, slug: string, name: string, description?: string, isTest?: boolean): number {
+    return this.modules.insert(parentId, slug, name, description, isTest);
   }
 
   getModuleByPath(fullPath: string): Module | null {
@@ -514,6 +514,10 @@ export class IndexDatabase implements IIndexWriter {
     return this.modules.getModulesExceedingThreshold(threshold);
   }
 
+  getTestModuleIds(): Set<number> {
+    return this.modules.getTestModuleIds();
+  }
+
   assignColorIndices(): void {
     this.modules.assignColorIndices();
   }
@@ -556,7 +560,12 @@ export class IndexDatabase implements IIndexWriter {
 
   updateInteraction(
     id: number,
-    updates: { direction?: 'uni' | 'bi'; pattern?: 'utility' | 'business'; symbols?: string[]; semantic?: string }
+    updates: {
+      direction?: 'uni' | 'bi';
+      pattern?: 'utility' | 'business' | 'test-internal';
+      symbols?: string[];
+      semantic?: string;
+    }
   ): boolean {
     return this.interactions.update(id, updates);
   }
@@ -607,6 +616,10 @@ export class IndexDatabase implements IIndexWriter {
 
   getInferredInteractionCount(): number {
     return this.interactions.getCountBySource('llm-inferred');
+  }
+
+  getUncoveredModulePairs() {
+    return this.interactions.getUncoveredModulePairs();
   }
 
   // ============================================================

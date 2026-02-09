@@ -5,6 +5,7 @@ import type { IndexDatabase } from '../../db/database-facade.js';
 import type { EnrichedModuleCallEdge, Module, ModuleCallEdge } from '../../db/schema.js';
 import { SharedFlags, openDatabase } from '../_shared/index.js';
 import { parseCSVLine } from './_shared/csv-utils.js';
+import { groupModulesByEntity } from './_shared/entity-utils.js';
 import { getErrorMessage } from './_shared/llm-utils.js';
 
 interface InteractionSuggestion {
@@ -13,7 +14,7 @@ interface InteractionSuggestion {
   fromModulePath: string;
   toModulePath: string;
   semantic: string;
-  pattern: 'utility' | 'business';
+  pattern: 'utility' | 'business' | 'test-internal';
   symbols: string[];
   weight: number;
 }
@@ -69,6 +70,14 @@ export default class Interactions extends Command {
     'show-llm-responses': Flags.boolean({
       description: 'Show LLM response text',
       default: false,
+    }),
+    'min-relationship-coverage': Flags.integer({
+      description: 'Minimum % of cross-module relationships covered by interactions',
+      default: 90,
+    }),
+    'max-gate-retries': Flags.integer({
+      description: 'Maximum retry attempts when coverage gate fails',
+      default: 2,
     }),
   };
 
@@ -166,6 +175,21 @@ export default class Interactions extends Command {
         }
       }
 
+      // Tag test-internal interactions: if both modules are test, override pattern
+      const testModuleIds = db.getTestModuleIds();
+      if (testModuleIds.size > 0) {
+        for (const interaction of interactions) {
+          if (testModuleIds.has(interaction.fromModuleId) && testModuleIds.has(interaction.toModuleId)) {
+            interaction.pattern = 'test-internal';
+          }
+        }
+
+        const testInternalCount = interactions.filter((i) => i.pattern === 'test-internal').length;
+        if (!isJson && verbose && testInternalCount > 0) {
+          this.log(chalk.gray(`  Tagged ${testInternalCount} interactions as test-internal`));
+        }
+      }
+
       // Persist interactions
       if (!dryRun) {
         for (const interaction of interactions) {
@@ -239,6 +263,63 @@ export default class Interactions extends Command {
           this.log(chalk.gray('  No additional logical connections detected'));
         } else {
           this.log(chalk.gray(`  Would add ${logicalInteractions.length} inferred interactions (dry run)`));
+        }
+      }
+
+      // Step 4: Coverage validation - targeted inference for uncovered module pairs
+      if (!dryRun) {
+        const minRelCoverage = flags['min-relationship-coverage'];
+        const maxGateRetries = flags['max-gate-retries'];
+
+        for (let attempt = 0; attempt < maxGateRetries; attempt++) {
+          const coverageCheck = db.getRelationshipCoverage();
+          const breakdown = db.getRelationshipCoverageBreakdown();
+
+          if (coverageCheck.coveragePercent >= minRelCoverage || breakdown.noCallEdge === 0) {
+            break;
+          }
+
+          if (!isJson) {
+            if (attempt === 0) {
+              this.log('');
+              this.log(chalk.bold('Step 4: Coverage Validation (Targeted Inference)'));
+            }
+            this.log(
+              chalk.gray(
+                `  Coverage: ${coverageCheck.coveragePercent.toFixed(1)}% (target: ${minRelCoverage}%), ${breakdown.noCallEdge} uncovered pairs`
+              )
+            );
+          }
+
+          const uncoveredPairs = db.getUncoveredModulePairs();
+          if (uncoveredPairs.length === 0) break;
+
+          const targetedResults = await this.inferTargetedInteractions(
+            uncoveredPairs,
+            model,
+            showLlmRequests,
+            showLlmResponses
+          );
+
+          let targetedCount = 0;
+          for (const ti of targetedResults) {
+            try {
+              db.upsertInteraction(ti.fromModuleId, ti.toModuleId, {
+                semantic: ti.reason,
+                source: 'llm-inferred',
+                weight: 1,
+              });
+              targetedCount++;
+            } catch {
+              // Skip duplicates
+            }
+          }
+
+          if (!isJson) {
+            this.log(chalk.green(`  Pass ${attempt + 1}: Added ${targetedCount} targeted interactions`));
+          }
+
+          if (targetedCount === 0) break;
         }
       }
 
@@ -317,10 +398,7 @@ Guidelines:
     // Build edge descriptions with symbol details
     const edgeDescriptions = edges
       .map((e, i) => {
-        const symbolList = e.calledSymbols
-          .slice(0, 5)
-          .map((s) => s.name)
-          .join(', ');
+        const symbolList = e.calledSymbols.map((s) => s.name).join(', ');
         const patternInfo = `[${e.edgePattern.toUpperCase()}]`;
         return `${i + 1}. ${patternInfo} ${e.fromModulePath} → ${e.toModulePath} (${e.weight} calls)\n   Symbols: ${symbolList}`;
       })
@@ -464,6 +542,93 @@ Generate semantic descriptions for each interaction in CSV format.`;
   }
 
   /**
+   * Infer targeted interactions for specific uncovered module pairs.
+   * These are module pairs with symbol-level relationships but no detected interaction.
+   */
+  private async inferTargetedInteractions(
+    uncoveredPairs: Array<{
+      fromModuleId: number;
+      toModuleId: number;
+      fromPath: string;
+      toPath: string;
+      relationshipCount: number;
+    }>,
+    model: string,
+    showLlmRequests: boolean,
+    showLlmResponses: boolean
+  ): Promise<InferredInteraction[]> {
+    if (uncoveredPairs.length === 0) return [];
+
+    const systemPrompt = `You are reviewing module pairs that have symbol-level relationships but no detected interaction.
+For each pair, determine if a real runtime interaction exists and describe it.
+
+## Output Format
+\`\`\`csv
+from_module_path,to_module_path,action,reason
+project.backend.services.sales,project.backend.data.models.vehicle,CONFIRM,"Sales service updates vehicle availability status on sale completion"
+project.shared.types,project.backend.models,SKIP,"Shared type definitions, no runtime interaction"
+\`\`\`
+
+For each pair:
+- CONFIRM if a real interaction exists (provide a semantic description as reason)
+- SKIP if it's an artifact (shared types, transitive dependency, test-only)`;
+
+    const pairDescriptions = uncoveredPairs
+      .map((p, i) => `${i + 1}. ${p.fromPath} → ${p.toPath} (${p.relationshipCount} relationships)`)
+      .join('\n');
+
+    const userPrompt = `## Module Pairs to Evaluate (${uncoveredPairs.length})
+
+${pairDescriptions}
+
+Evaluate each pair and output CONFIRM or SKIP in CSV format.`;
+
+    if (showLlmRequests) {
+      this.log(chalk.cyan('═'.repeat(60)));
+      this.log(chalk.cyan('LLM REQUEST - inferTargetedInteractions'));
+      this.log(chalk.gray(systemPrompt));
+      this.log(chalk.gray(userPrompt));
+    }
+
+    const response = await LLMist.complete(userPrompt, { model, systemPrompt, temperature: 0 });
+
+    if (showLlmResponses) {
+      this.log(chalk.green('═'.repeat(60)));
+      this.log(chalk.green('LLM RESPONSE'));
+      this.log(chalk.gray(response));
+    }
+
+    // Parse response
+    const results: InferredInteraction[] = [];
+    const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/);
+    const csv = csvMatch ? csvMatch[1] : response;
+
+    const pairByPaths = new Map(uncoveredPairs.map((p) => [`${p.fromPath}|${p.toPath}`, p]));
+
+    for (const line of csv.split('\n')) {
+      if (!line.trim() || line.startsWith('from_module')) continue;
+
+      const fields = parseCSVLine(line);
+      if (fields.length < 4) continue;
+
+      const [fromPath, toPath, action, reason] = fields;
+
+      if (action.trim().toUpperCase() !== 'CONFIRM') continue;
+
+      const pair = pairByPaths.get(`${fromPath.trim()}|${toPath.trim()}`);
+      if (!pair) continue;
+
+      results.push({
+        fromModuleId: pair.fromModuleId,
+        toModuleId: pair.toModuleId,
+        reason: reason?.replace(/"/g, '').trim() ?? 'Targeted inference',
+      });
+    }
+
+    return results;
+  }
+
+  /**
    * Determine if a module belongs to frontend or backend layer based on path patterns.
    */
   private isModuleInLayer(module: Module, layer: 'frontend' | 'backend'): boolean {
@@ -566,7 +731,7 @@ DO NOT report:
     parts.push('## Backend Modules (grouped by entity)');
 
     // Group backend modules by entity pattern for better LLM matching
-    const entityGroups = this.groupModulesByEntity(backend);
+    const entityGroups = groupModulesByEntity(backend);
 
     for (const [entity, modules] of entityGroups) {
       if (entity === '_generic') {
@@ -591,7 +756,7 @@ DO NOT report:
     if (crossLayerEdges.length === 0) {
       parts.push('(None detected - this is why we need inference!)');
     } else {
-      for (const e of crossLayerEdges.slice(0, 10)) {
+      for (const e of crossLayerEdges) {
         const from = allModules.find((m) => m.id === e.fromModuleId);
         const to = allModules.find((m) => m.id === e.toModuleId);
         if (from && to) {
@@ -604,81 +769,6 @@ DO NOT report:
     parts.push('Identify frontend→backend logical connections that likely exist at runtime.');
 
     return parts.join('\n');
-  }
-
-  /**
-   * Group modules by entity name extracted from their path.
-   * Returns a Map where keys are entity names (or '_generic' for non-entity modules).
-   */
-  private groupModulesByEntity(modules: Module[]): Map<string, Module[]> {
-    const groups = new Map<string, Module[]>();
-
-    // Common entity patterns to extract from module paths
-    const entityPatterns = [
-      /\.(users?|accounts?|auth)[-.]?/i,
-      /\.(customers?|clients?)[-.]?/i,
-      /\.(products?|items?|inventory)[-.]?/i,
-      /\.(orders?|purchases?)[-.]?/i,
-      /\.(sales?)[-.]?/i,
-      /\.(vehicles?)[-.]?/i,
-      /\.(payments?|billing)[-.]?/i,
-      /\.(notifications?|alerts?)[-.]?/i,
-      /\.(reports?|analytics?)[-.]?/i,
-      /\.(settings?|config)[-.]?/i,
-    ];
-
-    // Normalize entity names for grouping
-    const normalizeEntity = (match: string): string => {
-      const entity = match.replace(/^\./, '').replace(/[-.]$/, '').toLowerCase();
-      // Singularize and normalize common variants
-      if (/^(users?|accounts?|auth)$/i.test(entity)) return 'User';
-      if (/^(customers?|clients?)$/i.test(entity)) return 'Customer';
-      if (/^(products?|items?|inventory)$/i.test(entity)) return 'Product';
-      if (/^(orders?|purchases?)$/i.test(entity)) return 'Order';
-      if (/^(sales?)$/i.test(entity)) return 'Sales';
-      if (/^(vehicles?)$/i.test(entity)) return 'Vehicle';
-      if (/^(payments?|billing)$/i.test(entity)) return 'Payment';
-      if (/^(notifications?|alerts?)$/i.test(entity)) return 'Notification';
-      if (/^(reports?|analytics?)$/i.test(entity)) return 'Report';
-      if (/^(settings?|config)$/i.test(entity)) return 'Settings';
-      return entity.charAt(0).toUpperCase() + entity.slice(1);
-    };
-
-    for (const mod of modules) {
-      let entityFound = false;
-
-      for (const pattern of entityPatterns) {
-        const match = mod.fullPath.match(pattern);
-        if (match) {
-          const entity = normalizeEntity(match[0]);
-          if (!groups.has(entity)) {
-            groups.set(entity, []);
-          }
-          groups.get(entity)!.push(mod);
-          entityFound = true;
-          break;
-        }
-      }
-
-      if (!entityFound) {
-        if (!groups.has('_generic')) {
-          groups.set('_generic', []);
-        }
-        groups.get('_generic')!.push(mod);
-      }
-    }
-
-    // Sort to put _generic last
-    const sorted = new Map<string, Module[]>();
-    for (const [key, value] of [...groups.entries()].sort((a, b) => {
-      if (a[0] === '_generic') return 1;
-      if (b[0] === '_generic') return -1;
-      return a[0].localeCompare(b[0]);
-    })) {
-      sorted.set(key, value);
-    }
-
-    return sorted;
   }
 
   /**

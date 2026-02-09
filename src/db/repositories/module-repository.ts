@@ -63,12 +63,13 @@ export class ModuleRepository {
   /**
    * Insert a new module in the tree.
    */
-  insert(parentId: number | null, slug: string, name: string, description?: string): number {
+  insert(parentId: number | null, slug: string, name: string, description?: string, isTest?: boolean): number {
     ensureModulesTables(this.db);
 
     // Calculate full_path and depth
     let fullPath: string;
     let depth: number;
+    let effectiveIsTest = isTest;
 
     if (parentId === null) {
       fullPath = slug;
@@ -76,9 +77,9 @@ export class ModuleRepository {
     } else {
       const parent = this.db
         .prepare(`
-        SELECT full_path, depth FROM modules WHERE id = ?
+        SELECT full_path, depth, is_test FROM modules WHERE id = ?
       `)
-        .get(parentId) as { full_path: string; depth: number } | undefined;
+        .get(parentId) as { full_path: string; depth: number; is_test: number } | undefined;
 
       if (!parent) {
         throw new Error(`Parent module ${parentId} not found`);
@@ -86,13 +87,18 @@ export class ModuleRepository {
 
       fullPath = `${parent.full_path}.${slug}`;
       depth = parent.depth + 1;
+
+      // Inherit test status from parent if parent is test
+      if (parent.is_test === 1) {
+        effectiveIsTest = true;
+      }
     }
 
     const stmt = this.db.prepare(`
-      INSERT INTO modules (parent_id, slug, full_path, name, description, depth)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO modules (parent_id, slug, full_path, name, description, depth, is_test)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(parentId, slug, fullPath, name, description ?? null, depth);
+    const result = stmt.run(parentId, slug, fullPath, name, description ?? null, depth, effectiveIsTest ? 1 : 0);
     return result.lastInsertRowid as number;
   }
 
@@ -111,11 +117,14 @@ export class ModuleRepository {
         description,
         depth,
         color_index as colorIndex,
+        is_test as isTest,
         created_at as createdAt
       FROM modules
       WHERE full_path = ?
     `);
-    return stmt.get(fullPath) as Module | null;
+    const row = stmt.get(fullPath) as (Omit<Module, 'isTest'> & { isTest: number }) | null;
+    if (!row) return null;
+    return { ...row, isTest: row.isTest === 1 };
   }
 
   /**
@@ -133,11 +142,14 @@ export class ModuleRepository {
         description,
         depth,
         color_index as colorIndex,
+        is_test as isTest,
         created_at as createdAt
       FROM modules
       WHERE id = ?
     `);
-    return stmt.get(id) as Module | null;
+    const row = stmt.get(id) as (Omit<Module, 'isTest'> & { isTest: number }) | null;
+    if (!row) return null;
+    return { ...row, isTest: row.isTest === 1 };
   }
 
   /**
@@ -155,12 +167,14 @@ export class ModuleRepository {
         description,
         depth,
         color_index as colorIndex,
+        is_test as isTest,
         created_at as createdAt
       FROM modules
       WHERE parent_id = ?
       ORDER BY slug
     `);
-    return stmt.all(moduleId) as Module[];
+    const rows = stmt.all(moduleId) as Array<Omit<Module, 'isTest'> & { isTest: number }>;
+    return rows.map((row) => ({ ...row, isTest: row.isTest === 1 }));
   }
 
   /**
@@ -178,11 +192,13 @@ export class ModuleRepository {
         description,
         depth,
         color_index as colorIndex,
+        is_test as isTest,
         created_at as createdAt
       FROM modules
       ORDER BY depth, full_path
     `);
-    return stmt.all() as Module[];
+    const rows = stmt.all() as Array<Omit<Module, 'isTest'> & { isTest: number }>;
+    return rows.map((row) => ({ ...row, isTest: row.isTest === 1 }));
   }
 
   /**
@@ -365,14 +381,15 @@ export class ModuleRepository {
         m.description,
         m.depth,
         m.color_index as colorIndex,
+        m.is_test as isTest,
         m.created_at as createdAt
       FROM module_members mm
       JOIN modules m ON mm.module_id = m.id
       WHERE mm.definition_id = ?
     `);
-    const module = stmt.get(definitionId) as Module | undefined;
-    if (!module) return null;
-    return { module };
+    const row = stmt.get(definitionId) as (Omit<Module, 'isTest'> & { isTest: number }) | undefined;
+    if (!row) return null;
+    return { module: { ...row, isTest: row.isTest === 1 } };
   }
 
   /**
@@ -458,6 +475,7 @@ export class ModuleRepository {
         m.description,
         m.depth,
         m.color_index as colorIndex,
+        m.is_test as isTest,
         m.created_at as createdAt,
         COUNT(mm.definition_id) as memberCount
       FROM modules m
@@ -467,7 +485,10 @@ export class ModuleRepository {
       ORDER BY m.depth, m.full_path
     `);
 
-    const modules = modulesStmt.all(threshold) as Array<Module & { memberCount: number }>;
+    const rawModules = modulesStmt.all(threshold) as Array<
+      Omit<Module, 'isTest'> & { isTest: number; memberCount: number }
+    >;
+    const modules = rawModules.map((m) => ({ ...m, isTest: m.isTest === 1 }));
 
     // For each module, get its members with details
     return modules.map((m) => {
@@ -481,6 +502,7 @@ export class ModuleRepository {
         description: m.description,
         depth: m.depth,
         colorIndex: m.colorIndex,
+        isTest: m.isTest,
         createdAt: m.createdAt,
         members,
       };
@@ -533,6 +555,16 @@ export class ModuleRepository {
     });
 
     transaction();
+  }
+
+  /**
+   * Get IDs of all test modules (is_test = 1).
+   */
+  getTestModuleIds(): Set<number> {
+    ensureModulesTables(this.db);
+    const stmt = this.db.prepare('SELECT id FROM modules WHERE is_test = 1');
+    const rows = stmt.all() as Array<{ id: number }>;
+    return new Set(rows.map((r) => r.id));
   }
 
   /**

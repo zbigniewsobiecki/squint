@@ -41,10 +41,11 @@ export class EntryPointDetector {
   async detectEntryPointModules(model: string, llmOptions: LlmOptions): Promise<EntryPointModuleInfo[]> {
     const allModulesWithMembers = this.db.getAllModulesWithMembers();
 
-    // Build module candidates (only modules with members)
+    // Build module candidates (only modules with members, skip test modules)
     const candidates: ModuleCandidate[] = [];
     for (const mod of allModulesWithMembers) {
       if (mod.members.length === 0) continue;
+      if (mod.isTest) continue; // Test modules are never entry points
 
       candidates.push({
         id: mod.id,
@@ -210,7 +211,13 @@ module_id,member_name,is_entry_point,action_type,target_entity,reason
 
 IMPORTANT: A single component can have MULTIPLE action types if it calls multiple mutation hooks.
 Only mark as is_entry_point=true if it's user-initiated (UI event, API endpoint).
-Internal services/utilities should be is_entry_point=false.`;
+Internal services/utilities should be is_entry_point=false.
+
+## CRITICAL: Test Code Exclusion
+Test helpers, mock factories, test fixtures, spec runners, and test utilities are NEVER entry points.
+Only production code that real end-users or external clients interact with should be classified as entry points.
+If a module exists solely to support testing (generating test data, mocking services, setting up test state),
+mark ALL its members as is_entry_point=false regardless of their names.`;
   }
 
   private buildModuleContext(candidates: ModuleCandidate[]): string {
@@ -248,10 +255,7 @@ Internal services/utilities should be is_entry_point=false.`;
 
     if (relevant.length === 0) return '';
 
-    return relevant
-      .slice(0, 100)
-      .map((r) => `${r.fromName} → ${r.toName}: "${r.semantic}"`)
-      .join('\n');
+    return relevant.map((r) => `${r.fromName} → ${r.toName}: "${r.semantic}"`).join('\n');
   }
 
   private parseMemberClassificationCSV(response: string, candidates: ModuleCandidate[]): MemberClassification[] {

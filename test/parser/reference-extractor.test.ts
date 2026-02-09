@@ -63,6 +63,42 @@ describe('resolveImportPath', () => {
     const result = resolveImportPath('../utils', '/project/src/index.ts', knownFiles);
     expect(result).toBe('/project/utils.ts');
   });
+
+  it('resolves .jsx extension to .tsx', () => {
+    const knownFiles = new Set(['/project/Button.tsx']);
+    const result = resolveImportPath('./Button.jsx', '/project/index.ts', knownFiles);
+    expect(result).toBe('/project/Button.tsx');
+  });
+
+  it('resolves .js extension to .tsx when .ts does not exist', () => {
+    const knownFiles = new Set(['/project/Widget.tsx']);
+    const result = resolveImportPath('./Widget.js', '/project/index.ts', knownFiles);
+    expect(result).toBe('/project/Widget.tsx');
+  });
+
+  it('resolves index.tsx in directories', () => {
+    const knownFiles = new Set(['/project/components/index.tsx']);
+    const result = resolveImportPath('./components', '/project/index.ts', knownFiles);
+    expect(result).toBe('/project/components/index.tsx');
+  });
+
+  it('resolves index.js in directories', () => {
+    const knownFiles = new Set(['/project/lib/index.js']);
+    const result = resolveImportPath('./lib', '/project/index.ts', knownFiles);
+    expect(result).toBe('/project/lib/index.js');
+  });
+
+  it('resolves exact match when file exists without extension', () => {
+    const knownFiles = new Set(['/project/utils']);
+    const result = resolveImportPath('./utils', '/project/index.ts', knownFiles);
+    expect(result).toBe('/project/utils');
+  });
+
+  it('returns undefined for empty known files', () => {
+    const knownFiles = new Set<string>();
+    const result = resolveImportPath('./utils', '/project/index.ts', knownFiles);
+    expect(result).toBeUndefined();
+  });
 });
 
 describe('callsite metadata extraction', () => {
@@ -269,6 +305,18 @@ export { query } from './database';`;
     expect(queryImport?.usages[0]?.position.column).toBe(0);
   });
 
+  it('detects type-only re-exports', () => {
+    const content = `export type { User } from './types';`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set(['/project/types.ts']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.references).toHaveLength(1);
+    expect(result.references[0].isTypeOnly).toBe(true);
+    expect(result.references[0].type).toBe('re-export');
+  });
+
   it('handles multiple re-exports in same file', () => {
     const content = `
 export { a } from './moduleA';
@@ -294,5 +342,199 @@ export * from './moduleC';
     // Third re-export: * (namespace)
     const refC = result.references.find((r) => r.source === './moduleC') as FileReference;
     expect(refC.imports.find((i) => i.name === '*')?.usages).toHaveLength(1);
+  });
+});
+
+describe('dynamic import extraction', () => {
+  const metadata = { sizeBytes: 100, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+  it('detects dynamic import() calls', () => {
+    const content = `
+const mod = await import('./dynamic-module');
+`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set(['/project/dynamic-module.ts']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const dynamicRef = result.references.find((r) => r.type === 'dynamic-import');
+    expect(dynamicRef).toBeDefined();
+    expect(dynamicRef?.source).toBe('./dynamic-module');
+    expect(dynamicRef?.resolvedPath).toBe('/project/dynamic-module.ts');
+    expect(dynamicRef?.isTypeOnly).toBe(false);
+  });
+
+  it('detects external dynamic import()', () => {
+    const content = `
+const lodash = await import('lodash');
+`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set<string>();
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const dynamicRef = result.references.find((r) => r.type === 'dynamic-import');
+    expect(dynamicRef).toBeDefined();
+    expect(dynamicRef?.source).toBe('lodash');
+    expect(dynamicRef?.isExternal).toBe(true);
+    expect(dynamicRef?.resolvedPath).toBeUndefined();
+  });
+});
+
+describe('require() extraction', () => {
+  const metadata = { sizeBytes: 100, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+  it('detects require() calls', () => {
+    const content = `
+const utils = require('./utils');
+utils.doSomething();
+`;
+    const filePath = '/project/index.js';
+    const knownFiles = new Set(['/project/utils.js']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const requireRef = result.references.find((r) => r.type === 'require');
+    expect(requireRef).toBeDefined();
+    expect(requireRef?.source).toBe('./utils');
+    expect(requireRef?.resolvedPath).toBe('/project/utils.js');
+    expect(requireRef?.isExternal).toBe(false);
+  });
+
+  it('detects destructured require()', () => {
+    const content = `
+const { readFile, writeFile } = require('./fs-utils');
+readFile('test.txt');
+`;
+    const filePath = '/project/index.js';
+    const knownFiles = new Set(['/project/fs-utils.js']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const requireRef = result.references.find((r) => r.type === 'require');
+    expect(requireRef).toBeDefined();
+    expect(requireRef?.imports).toHaveLength(2);
+
+    const readFileImport = requireRef?.imports.find((i) => i.name === 'readFile');
+    expect(readFileImport).toBeDefined();
+    expect(readFileImport?.kind).toBe('named');
+    expect(readFileImport?.usages.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('detects external require()', () => {
+    const content = `
+const chalk = require('chalk');
+`;
+    const filePath = '/project/index.js';
+    const knownFiles = new Set<string>();
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const requireRef = result.references.find((r) => r.type === 'require');
+    expect(requireRef).toBeDefined();
+    expect(requireRef?.source).toBe('chalk');
+    expect(requireRef?.isExternal).toBe(true);
+  });
+});
+
+describe('type-only import extraction', () => {
+  const metadata = { sizeBytes: 100, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+  it('detects import type statements', () => {
+    const content = `
+import type { User } from './types';
+
+const greeting: string = 'hello';
+`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set(['/project/types.ts']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.references).toHaveLength(1);
+    expect(result.references[0].isTypeOnly).toBe(true);
+    expect(result.references[0].type).toBe('import');
+  });
+
+  it('non-type imports are not marked as type-only', () => {
+    const content = `
+import { User } from './types';
+const u: User = { id: '1' };
+`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set(['/project/types.ts']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.references[0].isTypeOnly).toBe(false);
+  });
+});
+
+describe('import styles', () => {
+  const metadata = { sizeBytes: 100, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+  it('handles default import', () => {
+    const content = `
+import React from 'react';
+const el = React.createElement('div');
+`;
+    const filePath = '/project/index.tsx';
+    const knownFiles = new Set<string>();
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.references).toHaveLength(1);
+    const defaultImport = result.references[0].imports.find((i) => i.kind === 'default');
+    expect(defaultImport).toBeDefined();
+    expect(defaultImport?.name).toBe('default');
+    expect(defaultImport?.localName).toBe('React');
+  });
+
+  it('handles namespace import', () => {
+    const content = `
+import * as path from 'path';
+path.join('a', 'b');
+`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set<string>();
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.references).toHaveLength(1);
+    const nsImport = result.references[0].imports.find((i) => i.kind === 'namespace');
+    expect(nsImport).toBeDefined();
+    expect(nsImport?.name).toBe('*');
+    expect(nsImport?.localName).toBe('path');
+  });
+
+  it('handles aliased named import', () => {
+    const content = `
+import { Component as Comp } from './base';
+const c = new Comp();
+`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set(['/project/base.ts']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    const aliasedImport = result.references[0].imports.find((i) => i.name === 'Component');
+    expect(aliasedImport).toBeDefined();
+    expect(aliasedImport?.localName).toBe('Comp');
+    expect(aliasedImport?.kind).toBe('named');
+  });
+
+  it('handles side-effect import', () => {
+    const content = `
+import './polyfills';
+`;
+    const filePath = '/project/index.ts';
+    const knownFiles = new Set(['/project/polyfills.ts']);
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.references).toHaveLength(1);
+    expect(result.references[0].imports).toHaveLength(1);
+    expect(result.references[0].imports[0].kind).toBe('side-effect');
+    expect(result.references[0].imports[0].name).toBe('*');
   });
 });

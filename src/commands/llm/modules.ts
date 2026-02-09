@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { LLMist } from 'llmist';
 
 import { SharedFlags, openDatabase } from '../_shared/index.js';
-import { getErrorMessage } from './_shared/llm-utils.js';
+import { type LlmLogOptions, getErrorMessage, logLlmRequest, logLlmResponse } from './_shared/llm-utils.js';
 import { isValidModulePath, parseAssignmentCsv, parseDeepenCsv, parseTreeCsv } from './_shared/module-csv.js';
 import {
   type DomainSummary,
@@ -63,10 +63,26 @@ export default class Modules extends Command {
       default: 10,
       description: 'Min members before splitting a module (0 to disable deepening)',
     }),
+    'max-unassigned-pct': Flags.integer({
+      default: 5,
+      description: 'Maximum % of symbols allowed to remain unassigned',
+    }),
+    'max-gate-retries': Flags.integer({
+      default: 3,
+      description: 'Maximum retry attempts when assignment gate fails',
+    }),
     json: SharedFlags.json,
     verbose: Flags.boolean({
       default: false,
       description: 'Show detailed progress',
+    }),
+    'show-llm-requests': Flags.boolean({
+      description: 'Show LLM request prompts',
+      default: false,
+    }),
+    'show-llm-responses': Flags.boolean({
+      description: 'Show LLM response text',
+      default: false,
     }),
   };
 
@@ -79,6 +95,11 @@ export default class Modules extends Command {
     const verbose = flags.verbose;
     const phase = flags.phase;
     const incremental = flags.incremental;
+    const llmLogOptions: LlmLogOptions = {
+      showRequests: flags['show-llm-requests'],
+      showResponses: flags['show-llm-responses'],
+      isJson,
+    };
 
     try {
       // Check existing modules
@@ -112,17 +133,24 @@ export default class Modules extends Command {
 
       // Phase 1: Tree Structure Generation
       if ((phase === 'all' || phase === 'tree') && !incremental) {
-        await this.runTreePhase(db, flags, dryRun, isJson, verbose);
+        await this.runTreePhase(db, flags, dryRun, isJson, verbose, llmLogOptions);
       }
 
       // Phase 2: Symbol Assignment
       if (phase === 'all' || phase === 'assign') {
-        await this.runAssignmentPhase(db, flags, dryRun, isJson, verbose);
+        await this.runAssignmentPhase(db, flags, dryRun, isJson, verbose, llmLogOptions);
+
+        // Coverage gate: check unassigned % and run catch-up passes if needed
+        if (!dryRun) {
+          const maxUnassignedPct = flags['max-unassigned-pct'];
+          const maxGateRetries = flags['max-gate-retries'];
+          await this.runAssignmentCoverageGate(db, flags, maxUnassignedPct, maxGateRetries, isJson, verbose);
+        }
 
         // Phase 3: Deepening (automatic after assignment, unless disabled)
         const deepenThreshold = flags['deepen-threshold'];
         if (deepenThreshold > 0) {
-          await this.runDeepenPhase(db, flags, deepenThreshold, dryRun, isJson, verbose);
+          await this.runDeepenPhase(db, flags, deepenThreshold, dryRun, isJson, verbose, llmLogOptions);
         }
       }
 
@@ -157,7 +185,8 @@ export default class Modules extends Command {
     flags: { model: string; 'dry-run': boolean },
     dryRun: boolean,
     isJson: boolean,
-    verbose: boolean
+    verbose: boolean,
+    llmLogOptions: LlmLogOptions
   ): Promise<void> {
     if (!isJson) {
       this.log(chalk.bold('Phase 1: Tree Structure Generation'));
@@ -193,12 +222,16 @@ export default class Modules extends Command {
       this.log(chalk.gray('  Calling LLM for tree structure...'));
     }
 
+    logLlmRequest(this, 'runTreePhase', systemPrompt, userPrompt, llmLogOptions);
+
     // Call LLM
     const response = await LLMist.complete(userPrompt, {
       model: flags.model,
       systemPrompt,
       temperature: 0,
     });
+
+    logLlmResponse(this, 'runTreePhase', response, llmLogOptions);
 
     // Parse response
     const { modules: parsedModules, errors } = parseTreeCsv(response);
@@ -268,7 +301,7 @@ export default class Modules extends Command {
       }
 
       try {
-        db.insertModule(parent.id, mod.slug, mod.name, mod.description);
+        db.insertModule(parent.id, mod.slug, mod.name, mod.description, mod.isTest);
         insertedCount++;
       } catch (error) {
         if (verbose && !isJson) {
@@ -291,7 +324,8 @@ export default class Modules extends Command {
     flags: { model: string; 'batch-size': number; 'max-iterations': number },
     dryRun: boolean,
     isJson: boolean,
-    verbose: boolean
+    verbose: boolean,
+    llmLogOptions: LlmLogOptions
   ): Promise<void> {
     if (!isJson) {
       this.log('');
@@ -349,11 +383,15 @@ export default class Modules extends Command {
       const userPrompt = buildAssignmentUserPrompt(modules, symbolsForAssignment);
 
       try {
+        logLlmRequest(this, `runAssignmentPhase-batch${iteration}`, systemPrompt, userPrompt, llmLogOptions);
+
         const response = await LLMist.complete(userPrompt, {
           model: flags.model,
           systemPrompt,
           temperature: 0,
         });
+
+        logLlmResponse(this, `runAssignmentPhase-batch${iteration}`, response, llmLogOptions);
 
         const { assignments, errors } = parseAssignmentCsv(response);
 
@@ -426,6 +464,114 @@ export default class Modules extends Command {
   }
 
   /**
+   * Coverage gate: check unassigned symbol % and run catch-up passes if needed.
+   */
+  private async runAssignmentCoverageGate(
+    db: ReturnType<typeof openDatabase> extends Promise<infer T> ? T : never,
+    flags: { model: string; 'batch-size': number },
+    maxUnassignedPct: number,
+    maxGateRetries: number,
+    isJson: boolean,
+    verbose: boolean
+  ): Promise<void> {
+    const stats = db.getModuleStats();
+    const total = stats.assigned + stats.unassigned;
+    if (total === 0) return;
+
+    let unassignedPct = (stats.unassigned / total) * 100;
+
+    if (unassignedPct <= maxUnassignedPct) return;
+
+    if (!isJson) {
+      this.log('');
+      this.log(
+        chalk.yellow(
+          `  ${unassignedPct.toFixed(1)}% symbols still unassigned (threshold: ${maxUnassignedPct}%), running catch-up passes`
+        )
+      );
+    }
+
+    const modules = db.getAllModules();
+    const moduleByPath = new Map(modules.map((m) => [m.fullPath, m]));
+    const batchSize = flags['batch-size'];
+
+    const relaxedSystemPrompt = `You are a software architect assigning symbols to modules.
+Each symbol must be assigned to exactly ONE module path.
+
+## Your Task
+These symbols were difficult to assign in prior passes. Use your best judgment.
+If none of the existing modules fit perfectly, assign to the closest parent module.
+
+## Output Format
+Respond with **only** a CSV table:
+
+\`\`\`csv
+type,symbol_id,module_path
+assignment,42,project.frontend.screens.login
+\`\`\`
+
+## Guidelines
+- Every symbol must be assigned to exactly one module
+- Module paths must match existing modules in the tree
+- Prefer more specific modules, but if unsure use the closest parent
+- Consider the file path as a strong hint`;
+
+    for (let retry = 0; retry < maxGateRetries; retry++) {
+      const unassigned = db.getUnassignedSymbols();
+      if (unassigned.length === 0) break;
+
+      const currentPct = (unassigned.length / total) * 100;
+      if (currentPct <= maxUnassignedPct) break;
+
+      if (!isJson && verbose) {
+        this.log(chalk.gray(`  Catch-up pass ${retry + 1}/${maxGateRetries}: ${unassigned.length} symbols remaining`));
+      }
+
+      for (let i = 0; i < unassigned.length; i += batchSize) {
+        const batch = unassigned.slice(i, i + batchSize);
+        const symbolsForAssignment = batch.map(toSymbolForAssignment);
+        const userPrompt = buildAssignmentUserPrompt(modules, symbolsForAssignment);
+
+        try {
+          const response = await LLMist.complete(userPrompt, {
+            model: flags.model,
+            systemPrompt: relaxedSystemPrompt,
+            temperature: 0,
+          });
+
+          const { assignments } = parseAssignmentCsv(response);
+          for (const assignment of assignments) {
+            if (!isValidModulePath(assignment.modulePath)) continue;
+            const targetModule = moduleByPath.get(assignment.modulePath);
+            if (!targetModule) continue;
+            db.assignSymbolToModule(assignment.symbolId, targetModule.id);
+          }
+        } catch {
+          // Continue with next batch on failure
+        }
+      }
+
+      // Re-check
+      const updatedStats = db.getModuleStats();
+      unassignedPct = (updatedStats.unassigned / total) * 100;
+      if (unassignedPct <= maxUnassignedPct) {
+        if (!isJson) {
+          this.log(chalk.green(`  Coverage gate passed: ${unassignedPct.toFixed(1)}% unassigned`));
+        }
+        return;
+      }
+    }
+
+    if (!isJson) {
+      const finalStats = db.getModuleStats();
+      const finalPct = (finalStats.unassigned / total) * 100;
+      this.log(
+        chalk.yellow(`  Coverage gate: ${finalPct.toFixed(1)}% still unassigned after ${maxGateRetries} retries`)
+      );
+    }
+  }
+
+  /**
    * Phase 3: Deepen large modules by splitting them into sub-modules.
    */
   private async runDeepenPhase(
@@ -434,7 +580,8 @@ export default class Modules extends Command {
     threshold: number,
     dryRun: boolean,
     isJson: boolean,
-    verbose: boolean
+    verbose: boolean,
+    llmLogOptions: LlmLogOptions
   ): Promise<void> {
     if (!isJson) {
       this.log('');
@@ -483,11 +630,17 @@ export default class Modules extends Command {
         };
 
         try {
-          const response = await LLMist.complete(buildDeepenUserPrompt(moduleForDeepening), {
+          const deepenSystemPrompt = buildDeepenSystemPrompt();
+          const deepenUserPrompt = buildDeepenUserPrompt(moduleForDeepening);
+          logLlmRequest(this, `runDeepenPhase-${mod.fullPath}`, deepenSystemPrompt, deepenUserPrompt, llmLogOptions);
+
+          const response = await LLMist.complete(deepenUserPrompt, {
             model: flags.model,
-            systemPrompt: buildDeepenSystemPrompt(),
+            systemPrompt: deepenSystemPrompt,
             temperature: 0,
           });
+
+          logLlmResponse(this, `runDeepenPhase-${mod.fullPath}`, response, llmLogOptions);
 
           // Parse response
           const { newModules, reassignments, errors } = parseDeepenCsv(response);
@@ -529,6 +682,7 @@ export default class Modules extends Command {
             }
 
             try {
+              // isTest is inherited from parent in ModuleRepository.insert()
               db.insertModule(parent.id, subMod.slug, subMod.name, subMod.description);
               totalNewModules++;
             } catch (error) {

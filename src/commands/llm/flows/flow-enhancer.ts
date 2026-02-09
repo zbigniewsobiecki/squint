@@ -97,7 +97,6 @@ handleDelete,"user deletes customer","Removes customer after confirmation"
     const flowDescriptions = flows
       .map((f, i) => {
         const steps = f.interactionIds
-          .slice(0, 5)
           .map((id) => {
             const interaction = interactionMap.get(id);
             return interaction ? `${interaction.fromModulePath} → ${interaction.toModulePath}` : '?';
@@ -106,11 +105,15 @@ handleDelete,"user deletes customer","Removes customer after confirmation"
 
         const actor = this.stakeholderToActor(f.stakeholder).toLowerCase();
 
-        let context = `Actor: ${actor}`;
-        if (f.actionType) context += `, Action: ${f.actionType}`;
-        if (f.targetEntity) context += `, Entity: ${f.targetEntity}`;
+        const defStepInfo =
+          f.definitionSteps.length > 0
+            ? `\n   Definition path: ${f.definitionSteps.map((s) => `def#${s.fromDefinitionId}→def#${s.toDefinitionId}`).join(' → ')}`
+            : '';
 
-        return `${i + 1}. Entry: ${f.entryPath}\n   ${context}\n   Steps: ${steps}`;
+        const actionLine = f.actionType ? `Action: ${f.actionType}` : 'Action: unknown';
+        const entityLine = f.targetEntity ? `Entity: ${f.targetEntity}` : 'Entity: unknown';
+
+        return `${i + 1}. ${actionLine}, ${entityLine}, Actor: ${actor}\n   Entry: ${f.entryPath}\n   Steps: ${steps}${defStepInfo}`;
       })
       .join('\n\n');
 

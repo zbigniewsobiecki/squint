@@ -11,16 +11,26 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import type { IndexDatabase } from '../../db/database.js';
+import type { InteractionWithPaths } from '../../db/schema.js';
 import { SharedFlags, openDatabase } from '../_shared/index.js';
-import { calculatePercentage, getErrorMessage, logSection, logStep, logVerbose } from './_shared/llm-utils.js';
+import {
+  calculatePercentage,
+  getErrorMessage,
+  logSection,
+  logStep,
+  logVerbose,
+  logWarning,
+} from './_shared/llm-utils.js';
 import {
   EntryPointDetector,
   FlowEnhancer,
   type FlowSuggestion,
   FlowTracer,
+  FlowValidator,
   GapFlowGenerator,
   buildFlowTracingContext,
 } from './flows/index.js';
+import type { EntryPointModuleInfo } from './flows/types.js';
 
 export default class Flows extends Command {
   static override description = 'Detect user journey flows from entry points and trace through interactions';
@@ -63,6 +73,26 @@ export default class Flows extends Command {
     'show-llm-responses': Flags.boolean({
       description: 'Show full LLM responses',
       default: false,
+    }),
+    'min-interaction-coverage': Flags.integer({
+      description: 'Minimum % of interactions that must appear in flows',
+      default: 90,
+    }),
+    'max-gap-flow-ratio': Flags.integer({
+      description: 'Maximum % of flows that can be internal/gap flows',
+      default: 20,
+    }),
+    'min-entry-point-yield': Flags.integer({
+      description: 'Minimum % of entry point modules that must produce meaningful flows',
+      default: 90,
+    }),
+    'min-inferred-coverage': Flags.integer({
+      description: 'Minimum % of inferred (cross-boundary) interactions that must appear in flows',
+      default: 90,
+    }),
+    'max-gate-retries': Flags.integer({
+      description: 'Maximum retry attempts when coverage gates fail',
+      default: 2,
     }),
   };
 
@@ -151,11 +181,16 @@ export default class Flows extends Command {
       // Step 3: Use LLM to enhance flow metadata
       logStep(this, 3, 'Enhancing Flow Metadata with LLM', isJson);
 
+      const sharedFlowEnhancer = new FlowEnhancer(this, isJson);
       let enhancedFlows: FlowSuggestion[] = [];
       if (flowSuggestions.length > 0) {
         try {
-          const flowEnhancer = new FlowEnhancer(this, isJson);
-          enhancedFlows = await flowEnhancer.enhanceFlowsWithLLM(flowSuggestions, interactions, model, llmOptions);
+          enhancedFlows = await sharedFlowEnhancer.enhanceFlowsWithLLM(
+            flowSuggestions,
+            interactions,
+            model,
+            llmOptions
+          );
           logVerbose(this, `Enhanced ${enhancedFlows.length} flows`, verbose, isJson);
         } catch (error) {
           const message = getErrorMessage(error);
@@ -169,14 +204,109 @@ export default class Flows extends Command {
       // Step 4: Create gap flows for uncovered interactions
       logStep(this, 4, 'Creating Gap Flows for Uncovered Interactions', isJson);
 
-      const coveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
+      let coveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
       const gapFlowGenerator = new GapFlowGenerator();
-      const gapFlows = gapFlowGenerator.createGapFlows(coveredIds, interactions);
+      let gapFlows = gapFlowGenerator.createGapFlows(coveredIds, interactions);
       enhancedFlows.push(...gapFlows);
 
       logVerbose(this, `Created ${gapFlows.length} gap flows for uncovered interactions`, verbose, isJson);
 
-      // Step 5: Persist flows
+      // Step 5: Validate flow completeness (LLM review) with auto-retry loop
+      logStep(this, 5, 'Validating Flow Completeness (LLM Review)', isJson);
+
+      const maxGateRetries = flags['max-gate-retries'];
+      const thresholds = {
+        minInteractionCoverage: flags['min-interaction-coverage'],
+        maxGapFlowRatio: flags['max-gap-flow-ratio'],
+        minEntryPointYield: flags['min-entry-point-yield'],
+        minInferredCoverage: flags['min-inferred-coverage'],
+      };
+
+      const flowValidator = new FlowValidator(db, this, isJson, verbose);
+
+      for (let attempt = 0; attempt <= maxGateRetries; attempt++) {
+        try {
+          // Run validator (initial or with gate failure context)
+          const gateResults =
+            attempt > 0 ? this.checkCoverageGates(enhancedFlows, interactions, entryPointModules, thresholds) : null;
+
+          const validatorFlows = await flowValidator.validateAndFillGaps(
+            enhancedFlows,
+            interactions,
+            model,
+            llmOptions,
+            gateResults?.failures
+          );
+
+          if (validatorFlows.length > 0) {
+            // Run through enhancer for consistent naming
+            try {
+              const enhancedValidatorFlows = await sharedFlowEnhancer.enhanceFlowsWithLLM(
+                validatorFlows,
+                interactions,
+                model,
+                llmOptions
+              );
+              enhancedFlows.push(...enhancedValidatorFlows);
+              logVerbose(
+                this,
+                `  Added ${enhancedValidatorFlows.length} flows from validation pass ${attempt + 1}`,
+                verbose,
+                isJson
+              );
+            } catch {
+              enhancedFlows.push(...validatorFlows);
+              logVerbose(
+                this,
+                `  Added ${validatorFlows.length} unenhanced flows from validation pass ${attempt + 1}`,
+                verbose,
+                isJson
+              );
+            }
+
+            // Regenerate gap flows with updated coverage
+            coveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
+            const oldGapCount = gapFlows.length;
+            // Remove old gap flows
+            enhancedFlows = enhancedFlows.filter((f) => f.entryPointModuleId !== null);
+            gapFlows = gapFlowGenerator.createGapFlows(coveredIds, interactions);
+            enhancedFlows.push(...gapFlows);
+            if (gapFlows.length < oldGapCount) {
+              logVerbose(this, `  Gap flows reduced: ${oldGapCount} → ${gapFlows.length}`, verbose, isJson);
+            }
+          }
+        } catch (error) {
+          const message = getErrorMessage(error);
+          logVerbose(this, `  Validator pass ${attempt + 1} failed: ${message}`, verbose, isJson);
+        }
+
+        // Check gates
+        const currentGates = this.checkCoverageGates(enhancedFlows, interactions, entryPointModules, thresholds);
+        if (currentGates.passed) {
+          logVerbose(this, '  All coverage gates passed', verbose, isJson);
+          break;
+        }
+
+        if (attempt === maxGateRetries) {
+          for (const failure of currentGates.failures) {
+            logWarning(
+              this,
+              `Coverage gate: ${failure.gate} (${failure.actual.toFixed(1)}% vs ${failure.threshold}%) - ${failure.details}`,
+              isJson
+            );
+          }
+          logVerbose(
+            this,
+            `  Coverage gates not met after ${maxGateRetries} retries, proceeding with best results`,
+            verbose,
+            isJson
+          );
+        }
+      }
+
+      // Step 6: Persist flows
+      logStep(this, 6, 'Persisting Flows', isJson);
+
       if (!dryRun && enhancedFlows.length > 0) {
         this.persistFlows(db, enhancedFlows, verbose, isJson);
       }
@@ -242,7 +372,7 @@ export default class Flows extends Command {
     enhancedFlows: FlowSuggestion[],
     gapFlows: FlowSuggestion[],
     entryPointModules: Array<{ moduleId: number }>,
-    interactions: Array<{ id: number }>,
+    interactions: InteractionWithPaths[],
     dryRun: boolean,
     isJson: boolean
   ): void {
@@ -258,12 +388,21 @@ export default class Flows extends Command {
         }
       : db.getFlowCoverage();
 
+    // Count test-internal exclusions
+    const testInternalCount = interactions.filter((i) => i.pattern === 'test-internal').length;
+    const relevantTotal = coverage.totalInteractions - testInternalCount;
+    const relevantCovered = dryRun
+      ? interactions.filter((i) => i.pattern !== 'test-internal' && coveredInteractionIds.has(i.id)).length
+      : coverage.coveredByFlows; // getCoverage already excludes test-internal
+    const relevantPercentage = relevantTotal > 0 ? (relevantCovered / relevantTotal) * 100 : 0;
+
     const result = {
       entryPointModules: entryPointModules.length,
       flowsCreated: enhancedFlows.length,
       userFlows: userFlowCount,
       internalFlows: internalFlowCount,
       coverage,
+      testInternalExcluded: testInternalCount,
     };
 
     if (isJson) {
@@ -274,14 +413,100 @@ export default class Flows extends Command {
       this.log(`Flows created: ${result.flowsCreated}`);
       this.log(`  - User flows: ${result.userFlows}`);
       this.log(`  - Internal/gap flows: ${result.internalFlows}`);
-      this.log(
-        `Interaction coverage: ${result.coverage.coveredByFlows}/${result.coverage.totalInteractions} (${result.coverage.percentage.toFixed(1)}%)`
-      );
+      if (testInternalCount > 0) {
+        this.log(
+          `Interaction coverage: ${relevantCovered}/${relevantTotal} relevant (${relevantPercentage.toFixed(1)}%)`
+        );
+        this.log(chalk.gray(`  (${testInternalCount} test-internal interactions excluded)`));
+      } else {
+        this.log(
+          `Interaction coverage: ${result.coverage.coveredByFlows}/${result.coverage.totalInteractions} (${result.coverage.percentage.toFixed(1)}%)`
+        );
+      }
 
       if (dryRun) {
         this.log('');
         this.log(chalk.gray('(Dry run - no changes persisted)'));
       }
     }
+  }
+
+  /**
+   * Check coverage quality gates.
+   */
+  private checkCoverageGates(
+    flows: FlowSuggestion[],
+    interactions: InteractionWithPaths[],
+    entryPointModules: EntryPointModuleInfo[],
+    thresholds: {
+      minInteractionCoverage: number;
+      maxGapFlowRatio: number;
+      minEntryPointYield: number;
+      minInferredCoverage: number;
+    }
+  ): { passed: boolean; failures: Array<{ gate: string; actual: number; threshold: number; details: string }> } {
+    const failures: Array<{ gate: string; actual: number; threshold: number; details: string }> = [];
+
+    // Filter out test-internal interactions from coverage calculation
+    const relevantInteractions = interactions.filter((i) => i.pattern !== 'test-internal');
+
+    // Gate 1: Interaction coverage (excludes test-internal)
+    const coveredIds = new Set(flows.flatMap((f) => f.interactionIds));
+    const relevantCoveredCount = relevantInteractions.filter((i) => coveredIds.has(i.id)).length;
+    const interactionCoverage =
+      relevantInteractions.length > 0 ? (relevantCoveredCount / relevantInteractions.length) * 100 : 100;
+    if (interactionCoverage < thresholds.minInteractionCoverage) {
+      failures.push({
+        gate: 'interaction-coverage',
+        actual: interactionCoverage,
+        threshold: thresholds.minInteractionCoverage,
+        details: `${relevantCoveredCount}/${relevantInteractions.length} relevant interactions covered by flows`,
+      });
+    }
+
+    // Gate 2: Gap flow ratio
+    const gapFlows = flows.filter((f) => f.entryPointModuleId === null);
+    const gapRatio = flows.length > 0 ? (gapFlows.length / flows.length) * 100 : 0;
+    if (gapRatio > thresholds.maxGapFlowRatio) {
+      failures.push({
+        gate: 'gap-flow-ratio',
+        actual: gapRatio,
+        threshold: thresholds.maxGapFlowRatio,
+        details: `${gapFlows.length}/${flows.length} flows are internal/gap (want < ${thresholds.maxGapFlowRatio}%)`,
+      });
+    }
+
+    // Gate 3: Entry point yield
+    const userFlows = flows.filter((f) => f.entryPointModuleId !== null);
+    const modulesWithFlows = new Set(
+      userFlows.filter((f) => f.interactionIds.length >= 2).map((f) => f.entryPointModuleId)
+    );
+    const entryPointYield =
+      entryPointModules.length > 0 ? (modulesWithFlows.size / entryPointModules.length) * 100 : 100;
+    if (entryPointYield < thresholds.minEntryPointYield) {
+      failures.push({
+        gate: 'entry-point-yield',
+        actual: entryPointYield,
+        threshold: thresholds.minEntryPointYield,
+        details: `${modulesWithFlows.size}/${entryPointModules.length} entry points produced meaningful flows`,
+      });
+    }
+
+    // Gate 4: Inferred interaction inclusion
+    const inferredInteractions = interactions.filter((i) => i.source === 'llm-inferred');
+    if (inferredInteractions.length > 0) {
+      const inferredCovered = inferredInteractions.filter((i) => coveredIds.has(i.id)).length;
+      const inferredCoverage = (inferredCovered / inferredInteractions.length) * 100;
+      if (inferredCoverage < thresholds.minInferredCoverage) {
+        failures.push({
+          gate: 'inferred-interaction-coverage',
+          actual: inferredCoverage,
+          threshold: thresholds.minInferredCoverage,
+          details: `${inferredCovered}/${inferredInteractions.length} inferred (cross-boundary) interactions in flows`,
+        });
+      }
+    }
+
+    return { passed: failures.length === 0, failures };
   }
 }

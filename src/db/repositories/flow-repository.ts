@@ -637,11 +637,17 @@ export class FlowRepository {
     ensureFlowsTables(this.db);
     ensureInteractionsTables(this.db);
 
-    const totalStmt = this.db.prepare('SELECT COUNT(*) as count FROM interactions');
+    // Exclude test-internal interactions from the total
+    const totalStmt = this.db.prepare(
+      "SELECT COUNT(*) as count FROM interactions WHERE pattern IS NULL OR pattern != 'test-internal'"
+    );
     const totalInteractions = (totalStmt.get() as { count: number }).count;
 
     const coveredStmt = this.db.prepare(`
-      SELECT COUNT(DISTINCT interaction_id) as count FROM flow_steps
+      SELECT COUNT(DISTINCT fs.interaction_id) as count
+      FROM flow_steps fs
+      JOIN interactions i ON fs.interaction_id = i.id
+      WHERE i.pattern IS NULL OR i.pattern != 'test-internal'
     `);
     const coveredByFlows = (coveredStmt.get() as { count: number }).count;
 
