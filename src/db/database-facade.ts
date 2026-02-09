@@ -667,6 +667,8 @@ export class IndexDatabase implements IIndexWriter {
       entryPath?: string;
       stakeholder?: FlowStakeholder;
       description?: string;
+      actionType?: string;
+      targetEntity?: string;
     }
   ): boolean {
     return this.flows.update(flowId, updates);

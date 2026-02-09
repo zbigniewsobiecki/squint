@@ -239,6 +239,22 @@ export default class Flows extends Command {
           );
 
           if (validatorFlows.length > 0) {
+            // Build dedup key set from existing flows
+            const existingKeys = new Set(
+              enhancedFlows
+                .filter((f) => f.actionType && f.targetEntity)
+                .map((f) => `${f.entryPointModuleId}:${f.actionType}:${f.targetEntity}`)
+            );
+
+            const dedup = (flows: FlowSuggestion[]): FlowSuggestion[] =>
+              flows.filter((f) => {
+                if (!f.actionType || !f.targetEntity) return true;
+                const key = `${f.entryPointModuleId}:${f.actionType}:${f.targetEntity}`;
+                if (existingKeys.has(key)) return false;
+                existingKeys.add(key);
+                return true;
+              });
+
             // Run through enhancer for consistent naming
             try {
               const enhancedValidatorFlows = await sharedFlowEnhancer.enhanceFlowsWithLLM(
@@ -247,18 +263,24 @@ export default class Flows extends Command {
                 model,
                 llmOptions
               );
-              enhancedFlows.push(...enhancedValidatorFlows);
+              const dedupedFlows = dedup(enhancedValidatorFlows);
+              enhancedFlows.push(...dedupedFlows);
+              const filteredCount = enhancedValidatorFlows.length - dedupedFlows.length;
+              const suffix = filteredCount > 0 ? ` (${filteredCount} duplicates filtered)` : '';
               logVerbose(
                 this,
-                `  Added ${enhancedValidatorFlows.length} flows from validation pass ${attempt + 1}`,
+                `  Added ${dedupedFlows.length} flows from validation pass ${attempt + 1}${suffix}`,
                 verbose,
                 isJson
               );
             } catch {
-              enhancedFlows.push(...validatorFlows);
+              const dedupedFlows = dedup(validatorFlows);
+              enhancedFlows.push(...dedupedFlows);
+              const filteredCount = validatorFlows.length - dedupedFlows.length;
+              const suffix = filteredCount > 0 ? ` (${filteredCount} duplicates filtered)` : '';
               logVerbose(
                 this,
-                `  Added ${validatorFlows.length} unenhanced flows from validation pass ${attempt + 1}`,
+                `  Added ${dedupedFlows.length} unenhanced flows from validation pass ${attempt + 1}${suffix}`,
                 verbose,
                 isJson
               );
@@ -325,10 +347,10 @@ export default class Flows extends Command {
     const usedSlugs = new Set<string>();
 
     for (const flow of flows) {
-      let slug = flow.slug;
-      let counter = 1;
-      while (usedSlugs.has(slug)) {
-        slug = `${flow.slug}-${counter++}`;
+      const slug = flow.slug;
+      if (usedSlugs.has(slug)) {
+        logVerbose(this, `  Skipping duplicate flow: ${flow.name} (slug: ${slug})`, verbose, isJson);
+        continue;
       }
       usedSlugs.add(slug);
 
@@ -339,6 +361,8 @@ export default class Flows extends Command {
           entryPath: flow.entryPath,
           stakeholder: flow.stakeholder,
           description: flow.description,
+          actionType: flow.actionType ?? undefined,
+          targetEntity: flow.targetEntity ?? undefined,
         });
 
         // Add module-level steps (for backward compatibility / architecture views)

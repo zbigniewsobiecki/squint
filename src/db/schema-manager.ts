@@ -231,6 +231,17 @@ export function ensureFlowsTables(db: Database.Database): void {
         `);
       }
     }
+
+    // Check for action_type column
+    const hasActionType = db
+      .prepare("SELECT COUNT(*) as count FROM pragma_table_info('flows') WHERE name='action_type'")
+      .get() as { count: number };
+    if (hasActionType.count === 0) {
+      db.exec(`
+        ALTER TABLE flows ADD COLUMN action_type TEXT;
+        ALTER TABLE flows ADD COLUMN target_entity TEXT;
+      `);
+    }
   }
 
   // Ensure flow_steps table exists

@@ -239,6 +239,8 @@ export interface Flow {
   entryPath: string | null; // e.g., "POST /api/auth/login"
   stakeholder: FlowStakeholder | null; // user, admin, system, developer, external
   description: string | null;
+  actionType: string | null;
+  targetEntity: string | null;
   createdAt: string;
 }
 

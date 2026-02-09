@@ -19,6 +19,8 @@ export interface FlowInsertOptions {
   entryPath?: string;
   stakeholder?: FlowStakeholder;
   description?: string;
+  actionType?: string;
+  targetEntity?: string;
 }
 
 export interface FlowUpdateOptions {
@@ -28,6 +30,8 @@ export interface FlowUpdateOptions {
   entryPath?: string;
   stakeholder?: FlowStakeholder;
   description?: string;
+  actionType?: string;
+  targetEntity?: string;
 }
 
 export interface FlowStats {
@@ -50,8 +54,8 @@ export class FlowRepository {
     ensureFlowsTables(this.db);
 
     const stmt = this.db.prepare(`
-      INSERT INTO flows (name, slug, entry_point_module_id, entry_point_id, entry_path, stakeholder, description)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO flows (name, slug, entry_point_module_id, entry_point_id, entry_path, stakeholder, description, action_type, target_entity)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -61,7 +65,9 @@ export class FlowRepository {
       options?.entryPointId ?? null,
       options?.entryPath ?? null,
       options?.stakeholder ?? null,
-      options?.description ?? null
+      options?.description ?? null,
+      options?.actionType ?? null,
+      options?.targetEntity ?? null
     );
 
     return result.lastInsertRowid as number;
@@ -82,6 +88,8 @@ export class FlowRepository {
         entry_path as entryPath,
         stakeholder,
         description,
+        action_type as actionType,
+        target_entity as targetEntity,
         created_at as createdAt
       FROM flows
       WHERE id = ?
@@ -105,6 +113,8 @@ export class FlowRepository {
         entry_path as entryPath,
         stakeholder,
         description,
+        action_type as actionType,
+        target_entity as targetEntity,
         created_at as createdAt
       FROM flows
       WHERE slug = ?
@@ -128,6 +138,8 @@ export class FlowRepository {
         entry_path as entryPath,
         stakeholder,
         description,
+        action_type as actionType,
+        target_entity as targetEntity,
         created_at as createdAt
       FROM flows
       ORDER BY name
@@ -150,6 +162,8 @@ export class FlowRepository {
         entry_path as entryPath,
         stakeholder,
         description,
+        action_type as actionType,
+        target_entity as targetEntity,
         created_at as createdAt
       FROM flows
       WHERE stakeholder = ?
@@ -173,6 +187,8 @@ export class FlowRepository {
         entry_path as entryPath,
         stakeholder,
         description,
+        action_type as actionType,
+        target_entity as targetEntity,
         created_at as createdAt
       FROM flows
       WHERE entry_point_id = ?
@@ -196,6 +212,8 @@ export class FlowRepository {
         entry_path as entryPath,
         stakeholder,
         description,
+        action_type as actionType,
+        target_entity as targetEntity,
         created_at as createdAt
       FROM flows
       WHERE entry_point_module_id = ?
@@ -298,6 +316,14 @@ export class FlowRepository {
     if (updates.description !== undefined) {
       sets.push('description = ?');
       params.push(updates.description);
+    }
+    if (updates.actionType !== undefined) {
+      sets.push('action_type = ?');
+      params.push(updates.actionType);
+    }
+    if (updates.targetEntity !== undefined) {
+      sets.push('target_entity = ?');
+      params.push(updates.targetEntity);
     }
 
     if (sets.length === 0) return false;
@@ -583,6 +609,8 @@ export class FlowRepository {
         entryPath: flowWithSteps.entryPath,
         stakeholder: flowWithSteps.stakeholder,
         description: flowWithSteps.description,
+        actionType: flowWithSteps.actionType,
+        targetEntity: flowWithSteps.targetEntity,
         createdAt: flowWithSteps.createdAt,
       },
       interactions: flowWithSteps.steps.map((s) => s.interaction),
@@ -676,6 +704,8 @@ export class FlowRepository {
         f.entry_path as entryPath,
         f.stakeholder,
         f.description,
+        f.action_type as actionType,
+        f.target_entity as targetEntity,
         f.created_at as createdAt
       FROM flows f
       JOIN flow_steps fs ON f.id = fs.flow_id
