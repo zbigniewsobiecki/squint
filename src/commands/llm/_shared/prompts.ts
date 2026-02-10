@@ -55,22 +55,28 @@ Respond with **only** a CSV table with this exact format:
 
 \`\`\`csv
 type,id,field,value
-symbol,42,purpose,"Handles user authentication requests"
-symbol,42,domain,"[""auth"",""http""]"
-symbol,42,role,"controller"
-symbol,42,pure,"false"
-relationship,42,15,"delegates authentication logic to service layer"
-relationship,42,23,"uses password utility for secure hashing"
-symbol,43,purpose,"Business logic for user login"
-symbol,43,domain,"[""auth"",""business-logic""]"
-relationship,43,8,"queries user data from database model"
+symbol,100,purpose,"Handles user authentication requests"
+symbol,100,domain,"[""auth"",""http""]"
+symbol,100,role,"controller"
+symbol,100,pure,"false"
+relationship,100,207,"delegates authentication logic to service layer"
+relationship,100,53,"uses password utility for secure hashing"
+symbol,207,purpose,"Business logic for user login"
+symbol,207,domain,"[""auth"",""business-logic""]"
+relationship,207,88,"queries user data from database model"
+relationship,207,12,"validates input against schema constraints"
 \`\`\`
 
 ## CSV Columns
 - **type**: "symbol" or "relationship"
 - **id**: symbol ID (for symbol rows) or from_id (for relationship rows)
-- **field**: aspect name (for symbols) or to_id (for relationships)
+- **field**: **numeric to_id** (for relationship rows). Use the ID shown as \`(#N)\` in the dependency list, never the symbol name.
 - **value**: the annotation value
+
+## Relationship Rules
+- The field column in relationship rows must be a **numeric ID** — e.g. for \`execAsync (#15)\`, write \`relationship,42,15,"..."\` not \`relationship,42,execAsync,"..."\`
+- Only output relationship rows for pairs listed under "Relationships to annotate" — do not annotate context-only dependencies
+- If you cannot determine an annotation for a relationship, **omit the row entirely** — never use "null" as an ID or value
 
 ## CSV Rules
 - Header row must be exactly: type,id,field,value
