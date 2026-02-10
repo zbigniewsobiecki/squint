@@ -28,6 +28,63 @@ const AMBIENT_GLOBALS = new Set([
   'location',
 ]);
 
+/** Built-in global functions that are pure (no side effects when called at module scope). */
+const PURE_GLOBAL_FUNCTIONS = new Set([
+  'parseInt',
+  'parseFloat',
+  'String',
+  'Number',
+  'Boolean',
+  'BigInt',
+  'Array',
+  'Object',
+  'Symbol',
+  'isNaN',
+  'isFinite',
+  'encodeURIComponent',
+  'decodeURIComponent',
+  'encodeURI',
+  'decodeURI',
+  'atob',
+  'btoa',
+  'structuredClone',
+]);
+
+/** Built-in constructors that are pure (no side effects when constructed at module scope). */
+const PURE_GLOBAL_CONSTRUCTORS = new Set([
+  'Date',
+  'RegExp',
+  'Error',
+  'TypeError',
+  'RangeError',
+  'SyntaxError',
+  'ReferenceError',
+  'URIError',
+  'EvalError',
+  'AggregateError',
+  'Map',
+  'Set',
+  'WeakMap',
+  'WeakSet',
+  'URL',
+  'URLSearchParams',
+  'Headers',
+  'FormData',
+  'AbortController',
+  'TextEncoder',
+  'TextDecoder',
+  'Blob',
+  'File',
+  'Int8Array',
+  'Uint8Array',
+  'Float32Array',
+  'Float64Array',
+  'ArrayBuffer',
+  'SharedArrayBuffer',
+  'DataView',
+  'Promise',
+]);
+
 /**
  * Detect impure patterns in source code using AST analysis.
  * Returns a list of reasons why the code is impure (empty = possibly pure).
@@ -305,6 +362,10 @@ function walkForImpurity(node: SyntaxNode, localIds: Set<string> | null, reasons
           reasons.push('non-deterministic (new Date())');
         }
       }
+      // Module-scope construction of non-builtin class
+      if (!localIds && ctor?.type === 'identifier' && !PURE_GLOBAL_CONSTRUCTORS.has(ctor.text)) {
+        reasons.push(`module-scope side effect (new ${ctor.text}())`);
+      }
       break;
     }
 
@@ -325,6 +386,10 @@ function walkForImpurity(node: SyntaxNode, localIds: Set<string> | null, reasons
             break;
           }
         }
+      }
+      // Module-scope call to non-builtin function
+      if (!localIds && fn?.type === 'identifier' && !PURE_GLOBAL_FUNCTIONS.has(fn.text)) {
+        reasons.push(`module-scope side effect (${fn.text}())`);
       }
       break;
     }

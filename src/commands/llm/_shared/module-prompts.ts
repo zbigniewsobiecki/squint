@@ -149,6 +149,25 @@ export function buildTreeUserPrompt(context: TreeGenerationContext): string {
 }
 
 // ============================================================
+// Helpers
+// ============================================================
+
+/**
+ * Check if a file path is a test file based on naming conventions.
+ */
+export function isTestFile(filePath: string): boolean {
+  const segments = filePath.split('/');
+  const fileName = segments[segments.length - 1] ?? '';
+  return (
+    fileName.endsWith('.test.ts') ||
+    fileName.endsWith('.test.tsx') ||
+    fileName.endsWith('.spec.ts') ||
+    fileName.endsWith('.spec.tsx') ||
+    segments.includes('__tests__')
+  );
+}
+
+// ============================================================
 // Phase 2: Symbol Assignment
 // ============================================================
 
@@ -157,6 +176,7 @@ export interface SymbolForAssignment {
   name: string;
   kind: string;
   filePath: string;
+  isExported: boolean;
   purpose: string | null;
   domain: string[] | null;
   role: string | null;
@@ -191,7 +211,15 @@ assignment,123,project.shared.utils
 - Module paths must match existing modules in the tree
 - Prefer more specific modules over general ones
 - Group related symbols together
-- Consider the file path as a hint but prioritize functionality`;
+- Consider the file path as a hint but prioritize functionality
+
+## Test Symbol Rules
+- Symbols from test files (*.test.ts, *.spec.ts) that are NOT exported are test-file-local.
+  Assign them to the nearest test module (project.testing.*) — never to production modules.
+- Only exported symbols from dedicated test utility files (test/helpers/*, test/factories/*)
+  belong in specific test infrastructure modules (e.g., project.testing.factories.customers).
+- Non-exported symbols from test files are inline mocks/fixtures — assign them to a general
+  test module like project.testing.helpers or project.testing.mocks, not to granular sub-modules.`;
 }
 
 /**
@@ -240,6 +268,12 @@ export function buildAssignmentUserPrompt(
   for (const sym of symbols) {
     parts.push(`### #${sym.id}: ${sym.name} (${sym.kind})`);
     parts.push(`File: ${sym.filePath}`);
+    if (!sym.isExported) {
+      parts.push(`Exported: no (file-local symbol)`);
+    }
+    if (isTestFile(sym.filePath)) {
+      parts.push(`Test file: yes`);
+    }
 
     if (sym.purpose) {
       parts.push(`Purpose: ${sym.purpose}`);
@@ -267,6 +301,7 @@ export function toSymbolForAssignment(sym: AnnotatedSymbolInfo): SymbolForAssign
     name: sym.name,
     kind: sym.kind,
     filePath: sym.filePath,
+    isExported: sym.isExported,
     purpose: sym.purpose,
     domain: sym.domain,
     role: sym.role,
@@ -282,6 +317,7 @@ export interface ModuleMemberForDeepening {
   name: string;
   kind: string;
   filePath: string;
+  isExported: boolean;
 }
 
 export interface ModuleForDeepening {
@@ -351,7 +387,11 @@ export function buildDeepenUserPrompt(module: ModuleForDeepening): string {
   parts.push('');
 
   for (const member of module.members) {
-    parts.push(`- #${member.definitionId}: ${member.name} (${member.kind}) from ${member.filePath}`);
+    const tags: string[] = [];
+    if (isTestFile(member.filePath)) tags.push('test-file');
+    if (!member.isExported) tags.push('not exported');
+    const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
+    parts.push(`- #${member.definitionId}: ${member.name} (${member.kind}) from ${member.filePath}${tagStr}`);
   }
   parts.push('');
 
@@ -427,7 +467,11 @@ export function buildRebalanceUserPrompt(
   for (const group of ancestorSymbols) {
     parts.push(`### ${group.modulePath} (${group.symbols.length} symbols)`);
     for (const sym of group.symbols) {
-      parts.push(`- #${sym.id}: ${sym.name} (${sym.kind}) from ${sym.filePath}`);
+      const tags: string[] = [];
+      if (isTestFile(sym.filePath)) tags.push('test-file');
+      if (!sym.isExported) tags.push('not exported');
+      const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
+      parts.push(`- #${sym.id}: ${sym.name} (${sym.kind}) from ${sym.filePath}${tagStr}`);
     }
     parts.push('');
   }

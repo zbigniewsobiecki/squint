@@ -137,6 +137,7 @@ export interface ModuleWithMembers extends Module {
     kind: string;
     filePath: string;
     line: number;
+    isExported: boolean;
   }>;
 }
 
@@ -509,6 +510,8 @@ CREATE TABLE definitions (
   column INTEGER NOT NULL,
   end_line INTEGER NOT NULL,
   end_column INTEGER NOT NULL,
+  declaration_end_line INTEGER NOT NULL,
+  declaration_end_column INTEGER NOT NULL,
   extends_name TEXT,          -- Parent class name (for classes)
   implements_names TEXT,      -- JSON array of interface names (for classes)
   extends_interfaces TEXT,    -- JSON array of parent interfaces (for interfaces)

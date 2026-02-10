@@ -4,6 +4,7 @@
 
 import fs from 'node:fs';
 import type { IndexDatabase } from '../../../../db/database.js';
+import { isTestFile } from '../module-prompts.js';
 import { detectImpurePatterns } from '../pure-check.js';
 import type { CoverageCheckResult, VerificationIssue } from './verify-types.js';
 
@@ -259,9 +260,23 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
 
   // Missing extends: definitions where extends_name is set but no extends relationship exists
   try {
+    const BUILTIN_BASE_CLASSES = new Set([
+      'Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError',
+      'URIError', 'EvalError', 'AggregateError',
+      'Array', 'Map', 'Set', 'WeakMap', 'WeakSet',
+      'RegExp', 'Promise', 'Proxy',
+      'Event', 'EventTarget', 'CustomEvent',
+      'HTMLElement', 'HTMLDivElement', 'HTMLInputElement',
+      'ReadableStream', 'WritableStream', 'TransformStream',
+      'EventEmitter',
+    ]);
+
     const allDefs = db.getAllDefinitions();
     for (const def of allDefs) {
       if (!def.extendsName) continue;
+
+      // Skip built-in base classes that have no definition in the DB
+      if (BUILTIN_BASE_CLASSES.has(def.extendsName)) continue;
 
       const relsFrom = db.getRelationshipsFrom(def.id);
       const hasExtendsRel = relsFrom.some((r) => r.relationshipType === 'extends');
@@ -377,4 +392,94 @@ function checkRelationshipTypeMismatches(db: IndexDatabase): VerificationIssue[]
   }
 
   return issues;
+}
+
+/**
+ * Check module assignment quality: test symbols in production modules,
+ * non-exported test symbols in shared modules.
+ */
+export function checkModuleAssignments(db: IndexDatabase): CoverageCheckResult {
+  const issues: VerificationIssue[] = [];
+  let structuralIssueCount = 0;
+
+  const modules = db.getAllModules();
+  if (modules.length === 0) {
+    return {
+      passed: true,
+      issues: [],
+      stats: {
+        totalDefinitions: db.getDefinitionCount(),
+        annotatedDefinitions: 0,
+        totalRelationships: 0,
+        annotatedRelationships: 0,
+        missingCount: 0,
+        structuralIssueCount: 0,
+      },
+    };
+  }
+
+  const testModuleIds = db.getTestModuleIds();
+
+  // Check 1: test-in-production — test file symbols assigned to non-test modules
+  const allModulesWithMembers = db.getAllModulesWithMembers();
+  for (const mod of allModulesWithMembers) {
+    if (testModuleIds.has(mod.id)) continue; // production module check only
+
+    for (const member of mod.members) {
+      if (isTestFile(member.filePath)) {
+        issues.push({
+          definitionId: member.definitionId,
+          definitionName: member.name,
+          filePath: member.filePath,
+          line: member.line,
+          severity: 'warning',
+          category: 'test-in-production',
+          message: `Test symbol '${member.name}' from test file assigned to production module '${mod.fullPath}'`,
+          suggestion: 'Move to a test module (project.testing.*)',
+          fixData: { action: 'move-to-test-module' },
+        });
+        structuralIssueCount++;
+      }
+    }
+  }
+
+  // Check 2: non-exported test symbol in shared module
+  // Flag non-exported symbols from test files assigned to modules that have
+  // members from multiple different files (i.e. shared/infrastructure modules)
+  for (const mod of allModulesWithMembers) {
+    // Count distinct files in this module
+    const distinctFiles = new Set(mod.members.map((m) => m.filePath));
+    if (distinctFiles.size <= 1) continue; // single-file module is fine
+
+    for (const member of mod.members) {
+      if (isTestFile(member.filePath) && !member.isExported) {
+        issues.push({
+          definitionId: member.definitionId,
+          definitionName: member.name,
+          filePath: member.filePath,
+          line: member.line,
+          severity: 'info',
+          category: 'non-exported-in-shared',
+          message: `Non-exported test symbol '${member.name}' in shared module '${mod.fullPath}' (${distinctFiles.size} files)`,
+          suggestion: 'File-local test symbols should not be in shared modules — assign to a general test module',
+        });
+      }
+    }
+  }
+
+  const totalDefinitions = db.getDefinitionCount();
+  const passed = structuralIssueCount === 0;
+
+  return {
+    passed,
+    issues,
+    stats: {
+      totalDefinitions,
+      annotatedDefinitions: totalDefinitions,
+      totalRelationships: 0,
+      annotatedRelationships: 0,
+      missingCount: 0,
+      structuralIssueCount,
+    },
+  };
 }

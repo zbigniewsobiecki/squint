@@ -10,7 +10,7 @@ export interface VerificationIssue {
   message: string;
   suggestion?: string;
   fixData?: {
-    action: 'set-pure-false' | 'change-relationship-type';
+    action: 'set-pure-false' | 'change-relationship-type' | 'move-to-test-module';
     targetDefinitionId?: number;
     expectedType?: string;
   };

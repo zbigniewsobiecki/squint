@@ -295,6 +295,8 @@ export class DefinitionRepository {
         d.column,
         d.end_line,
         d.end_column,
+        d.declaration_end_line,
+        d.declaration_end_column,
         d.extends_name,
         d.implements_names,
         d.extends_interfaces
@@ -310,6 +312,8 @@ export class DefinitionRepository {
       column: number;
       end_line: number;
       end_column: number;
+      declaration_end_line: number;
+      declaration_end_column: number;
       extends_name: string | null;
       implements_names: string | null;
       extends_interfaces: string | null;
@@ -322,6 +326,7 @@ export class DefinitionRepository {
       isDefault: row.is_default === 1,
       position: { row: row.line - 1, column: row.column },
       endPosition: { row: row.end_line - 1, column: row.end_column },
+      declarationEndPosition: { row: row.declaration_end_line - 1, column: row.declaration_end_column },
       ...(row.extends_name && { extends: row.extends_name }),
       ...(row.implements_names && { implements: JSON.parse(row.implements_names) as string[] }),
       ...(row.extends_interfaces && { extendsAll: JSON.parse(row.extends_interfaces) as string[] }),
@@ -339,6 +344,8 @@ export class DefinitionRepository {
         d.column,
         d.end_line,
         d.end_column,
+        d.declaration_end_line,
+        d.declaration_end_column,
         d.extends_name,
         d.implements_names,
         d.extends_interfaces
@@ -356,6 +363,8 @@ export class DefinitionRepository {
       column: number;
       end_line: number;
       end_column: number;
+      declaration_end_line: number;
+      declaration_end_column: number;
       extends_name: string | null;
       implements_names: string | null;
       extends_interfaces: string | null;
@@ -368,6 +377,7 @@ export class DefinitionRepository {
       isDefault: row.is_default === 1,
       position: { row: row.line - 1, column: row.column },
       endPosition: { row: row.end_line - 1, column: row.end_column },
+      declarationEndPosition: { row: row.declaration_end_line - 1, column: row.declaration_end_column },
       ...(row.extends_name && { extends: row.extends_name }),
       ...(row.implements_names && { implements: JSON.parse(row.implements_names) as string[] }),
       ...(row.extends_interfaces && { extendsAll: JSON.parse(row.extends_interfaces) as string[] }),

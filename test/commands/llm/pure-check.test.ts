@@ -291,6 +291,53 @@ function pure(x: number) { return x * 2; }`;
     });
   });
 
+  describe('module-scope side effect detection', () => {
+    it('detects module-scope call to imported function (rateLimit)', () => {
+      const source = `const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });`;
+      const reasons = detectImpurePatterns(source);
+      expect(reasons).toContain('module-scope side effect (rateLimit())');
+    });
+
+    it('detects module-scope call to imported function (createPool)', () => {
+      const source = `const pool = createPool({ host: 'localhost', port: 5432 });`;
+      const reasons = detectImpurePatterns(source);
+      expect(reasons).toContain('module-scope side effect (createPool())');
+    });
+
+    it('does NOT flag module-scope call to pure built-in (parseInt)', () => {
+      const source = `const x = parseInt("42");`;
+      const reasons = detectImpurePatterns(source);
+      const moduleScopeReasons = reasons.filter((r) => r.includes('module-scope'));
+      expect(moduleScopeReasons).toEqual([]);
+    });
+
+    it('does NOT flag module-scope new RegExp (pure built-in constructor)', () => {
+      const source = `const regex = new RegExp("abc");`;
+      const reasons = detectImpurePatterns(source);
+      const moduleScopeReasons = reasons.filter((r) => r.includes('module-scope'));
+      expect(moduleScopeReasons).toEqual([]);
+    });
+
+    it('detects module-scope new of non-builtin class (QueryClient)', () => {
+      const source = `const client = new QueryClient();`;
+      const reasons = detectImpurePatterns(source);
+      expect(reasons).toContain('module-scope side effect (new QueryClient())');
+    });
+
+    it('does NOT flag calls inside a function body', () => {
+      const source = `function setup() { const limiter = rateLimit({ max: 100 }); return limiter; }`;
+      const reasons = detectImpurePatterns(source);
+      const moduleScopeReasons = reasons.filter((r) => r.includes('module-scope'));
+      expect(moduleScopeReasons).toEqual([]);
+    });
+
+    it('detects module-scope express() call', () => {
+      const source = `const app = express();`;
+      const reasons = detectImpurePatterns(source);
+      expect(reasons).toContain('module-scope side effect (express())');
+    });
+  });
+
   describe('edge cases', () => {
     it('empty string returns empty', () => {
       expect(detectImpurePatterns('')).toEqual([]);

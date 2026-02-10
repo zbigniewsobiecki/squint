@@ -42,13 +42,16 @@ wait_for_enter "parsing done"
 ./bin/dev.js llm annotate --aspect purpose --aspect domain --aspect pure --model $MODEL -d $DB --batch-size 40 --max-iterations 80 $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
 wait_for_enter "annotate done"
 
-./bin/dev.js llm modules --model $MODEL -d $DB $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
-wait_for_enter "modules done"
+./bin/dev.js llm relationships --model $MODEL -d $DB --batch-size 40 --max-iterations 80 $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+wait_for_enter "relationships done"
 
-./bin/dev.js llm interactions -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
-wait_for_enter "interactions done"
-
-./bin/dev.js llm flows -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
-wait_for_enter "flows done"
-
-./bin/dev.js llm features -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+# ./bin/dev.js llm modules --model $MODEL -d $DB $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+# wait_for_enter "modules done"
+#
+# ./bin/dev.js llm interactions -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+# wait_for_enter "interactions done"
+#
+# ./bin/dev.js llm flows -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+# wait_for_enter "flows done"
+#
+# ./bin/dev.js llm features -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { ensureRelationshipTypeColumn } from '../schema-manager.js';
+import { ensureDeclarationEndColumns, ensureRelationshipTypeColumn } from '../schema-manager.js';
 import type {
   EnhancedRelationshipContext,
   RelationshipAnnotation,
@@ -258,6 +258,7 @@ export class RelationshipRepository {
    * Get definitions that have calls to other definitions but no annotation.
    */
   getUnannotated(options?: { limit?: number; fromDefinitionId?: number }): UnannotatedRelationship[] {
+    ensureDeclarationEndColumns(this.db);
     const limit = options?.limit ?? 20;
 
     let whereClause = '';
@@ -282,7 +283,7 @@ export class RelationshipRepository {
         dep_def.line as toLine
       FROM definitions source
       JOIN files sf ON source.file_id = sf.id
-      JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+      JOIN usages u ON u.line >= source.line AND u.line <= source.declaration_end_line
       JOIN symbols s ON u.symbol_id = s.id
       JOIN definitions dep_def ON s.definition_id = dep_def.id
       JOIN files df ON dep_def.file_id = df.id
@@ -308,6 +309,7 @@ export class RelationshipRepository {
    * Get count of unannotated relationships.
    */
   getUnannotatedCount(fromDefinitionId?: number): number {
+    ensureDeclarationEndColumns(this.db);
     let whereClause = '';
     const params: number[] = [];
 
@@ -319,7 +321,7 @@ export class RelationshipRepository {
     const sql = `
       SELECT COUNT(DISTINCT source.id || '-' || dep_def.id) as count
       FROM definitions source
-      JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+      JOIN usages u ON u.line >= source.line AND u.line <= source.declaration_end_line
       JOIN symbols s ON u.symbol_id = s.id
       JOIN definitions dep_def ON s.definition_id = dep_def.id
       LEFT JOIN relationship_annotations ra
@@ -357,6 +359,7 @@ export class RelationshipRepository {
     }
 
     // Get unannotated relationships with basic info
+    ensureDeclarationEndColumns(this.db);
     const sql = `
       SELECT DISTINCT
         source.id as fromDefinitionId,
@@ -374,7 +377,7 @@ export class RelationshipRepository {
         u.line as usageLine
       FROM definitions source
       JOIN files sf ON source.file_id = sf.id
-      JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+      JOIN usages u ON u.line >= source.line AND u.line <= source.declaration_end_line
       JOIN symbols s ON u.symbol_id = s.id
       JOIN definitions dep_def ON s.definition_id = dep_def.id
       JOIN files df ON dep_def.file_id = df.id
@@ -454,7 +457,7 @@ export class RelationshipRepository {
       const otherToRelsStmt = this.db.prepare(`
         SELECT DISTINCT source.name
         FROM definitions source
-        JOIN usages u ON u.line >= source.line AND u.line <= source.end_line
+        JOIN usages u ON u.line >= source.line AND u.line <= source.declaration_end_line
         JOIN symbols s ON u.symbol_id = s.id
         WHERE s.definition_id = ?
           AND source.id != ?

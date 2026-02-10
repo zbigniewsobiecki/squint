@@ -3,6 +3,7 @@ import chalk from 'chalk';
 
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
+import { checkModuleAssignments } from './_shared/verify/coverage-checker.js';
 import {
   type LlmLogOptions,
   completeWithLogging,
@@ -43,6 +44,14 @@ export default class Modules extends BaseLlmCommand {
     database: SharedFlags.database,
     json: SharedFlags.json,
     ...LlmFlags,
+    verify: Flags.boolean({
+      description: 'Verify existing module assignments instead of creating new ones',
+      default: false,
+    }),
+    fix: Flags.boolean({
+      description: 'Auto-fix structural issues found during verification (e.g., move test symbols to test modules)',
+      default: false,
+    }),
     'max-gate-retries': Flags.integer({
       default: 3,
       description: 'Maximum retry attempts when assignment gate fails',
@@ -87,6 +96,12 @@ export default class Modules extends BaseLlmCommand {
       showResponses: ctx.llmOptions.showLlmResponses,
       isJson,
     };
+
+    // Verify mode: run verification instead of assignment
+    if (flags.verify) {
+      this.runModuleVerify(ctx, flags);
+      return;
+    }
 
     // Check existing modules
     const existingModuleCount = db.getModuleCount();
@@ -742,6 +757,7 @@ assignment,42,project.frontend.screens.login
             name: m.name,
             kind: m.kind,
             filePath: m.filePath,
+            isExported: m.isExported,
           })),
         };
 
@@ -1066,6 +1082,87 @@ assignment,42,project.frontend.screens.login
       );
     }
     return hints;
+  }
+
+  /**
+   * Run module assignment verification checks.
+   */
+  private runModuleVerify(ctx: LlmContext, flags: Record<string, unknown>): void {
+    const { db, isJson, dryRun } = ctx;
+    const shouldFix = flags.fix as boolean;
+
+    if (!isJson) {
+      this.log(chalk.bold('Module Assignment Verification'));
+      this.log('');
+    }
+
+    const result = checkModuleAssignments(db);
+
+    if (!isJson) {
+      const warningIssues = result.issues.filter((i) => i.severity === 'warning');
+      const infoIssues = result.issues.filter((i) => i.severity === 'info');
+
+      if (warningIssues.length > 0) {
+        this.log(chalk.yellow(`  Warnings (${warningIssues.length}):`));
+        for (const issue of warningIssues.slice(0, 30)) {
+          this.log(`    ${chalk.yellow('WARN')} [${issue.category}] ${issue.message}`);
+        }
+        if (warningIssues.length > 30) {
+          this.log(chalk.gray(`    ... and ${warningIssues.length - 30} more`));
+        }
+        this.log('');
+      }
+
+      if (infoIssues.length > 0) {
+        this.log(chalk.gray(`  Info (${infoIssues.length}):`));
+        for (const issue of infoIssues.slice(0, 20)) {
+          this.log(`    ${chalk.gray('INFO')} [${issue.category}] ${issue.message}`);
+        }
+        if (infoIssues.length > 20) {
+          this.log(chalk.gray(`    ... and ${infoIssues.length - 20} more`));
+        }
+        this.log('');
+      }
+
+      if (result.passed) {
+        this.log(chalk.green('  \u2713 All module assignments passed verification'));
+      } else {
+        this.log(chalk.red(`  \u2717 Verification failed: ${result.stats.structuralIssueCount} structural issues`));
+      }
+    }
+
+    // Auto-fix: move test symbols to nearest test module
+    if (shouldFix && !dryRun) {
+      const testInProdIssues = result.issues.filter((i) => i.fixData?.action === 'move-to-test-module');
+      if (testInProdIssues.length > 0) {
+        // Find a test module to move symbols to
+        const modules = db.getAllModules();
+        const testModules = modules.filter((m) => m.isTest);
+
+        if (testModules.length === 0) {
+          if (!isJson) {
+            this.log(chalk.yellow('  No test modules found — cannot auto-fix test-in-production issues'));
+          }
+        } else {
+          // Use deepest test module as default target
+          const targetModule = testModules.sort((a, b) => b.depth - a.depth)[0];
+          let fixed = 0;
+          for (const issue of testInProdIssues) {
+            if (issue.definitionId) {
+              db.assignSymbolToModule(issue.definitionId, targetModule.id);
+              fixed++;
+            }
+          }
+          if (!isJson) {
+            this.log(chalk.green(`  Fixed: moved ${fixed} test symbols to '${targetModule.fullPath}'`));
+          }
+        }
+      }
+    }
+
+    if (isJson) {
+      this.log(JSON.stringify(result, null, 2));
+    }
   }
 
   /**

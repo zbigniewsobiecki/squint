@@ -9,6 +9,7 @@ export interface ModuleSymbol {
   kind: string;
   filePath: string;
   line: number;
+  isExported: boolean;
 }
 
 export interface ModuleMemberInfo {
@@ -17,6 +18,7 @@ export interface ModuleMemberInfo {
   kind: string;
   filePath: string;
   line: number;
+  isExported: boolean;
 }
 
 export interface ModuleStats {
@@ -297,7 +299,8 @@ export class ModuleRepository {
         d.name,
         d.kind,
         f.path as filePath,
-        d.line
+        d.line,
+        d.is_exported as isExported
       FROM module_members mm
       JOIN definitions d ON mm.definition_id = d.id
       JOIN files f ON d.file_id = f.id
@@ -305,7 +308,8 @@ export class ModuleRepository {
       ORDER BY f.path, d.line
     `);
 
-    return stmt.all(moduleId) as ModuleSymbol[];
+    const rows = stmt.all(moduleId) as Array<Omit<ModuleSymbol, 'isExported'> & { isExported: number }>;
+    return rows.map((row) => ({ ...row, isExported: row.isExported === 1 }));
   }
 
   /**
@@ -521,7 +525,8 @@ export class ModuleRepository {
         d.name,
         d.kind,
         f.path as filePath,
-        d.line
+        d.line,
+        d.is_exported as isExported
       FROM module_members mm
       JOIN definitions d ON mm.definition_id = d.id
       JOIN files f ON d.file_id = f.id
@@ -529,7 +534,8 @@ export class ModuleRepository {
       ORDER BY f.path, d.line
     `);
 
-    return stmt.all(moduleId) as ModuleMemberInfo[];
+    const rows = stmt.all(moduleId) as Array<Omit<ModuleMemberInfo, 'isExported'> & { isExported: number }>;
+    return rows.map((row) => ({ ...row, isExported: row.isExported === 1 }));
   }
 
   /**

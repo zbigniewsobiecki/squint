@@ -59,8 +59,8 @@ export class FileRepository {
 
   insertDefinition(fileId: number, def: Definition): number {
     const stmt = this.db.prepare(`
-      INSERT INTO definitions (file_id, name, kind, is_exported, is_default, line, column, end_line, end_column, extends_name, implements_names, extends_interfaces)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO definitions (file_id, name, kind, is_exported, is_default, line, column, end_line, end_column, declaration_end_line, declaration_end_column, extends_name, implements_names, extends_interfaces)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       fileId,
@@ -72,6 +72,8 @@ export class FileRepository {
       def.position.column,
       def.endPosition.row + 1,
       def.endPosition.column,
+      (def.declarationEndPosition ?? def.endPosition).row + 1,
+      (def.declarationEndPosition ?? def.endPosition).column,
       def.extends ?? null,
       def.implements ? JSON.stringify(def.implements) : null,
       def.extendsAll ? JSON.stringify(def.extendsAll) : null

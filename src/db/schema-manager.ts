@@ -380,6 +380,24 @@ export function ensureDomainsTable(db: Database.Database): void {
 }
 
 /**
+ * Ensure the declaration_end_line/column columns exist on definitions.
+ * For existing databases, defaults them to end_line/end_column.
+ */
+export function ensureDeclarationEndColumns(db: Database.Database): void {
+  const hasColumn = db
+    .prepare("SELECT COUNT(*) as count FROM pragma_table_info('definitions') WHERE name='declaration_end_line'")
+    .get() as { count: number };
+
+  if (hasColumn.count === 0) {
+    db.exec(`
+      ALTER TABLE definitions ADD COLUMN declaration_end_line INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE definitions ADD COLUMN declaration_end_column INTEGER NOT NULL DEFAULT 0;
+      UPDATE definitions SET declaration_end_line = end_line, declaration_end_column = end_column;
+    `);
+  }
+}
+
+/**
  * Ensure the relationship_type column exists on relationship_annotations.
  */
 export function ensureRelationshipTypeColumn(db: Database.Database): void {

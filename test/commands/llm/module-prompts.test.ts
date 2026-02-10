@@ -329,6 +329,7 @@ describe('module-prompts', () => {
         name: 'Foo',
         kind: 'function',
         filePath: '/foo.ts',
+        isExported: true,
         purpose: 'Does stuff',
         domain: ['auth'],
         role: 'service',

@@ -9,6 +9,8 @@ export interface Definition {
   isDefault: boolean;
   position: { row: number; column: number };
   endPosition: { row: number; column: number };
+  /** Syntactic end of the declaration (before any EOF extension). Used for relationship queries. Defaults to endPosition. */
+  declarationEndPosition?: { row: number; column: number };
   extends?: string; // Parent class name (classes only)
   implements?: string[]; // Implemented interfaces (classes only)
   extendsAll?: string[]; // Extended interfaces (interfaces only, can be multiple)
@@ -282,6 +284,7 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
             isDefault: directDefault || (exportInfo?.isDefault ?? false),
             position: { row: node.startPosition.row, column: node.startPosition.column },
             endPosition: { row: node.endPosition.row, column: node.endPosition.column },
+            declarationEndPosition: { row: node.endPosition.row, column: node.endPosition.column },
           });
         }
         break;
@@ -300,6 +303,7 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
             isDefault: directDefault || (exportInfo?.isDefault ?? false),
             position: { row: node.startPosition.row, column: node.startPosition.column },
             endPosition: { row: node.endPosition.row, column: node.endPosition.column },
+            declarationEndPosition: { row: node.endPosition.row, column: node.endPosition.column },
             ...(inheritance.extends && { extends: inheritance.extends }),
             ...(inheritance.implements && { implements: inheritance.implements }),
           });
@@ -330,6 +334,7 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
                 endPosition: extendToEof
                   ? { row: rootNode.endPosition.row, column: rootNode.endPosition.column }
                   : { row: node.endPosition.row, column: node.endPosition.column },
+                declarationEndPosition: { row: node.endPosition.row, column: node.endPosition.column },
               });
             }
           }
@@ -349,6 +354,7 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
             isDefault: directDefault || (exportInfo?.isDefault ?? false),
             position: { row: node.startPosition.row, column: node.startPosition.column },
             endPosition: { row: node.endPosition.row, column: node.endPosition.column },
+            declarationEndPosition: { row: node.endPosition.row, column: node.endPosition.column },
           });
         }
         break;
@@ -367,6 +373,7 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
             isDefault: directDefault || (exportInfo?.isDefault ?? false),
             position: { row: node.startPosition.row, column: node.startPosition.column },
             endPosition: { row: node.endPosition.row, column: node.endPosition.column },
+            declarationEndPosition: { row: node.endPosition.row, column: node.endPosition.column },
             ...(extendsAll.length > 0 && { extendsAll }),
           });
         }
@@ -385,6 +392,7 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
             isDefault: directDefault || (exportInfo?.isDefault ?? false),
             position: { row: node.startPosition.row, column: node.startPosition.column },
             endPosition: { row: node.endPosition.row, column: node.endPosition.column },
+            declarationEndPosition: { row: node.endPosition.row, column: node.endPosition.column },
           });
         }
         break;
