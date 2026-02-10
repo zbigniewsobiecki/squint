@@ -112,7 +112,7 @@ export function computeProcessGroups(db: IndexDatabase): ProcessGroups {
     const files = moduleFiles.get(mod.id);
     if (!files || files.length === 0) {
       // Module has no files with definitions → assign to its own isolated group
-      const isolatedGroup = -(mod.id); // negative to avoid collision with file-based groups
+      const isolatedGroup = -mod.id; // negative to avoid collision with file-based groups
       moduleToGroup.set(mod.id, isolatedGroup);
       groupToModules.set(isolatedGroup, [mod]);
       continue;
@@ -198,34 +198,37 @@ export function getProcessGroupLabel(modules: Module[]): string {
     }
   }
 
-  if (commonDepth > 0) {
-    // Use the deepest common segment as the label
+  if (commonDepth > 1) {
+    // Use the deepest common segment as the label (skip project root)
     const commonPath = allParts[0].slice(0, commonDepth).join('.');
-    // Prefer the segment after the project root
     const parts = commonPath.split('.');
-    return parts.length > 1 ? parts.slice(1).join('.') : parts[0];
+    return parts.slice(1).join('.');
   }
 
-  // No common prefix: collect unique depth-1 segments
-  const depth1Segments = new Set<string>();
+  // Root-only or no common prefix: use the most frequent depth-1 segment
+  const segCounts = new Map<string, number>();
   for (const parts of allParts) {
-    if (parts.length > 1) {
-      depth1Segments.add(parts[1]);
-    } else {
-      depth1Segments.add(parts[0]);
+    const seg = parts.length > 1 ? parts[1] : parts[0];
+    segCounts.set(seg, (segCounts.get(seg) ?? 0) + 1);
+  }
+
+  let bestSeg = '';
+  let bestCount = 0;
+  for (const [seg, count] of segCounts) {
+    if (count > bestCount) {
+      bestSeg = seg;
+      bestCount = count;
     }
   }
 
-  return Array.from(depth1Segments).sort().join(', ');
+  return bestSeg;
 }
 
 /**
  * Get all pairs of process groups for cross-process inference.
  * Returns pairs of (groupA modules, groupB modules) for each unique group pair.
  */
-export function getCrossProcessGroupPairs(
-  groups: ProcessGroups
-): Array<[Module[], Module[]]> {
+export function getCrossProcessGroupPairs(groups: ProcessGroups): Array<[Module[], Module[]]> {
   const groupIds = Array.from(groups.groupToModules.keys());
   const pairs: Array<[Module[], Module[]]> = [];
 

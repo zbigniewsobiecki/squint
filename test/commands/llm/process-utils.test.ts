@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { IndexDatabase } from '../../../src/db/database.js';
 import {
   areSameProcess,
   computeProcessGroups,
@@ -7,6 +6,7 @@ import {
   getProcessDescription,
   getProcessGroupLabel,
 } from '../../../src/commands/llm/_shared/process-utils.js';
+import { IndexDatabase } from '../../../src/db/database.js';
 import type { Module } from '../../../src/db/schema.js';
 
 describe('process-utils', () => {
@@ -46,7 +46,7 @@ describe('process-utils', () => {
     });
   }
 
-  function insertImport(fromFileId: number, toFileId: number, isTypeOnly: boolean = false) {
+  function insertImport(fromFileId: number, toFileId: number, isTypeOnly = false) {
     return db.insertReference(fromFileId, toFileId, {
       type: 'import',
       source: './some-module',
@@ -317,10 +317,7 @@ describe('process-utils', () => {
     });
 
     it('modules with common prefix "project.backend.*" → "backend"', () => {
-      const mods = [
-        { fullPath: 'project.backend.auth' } as Module,
-        { fullPath: 'project.backend.api' } as Module,
-      ];
+      const mods = [{ fullPath: 'project.backend.auth' } as Module, { fullPath: 'project.backend.api' } as Module];
       expect(getProcessGroupLabel(mods)).toBe('backend');
     });
 
@@ -332,12 +329,13 @@ describe('process-utils', () => {
       expect(getProcessGroupLabel(mods)).toBe('backend.services');
     });
 
-    it('modules with no common prefix → sorted depth-1 segments joined by ", "', () => {
+    it('modules with no common prefix → most frequent depth-1 segment', () => {
       const mods = [
         { fullPath: 'alpha.zeta' } as Module,
+        { fullPath: 'alpha.zeta.sub' } as Module,
         { fullPath: 'beta.omega' } as Module,
       ];
-      expect(getProcessGroupLabel(mods)).toBe('omega, zeta');
+      expect(getProcessGroupLabel(mods)).toBe('zeta');
     });
   });
 
@@ -368,7 +366,7 @@ describe('process-utils', () => {
         (mods) => !mods.some((m) => m.depth === 0)
       );
       // The key assertion is about the pairing logic
-      expect(pairs.length).toBe(groups.groupCount * (groups.groupCount - 1) / 2);
+      expect(pairs.length).toBe((groups.groupCount * (groups.groupCount - 1)) / 2);
     });
 
     it('2 disconnected groups → at least 1 pair', () => {
@@ -386,7 +384,7 @@ describe('process-utils', () => {
       const groups = computeProcessGroups(db);
       const pairs = getCrossProcessGroupPairs(groups);
       // Should have C(n,2) pairs where n = number of groups
-      expect(pairs.length).toBe(groups.groupCount * (groups.groupCount - 1) / 2);
+      expect(pairs.length).toBe((groups.groupCount * (groups.groupCount - 1)) / 2);
       expect(pairs.length).toBeGreaterThan(0);
     });
 
