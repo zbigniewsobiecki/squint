@@ -4,12 +4,17 @@
  */
 
 import type { Command } from '@oclif/core';
-import { LLMist } from 'llmist';
 import type { IndexDatabase } from '../../../db/database.js';
 import type { InteractionWithPaths, Module } from '../../../db/schema.js';
 import { parseCSVLine } from '../_shared/csv-utils.js';
 import { groupModulesByEntity } from '../_shared/entity-utils.js';
-import { type LlmLogOptions, logLlmRequest, logLlmResponse, logVerbose } from '../_shared/llm-utils.js';
+import {
+  type LlmLogOptions,
+  completeWithLogging,
+  logLlmRequest,
+  logLlmResponse,
+  logVerbose,
+} from '../_shared/llm-utils.js';
 import type { EntryPointModuleInfo, FlowSuggestion, LlmOptions } from './types.js';
 
 interface CoverageGateFailure {
@@ -63,10 +68,13 @@ export class FlowValidator {
 
     logLlmRequest(this.command, 'validateAndFillGaps', systemPrompt, userPrompt, logOptions);
 
-    const response = await LLMist.complete(userPrompt, {
+    const response = await completeWithLogging({
       model,
       systemPrompt,
+      userPrompt,
       temperature: 0,
+      command: this.command,
+      isJson: this.isJson,
     });
 
     logLlmResponse(this.command, 'validateAndFillGaps', response, logOptions);

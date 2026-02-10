@@ -4,12 +4,12 @@
  */
 
 import type { Command } from '@oclif/core';
-import { LLMist } from 'llmist';
 import type { IndexDatabase } from '../../../db/database.js';
 import type { EnrichedModuleCallEdge, RelationshipWithDetails } from '../../../db/schema.js';
 import { parseCSVLine } from '../_shared/csv-utils.js';
 import {
   type LlmLogOptions,
+  completeWithLogging,
   getErrorMessage,
   logLlmRequest,
   logLlmResponse,
@@ -168,10 +168,13 @@ Identify all user-facing actions for each entry point module. A screen component
 
     logLlmRequest(this.command, 'classifyModuleMembers', systemPrompt, userPrompt, logOptions);
 
-    const response = await LLMist.complete(userPrompt, {
+    const response = await completeWithLogging({
       model,
       systemPrompt,
+      userPrompt,
       temperature: 0,
+      command: this.command,
+      isJson: this.isJson,
     });
 
     logLlmResponse(this.command, 'classifyModuleMembers', response, logOptions);

@@ -1,10 +1,15 @@
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { LLMist } from 'llmist';
 
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
-import { type LlmLogOptions, getErrorMessage, logLlmRequest, logLlmResponse } from './_shared/llm-utils.js';
+import {
+  type LlmLogOptions,
+  completeWithLogging,
+  getErrorMessage,
+  logLlmRequest,
+  logLlmResponse,
+} from './_shared/llm-utils.js';
 import { isValidModulePath, parseAssignmentCsv, parseDeepenCsv, parseTreeCsv } from './_shared/module-csv.js';
 import {
   type DomainSummary,
@@ -182,10 +187,13 @@ export default class Modules extends BaseLlmCommand {
     logLlmRequest(this, 'runTreePhase', systemPrompt, userPrompt, llmLogOptions);
 
     // Call LLM
-    const response = await LLMist.complete(userPrompt, {
+    const response = await completeWithLogging({
       model: flags.model as string,
       systemPrompt,
+      userPrompt,
       temperature: 0,
+      command: this,
+      isJson,
     });
 
     logLlmResponse(this, 'runTreePhase', response, llmLogOptions);
@@ -342,10 +350,14 @@ export default class Modules extends BaseLlmCommand {
       try {
         logLlmRequest(this, `runAssignmentPhase-batch${iteration}`, systemPrompt, userPrompt, llmLogOptions);
 
-        const response = await LLMist.complete(userPrompt, {
+        const response = await completeWithLogging({
           model: flags.model as string,
           systemPrompt,
+          userPrompt,
           temperature: 0,
+          command: this,
+          isJson,
+          iteration: { current: iteration, max: maxIterations },
         });
 
         logLlmResponse(this, `runAssignmentPhase-batch${iteration}`, response, llmLogOptions);
@@ -490,10 +502,14 @@ assignment,42,project.frontend.screens.login
         const userPrompt = buildAssignmentUserPrompt(modules, symbolsForAssignment);
 
         try {
-          const response = await LLMist.complete(userPrompt, {
+          const response = await completeWithLogging({
             model: flags.model as string,
             systemPrompt: relaxedSystemPrompt,
+            userPrompt,
             temperature: 0,
+            command: this,
+            isJson,
+            iteration: { current: retry + 1, max: maxGateRetries },
           });
 
           const { assignments } = parseAssignmentCsv(response);
@@ -591,10 +607,13 @@ assignment,42,project.frontend.screens.login
           const deepenUserPrompt = buildDeepenUserPrompt(moduleForDeepening);
           logLlmRequest(this, `runDeepenPhase-${mod.fullPath}`, deepenSystemPrompt, deepenUserPrompt, llmLogOptions);
 
-          const response = await LLMist.complete(deepenUserPrompt, {
+          const response = await completeWithLogging({
             model: flags.model as string,
             systemPrompt: deepenSystemPrompt,
+            userPrompt: deepenUserPrompt,
             temperature: 0,
+            command: this,
+            isJson,
           });
 
           logLlmResponse(this, `runDeepenPhase-${mod.fullPath}`, response, llmLogOptions);

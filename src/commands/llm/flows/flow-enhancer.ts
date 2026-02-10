@@ -4,10 +4,9 @@
  */
 
 import type { Command } from '@oclif/core';
-import { LLMist } from 'llmist';
 import type { InteractionWithPaths } from '../../../db/schema.js';
 import { parseCSVLine } from '../_shared/csv-utils.js';
-import { type LlmLogOptions, logLlmRequest, logLlmResponse } from '../_shared/llm-utils.js';
+import { type LlmLogOptions, completeWithLogging, logLlmRequest, logLlmResponse } from '../_shared/llm-utils.js';
 import type { FlowSuggestion, LlmOptions } from './types.js';
 
 export class FlowEnhancer {
@@ -45,10 +44,13 @@ export class FlowEnhancer {
 
     logLlmRequest(this.command, 'enhanceFlowsWithLLM', systemPrompt, userPrompt, logOptions);
 
-    const response = await LLMist.complete(userPrompt, {
+    const response = await completeWithLogging({
       model,
       systemPrompt,
+      userPrompt,
       temperature: 0,
+      command: this.command,
+      isJson: this.isJson,
     });
 
     logLlmResponse(this.command, 'enhanceFlowsWithLLM', response, logOptions);

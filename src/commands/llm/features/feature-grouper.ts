@@ -4,10 +4,9 @@
  */
 
 import type { Command } from '@oclif/core';
-import { LLMist } from 'llmist';
 import type { Flow, Module } from '../../../db/schema.js';
 import { extractCsvContent, parseRow, splitCsvLines } from '../_shared/csv-utils.js';
-import { type LlmLogOptions, logLlmRequest, logLlmResponse } from '../_shared/llm-utils.js';
+import { type LlmLogOptions, completeWithLogging, logLlmRequest, logLlmResponse } from '../_shared/llm-utils.js';
 import type { LlmOptions } from '../flows/types.js';
 import type { FeatureSuggestion } from './types.js';
 
@@ -39,10 +38,13 @@ export class FeatureGrouper {
 
     logLlmRequest(this.command, 'groupFlowsIntoFeatures', systemPrompt, userPrompt, logOptions);
 
-    const response = await LLMist.complete(userPrompt, {
+    const response = await completeWithLogging({
       model,
       systemPrompt,
+      userPrompt,
       temperature: 0,
+      command: this.command,
+      isJson: this.isJson,
     });
 
     logLlmResponse(this.command, 'groupFlowsIntoFeatures', response, logOptions);
@@ -54,10 +56,13 @@ export class FeatureGrouper {
       const retryUserPrompt = this.buildRetryPrompt(userPrompt, result.errors);
       logLlmRequest(this.command, 'groupFlowsIntoFeatures (retry)', systemPrompt, retryUserPrompt, logOptions);
 
-      const retryResponse = await LLMist.complete(retryUserPrompt, {
+      const retryResponse = await completeWithLogging({
         model,
         systemPrompt,
+        userPrompt: retryUserPrompt,
         temperature: 0,
+        command: this.command,
+        isJson: this.isJson,
       });
 
       logLlmResponse(this.command, 'groupFlowsIntoFeatures (retry)', retryResponse, logOptions);

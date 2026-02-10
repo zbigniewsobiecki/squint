@@ -1,11 +1,11 @@
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { LLMist } from 'llmist';
 import type { IndexDatabase } from '../../db/database-facade.js';
 import type { EnrichedModuleCallEdge, Module, ModuleCallEdge, ModuleWithMembers } from '../../db/schema.js';
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
 import { parseCSVLine } from './_shared/csv-utils.js';
+import { completeWithLogging, getErrorMessage } from './_shared/llm-utils.js';
 import {
   type ProcessGroups,
   areSameProcess,
@@ -14,7 +14,6 @@ import {
   getProcessDescription,
   getProcessGroupLabel,
 } from './_shared/process-utils.js';
-import { getErrorMessage } from './_shared/llm-utils.js';
 
 interface InteractionSuggestion {
   fromModuleId: number;
@@ -112,7 +111,16 @@ export default class Interactions extends BaseLlmCommand {
       const batch = enrichedEdges.slice(i, i + batchSize);
 
       try {
-        const suggestions = await this.generateInteractionSemantics(batch, model, db);
+        const batchIdx = Math.floor(i / batchSize);
+        const totalBatches = Math.ceil(enrichedEdges.length / batchSize);
+        const suggestions = await this.generateInteractionSemantics(
+          batch,
+          model,
+          db,
+          isJson,
+          batchIdx + 1,
+          totalBatches
+        );
         interactions.push(...suggestions);
 
         if (!isJson && verbose) {
@@ -196,6 +204,7 @@ export default class Interactions extends BaseLlmCommand {
       processGroups,
       existingEdges,
       model,
+      isJson,
       showLlmRequests,
       showLlmResponses
     );
@@ -341,6 +350,7 @@ export default class Interactions extends BaseLlmCommand {
           moduleMap,
           processGroups,
           model,
+          isJson,
           showLlmRequests,
           showLlmResponses
         );
@@ -428,7 +438,10 @@ export default class Interactions extends BaseLlmCommand {
   private async generateInteractionSemantics(
     edges: EnrichedModuleCallEdge[],
     model: string,
-    db: IndexDatabase
+    db: IndexDatabase,
+    isJson: boolean,
+    batchIdx: number,
+    totalBatches: number
   ): Promise<InteractionSuggestion[]> {
     const systemPrompt = `You are a software architect analyzing module-level dependencies.
 
@@ -455,9 +468,7 @@ Guidelines:
     // Build edge descriptions with symbol details and module context
     const edgeDescriptions = edges
       .map((e, i) => {
-        const symbolList = e.calledSymbols
-          .map((s) => `${s.name} (${s.kind}, ${s.callCount} calls)`)
-          .join(', ');
+        const symbolList = e.calledSymbols.map((s) => `${s.name} (${s.kind}, ${s.callCount} calls)`).join(', ');
         const patternInfo = `[${e.edgePattern.toUpperCase()}]`;
         const fromMod = moduleMap.get(e.fromModuleId);
         const toMod = moduleMap.get(e.toModuleId);
@@ -478,10 +489,14 @@ ${edgeDescriptions}
 
 Generate semantic descriptions for each interaction in CSV format.`;
 
-    const response = await LLMist.complete(userPrompt, {
+    const response = await completeWithLogging({
       model,
       systemPrompt,
+      userPrompt,
       temperature: 0,
+      command: this,
+      isJson,
+      iteration: { current: batchIdx, max: totalBatches },
     });
 
     return this.parseInteractionCSV(response, edges);
@@ -567,6 +582,7 @@ Generate semantic descriptions for each interaction in CSV format.`;
     processGroups: ProcessGroups,
     existingEdges: ModuleCallEdge[],
     model: string,
+    isJson: boolean,
     showLlmRequests: boolean,
     showLlmResponses: boolean
   ): Promise<InferredInteraction[]> {
@@ -615,7 +631,14 @@ Generate semantic descriptions for each interaction in CSV format.`;
         this.log(chalk.gray(userPrompt));
       }
 
-      const response = await LLMist.complete(userPrompt, { model, systemPrompt, temperature: 0 });
+      const response = await completeWithLogging({
+        model,
+        systemPrompt,
+        userPrompt,
+        temperature: 0,
+        command: this,
+        isJson,
+      });
 
       if (showLlmResponses) {
         this.log(chalk.green('═'.repeat(60)));
@@ -647,6 +670,7 @@ Generate semantic descriptions for each interaction in CSV format.`;
     moduleMap: Map<number, Module>,
     processGroups: ProcessGroups,
     model: string,
+    isJson: boolean,
     showLlmRequests: boolean,
     showLlmResponses: boolean
   ): Promise<InferredInteraction[]> {
@@ -731,7 +755,14 @@ Evaluate each pair and output CONFIRM or SKIP in CSV format.`;
       this.log(chalk.gray(userPrompt));
     }
 
-    const response = await LLMist.complete(userPrompt, { model, systemPrompt, temperature: 0 });
+    const response = await completeWithLogging({
+      model,
+      systemPrompt,
+      userPrompt,
+      temperature: 0,
+      command: this,
+      isJson,
+    });
 
     if (showLlmResponses) {
       this.log(chalk.green('═'.repeat(60)));

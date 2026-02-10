@@ -5,6 +5,7 @@
 
 import type { Command } from '@oclif/core';
 import chalk from 'chalk';
+import { type LLMMessage, LLMist, type TokenUsage, resolveModel } from 'llmist';
 
 /**
  * Safely extract error message from unknown error type.
@@ -193,6 +194,104 @@ export async function processBatches<T, R>(options: BatchProcessOptions<T, R>): 
   }
 
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// completeWithLogging – wraps every LLM call with one-line before/after logs
+// ---------------------------------------------------------------------------
+
+let _client: LLMist | null = null;
+function getClient(): LLMist {
+  if (!_client) _client = new LLMist();
+  return _client;
+}
+
+export interface CompleteWithLoggingOptions {
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+  temperature?: number;
+  command: Command;
+  isJson: boolean;
+  iteration?: { current: number; max: number }; // max=0 means unlimited
+}
+
+function formatNumber(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
+function formatIterationTag(iter?: { current: number; max: number }): string {
+  if (!iter) return '';
+  if (iter.max === 0) return `  [${iter.current}]`;
+  return `  [${iter.current}/${iter.max}]`;
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatCost(cost: number): string {
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  return `$${cost.toFixed(2)}`;
+}
+
+export async function completeWithLogging(options: CompleteWithLoggingOptions): Promise<string> {
+  const { model, systemPrompt, userPrompt, temperature, command, isJson, iteration } = options;
+
+  const estTokens = Math.round((systemPrompt.length + userPrompt.length) / 4);
+  const iterTag = formatIterationTag(iteration);
+
+  if (!isJson) {
+    command.log(chalk.gray(`  → LLM  ${model}  ~${formatNumber(estTokens)} tok${iterTag}`));
+  }
+
+  const resolvedModel = resolveModel(model);
+  const messages: LLMMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ];
+
+  const client = getClient();
+  const startTime = Date.now();
+  let text = '';
+  let usage: TokenUsage | undefined;
+
+  const stream = client.stream({
+    model: resolvedModel,
+    messages,
+    ...(temperature !== undefined && { temperature }),
+  });
+
+  for await (const chunk of stream) {
+    text += chunk.text;
+    if (chunk.usage) {
+      usage = chunk.usage;
+    }
+  }
+
+  const duration = Date.now() - startTime;
+
+  if (!isJson) {
+    const inputTokens = usage?.inputTokens ?? 0;
+    const outputTokens = usage?.outputTokens ?? 0;
+    const cachedTokens = usage?.cachedInputTokens ?? 0;
+
+    const costEstimate = client.modelRegistry.estimateCost(resolvedModel, inputTokens, outputTokens, cachedTokens);
+    const costStr = costEstimate ? formatCost(costEstimate.totalCost) : '?';
+
+    const parts = [
+      `  ← LLM  ${formatDuration(duration)}`,
+      `in: ${formatNumber(inputTokens)}`,
+      `out: ${formatNumber(outputTokens)}`,
+      `cached: ${formatNumber(cachedTokens)}`,
+      costStr,
+    ];
+
+    command.log(chalk.gray(parts.join('  ') + iterTag));
+  }
+
+  return text.trim();
 }
 
 /**

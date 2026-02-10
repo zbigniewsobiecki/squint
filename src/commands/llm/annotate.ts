@@ -1,6 +1,5 @@
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { LLMist } from 'llmist';
 import type { IndexDatabase, ReadySymbolInfo } from '../../db/database.js';
 import { LlmFlags, SharedFlags, readSourceAsString } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
@@ -14,6 +13,7 @@ import {
   formatIterationResults,
 } from './_shared/coverage.js';
 import { parseCombinedCsv } from './_shared/csv.js';
+import { completeWithLogging } from './_shared/llm-utils.js';
 import {
   type CoverageInfo,
   type DependencyContextEnhanced,
@@ -325,10 +325,13 @@ export default class Annotate extends BaseLlmCommand {
             // Call LLM
             let response: string;
             try {
-              response = await LLMist.complete(userPrompt, {
+              response = await completeWithLogging({
                 model,
                 systemPrompt,
+                userPrompt,
                 temperature: 0,
+                command: this,
+                isJson,
               });
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
@@ -461,10 +464,14 @@ export default class Annotate extends BaseLlmCommand {
       // Call LLM
       let response: string;
       try {
-        response = await LLMist.complete(userPrompt, {
+        response = await completeWithLogging({
           model,
           systemPrompt,
+          userPrompt,
           temperature: 0,
+          command: this,
+          isJson,
+          iteration: { current: iteration, max: maxIterations },
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -748,11 +755,14 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
 \`\`\``;
 
         try {
-          const response = await LLMist.complete(retryPrompt, {
+          const response = await completeWithLogging({
             model,
             systemPrompt:
               'You are annotating code relationships. Provide clear, concise descriptions of how symbols are related.',
+            userPrompt: retryPrompt,
             temperature: 0,
+            command: this,
+            isJson,
           });
 
           // Parse response for relationship annotations
