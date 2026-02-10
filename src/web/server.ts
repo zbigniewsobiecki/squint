@@ -717,16 +717,19 @@ function getProcessGroupsData(database: IndexDatabase): {
   try {
     const processGroups = computeProcessGroups(database);
 
-    const groups = Array.from(processGroups.groupToModules.entries()).map(([groupId, modules]) => ({
-      id: groupId,
-      label: getProcessGroupLabel(modules),
-      moduleIds: modules.map((m) => m.id),
-      moduleCount: modules.length,
-    }));
+    // Filter out isolated singleton groups (negative groupId = module with no files)
+    const groups = Array.from(processGroups.groupToModules.entries())
+      .filter(([groupId, modules]) => groupId >= 0 || modules.length > 1)
+      .map(([groupId, modules]) => ({
+        id: groupId,
+        label: getProcessGroupLabel(modules),
+        moduleIds: modules.map((m) => m.id),
+        moduleCount: modules.length,
+      }));
 
     return {
       groups,
-      groupCount: processGroups.groupCount,
+      groupCount: groups.length,
     };
   } catch {
     return {

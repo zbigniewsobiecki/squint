@@ -22,6 +22,7 @@ import {
   logVerbose,
   logWarning,
 } from './_shared/llm-utils.js';
+import { checkFlowQuality } from './_shared/verify/coverage-checker.js';
 import {
   AtomicFlowBuilder,
   EntryPointDetector,
@@ -42,6 +43,8 @@ export default class Flows extends BaseLlmCommand {
     '<%= config.bin %> llm flows',
     '<%= config.bin %> llm flows --dry-run',
     '<%= config.bin %> llm flows --force',
+    '<%= config.bin %> llm flows --verify',
+    '<%= config.bin %> llm flows --verify --fix',
     '<%= config.bin %> llm flows -d index.db --verbose',
   ];
 
@@ -69,10 +72,24 @@ export default class Flows extends BaseLlmCommand {
       description: 'Maximum retry attempts when coverage gates fail',
       default: 2,
     }),
+    verify: Flags.boolean({
+      description: 'Verify existing flows instead of creating new ones',
+      default: false,
+    }),
+    fix: Flags.boolean({
+      description: 'Auto-fix structural issues found during verification',
+      default: false,
+    }),
   };
 
   protected async execute(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
     const { db, isJson, dryRun, verbose, model, llmOptions } = ctx;
+
+    // Verify mode: run verification instead of generation
+    if (flags.verify) {
+      this.runFlowVerify(ctx, flags);
+      return;
+    }
 
     // Check if flows already exist
     const existingCount = db.getFlowCount();
@@ -561,8 +578,89 @@ export default class Flows extends BaseLlmCommand {
       // Only gate flows that claim a specific actionType from a known entry point
       if (!flow.actionType || !flow.entryPointModuleId) return true;
       const available = moduleActions.get(flow.entryPointModuleId);
-      if (!available) return true; // Unknown module — let through
+      if (!available) return false; // Not a known entry point — reject
       return available.has(flow.actionType);
     });
+  }
+
+  /**
+   * Run flow quality verification (--verify mode).
+   */
+  private runFlowVerify(ctx: LlmContext, flags: Record<string, unknown>): void {
+    const { db, isJson, dryRun } = ctx;
+    const shouldFix = flags.fix as boolean;
+
+    if (!isJson) {
+      this.log(chalk.bold('Flow Quality Verification'));
+      this.log('');
+    }
+
+    const result = checkFlowQuality(db);
+
+    if (!isJson) {
+      const errorIssues = result.issues.filter((i) => i.severity === 'error');
+      const warningIssues = result.issues.filter((i) => i.severity === 'warning');
+      const infoIssues = result.issues.filter((i) => i.severity === 'info');
+
+      if (errorIssues.length > 0) {
+        this.log(chalk.red(`  Errors (${errorIssues.length}):`));
+        for (const issue of errorIssues.slice(0, 30)) {
+          this.log(`    ${chalk.red('ERR')}  [${issue.category}] ${issue.message}`);
+        }
+        if (errorIssues.length > 30) {
+          this.log(chalk.gray(`    ... and ${errorIssues.length - 30} more`));
+        }
+        this.log('');
+      }
+
+      if (warningIssues.length > 0) {
+        this.log(chalk.yellow(`  Warnings (${warningIssues.length}):`));
+        for (const issue of warningIssues.slice(0, 30)) {
+          this.log(`    ${chalk.yellow('WARN')} [${issue.category}] ${issue.message}`);
+        }
+        if (warningIssues.length > 30) {
+          this.log(chalk.gray(`    ... and ${warningIssues.length - 30} more`));
+        }
+        this.log('');
+      }
+
+      if (infoIssues.length > 0) {
+        this.log(chalk.gray(`  Info (${infoIssues.length}):`));
+        for (const issue of infoIssues.slice(0, 30)) {
+          this.log(`    ${chalk.gray('INFO')} [${issue.category}] ${issue.message}`);
+        }
+        if (infoIssues.length > 30) {
+          this.log(chalk.gray(`    ... and ${infoIssues.length - 30} more`));
+        }
+        this.log('');
+      }
+
+      if (result.passed) {
+        this.log(chalk.green('  \u2713 All flows passed verification'));
+      } else {
+        this.log(chalk.red(`  \u2717 Verification failed: ${result.stats.structuralIssueCount} structural issues`));
+      }
+    }
+
+    // Auto-fix: remove orphan-entry-point and empty flows
+    if (shouldFix && !dryRun) {
+      const removableIssues = result.issues.filter((i) => i.fixData?.action === 'remove-flow');
+      if (removableIssues.length > 0) {
+        let fixed = 0;
+        for (const issue of removableIssues) {
+          if (issue.fixData?.targetDefinitionId) {
+            const deleted = db.deleteFlow(issue.fixData.targetDefinitionId);
+            if (deleted) fixed++;
+          }
+        }
+        if (!isJson) {
+          this.log(chalk.green(`  Fixed: removed ${fixed} problematic flows`));
+        }
+      }
+    }
+
+    if (isJson) {
+      this.log(JSON.stringify(result, null, 2));
+    }
   }
 }

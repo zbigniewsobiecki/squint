@@ -47,6 +47,11 @@ export class EntryPointDetector {
       if (mod.members.length === 0) continue;
       if (mod.isTest) continue; // Test modules are never entry points
 
+      // Skip modules where ALL members are type-only (no callable code)
+      const callableKinds = new Set(['function', 'class', 'const', 'variable', 'method']);
+      const hasCallableMembers = mod.members.some(m => callableKinds.has(m.kind));
+      if (!hasCallableMembers) continue;
+
       candidates.push({
         id: mod.id,
         fullPath: mod.fullPath,
@@ -220,7 +225,10 @@ Internal services/utilities should be is_entry_point=false.
 Test helpers, mock factories, test fixtures, spec runners, and test utilities are NEVER entry points.
 Only production code that real end-users or external clients interact with should be classified as entry points.
 If a module exists solely to support testing (generating test data, mocking services, setting up test state),
-mark ALL its members as is_entry_point=false regardless of their names.`;
+mark ALL its members as is_entry_point=false regardless of their names.
+
+## CRITICAL: Type-Only Module Exclusion
+Modules containing only interfaces, types, and enums are data structure definitions, NOT entry points.`;
   }
 
   private buildModuleContext(candidates: ModuleCandidate[]): string {

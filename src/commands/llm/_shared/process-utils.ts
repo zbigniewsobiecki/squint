@@ -227,9 +227,17 @@ export function getProcessGroupLabel(modules: Module[]): string {
 /**
  * Get all pairs of process groups for cross-process inference.
  * Returns pairs of (groupA modules, groupB modules) for each unique group pair.
+ * Excludes isolated groups (single module with no files) — these are empty branch
+ * nodes that cannot produce runtime interactions.
  */
 export function getCrossProcessGroupPairs(groups: ProcessGroups): Array<[Module[], Module[]]> {
-  const groupIds = Array.from(groups.groupToModules.keys());
+  // Filter out isolated singleton groups (negative groupId = module with no files)
+  const groupIds = Array.from(groups.groupToModules.keys()).filter((gid) => {
+    if (gid >= 0) return true; // file-based group — always include
+    const mods = groups.groupToModules.get(gid)!;
+    return mods.length > 1; // isolated singletons have no definitions, skip them
+  });
+
   const pairs: Array<[Module[], Module[]]> = [];
 
   for (let i = 0; i < groupIds.length; i++) {

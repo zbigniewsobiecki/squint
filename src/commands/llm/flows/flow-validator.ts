@@ -95,12 +95,16 @@ export class FlowValidator {
 Identify MISSING user stories — important user-facing workflows that should exist
 but don't appear in the detected flows.
 
-Common patterns to check:
-- Every CRUD entity should have view/create/update/delete flows (unless the code doesn't support it)
-- Authentication flows: login, register, token refresh, logout
-- Cross-entity side effects (e.g., creating a sale updates vehicle status)
-- Dashboard / analytics / reporting views
-- Admin-specific operations
+What to look for:
+- UNCOVERED interactions in the graph that should be part of a user story
+- Cross-entity side effects visible in the interaction graph (e.g., a sale flow also touching vehicle/inventory modules)
+- Compositions of existing atomic flows into higher-level user stories
+
+What NOT to do:
+- Do NOT infer operations that are not visible in the interaction graph
+- Do NOT propose admin CRUD flows unless admin-specific entry points are listed above
+- Do NOT create flows from type/interface-only modules
+- Do NOT duplicate flows that already exist — check the existing flows list carefully
 
 ## CRITICAL CONSTRAINTS
 - [AST] interactions are statically verified from source code — reliable
