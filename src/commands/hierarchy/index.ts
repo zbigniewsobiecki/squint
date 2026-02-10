@@ -76,7 +76,7 @@ export default class Hierarchy extends Command {
     type: 'extends' | 'implements',
     json: boolean
   ): void {
-    const hierarchy = db.getClassHierarchy();
+    const hierarchy = db.definitions.getClassHierarchy();
 
     // Filter links by type
     const filteredLinks = hierarchy.links.filter((l) => l.type === type);
@@ -132,7 +132,7 @@ export default class Hierarchy extends Command {
       children.sort((a, b) => a.name.localeCompare(b.name));
 
       // Get file path from definition
-      const def = db.getDefinitionById(id);
+      const def = db.definitions.getById(id);
 
       return {
         id,
@@ -202,13 +202,13 @@ export default class Hierarchy extends Command {
     }
 
     // Get full definition details
-    const rootDef = db.getDefinitionById(resolved.id);
+    const rootDef = db.definitions.getById(resolved.id);
     if (!rootDef) {
       this.error(`Definition with ID ${resolved.id} not found`);
     }
 
     // Build call graph adjacency list
-    const edges = db.getCallGraph();
+    const edges = db.modules.getCallGraph();
     const adjacency = new Map<number, number[]>();
     for (const edge of edges) {
       if (!adjacency.has(edge.fromId)) {
@@ -242,7 +242,7 @@ export default class Hierarchy extends Command {
       if (visited.has(id)) return null;
       visited.add(id);
 
-      const def = db.getDefinitionById(id);
+      const def = db.definitions.getById(id);
       if (!def) return null;
 
       const children: HierarchyNode[] = [];
@@ -312,7 +312,7 @@ export default class Hierarchy extends Command {
     _rootName: string | undefined,
     json: boolean
   ): void {
-    const annotations = db.getAllRelationshipAnnotations({ limit: 1000 });
+    const annotations = db.relationships.getAll({ limit: 1000 });
 
     // Filter by type if it maps to a relationship type
     const typeToRelType: Record<string, string> = {

@@ -92,13 +92,13 @@ export default class Flows extends BaseLlmCommand {
     }
 
     // Check if flows already exist
-    const existingCount = db.getFlowCount();
+    const existingCount = db.flows.getCount();
     if (
       !this.checkExistingAndClear(ctx, {
         entityName: 'Flows',
         existingCount,
         force: flags.force as boolean,
-        clearFn: () => db.clearFlows(),
+        clearFn: () => db.flows.clear(),
         forceHint: 'Use --force to re-detect',
       })
     ) {
@@ -106,7 +106,7 @@ export default class Flows extends BaseLlmCommand {
     }
 
     // Check if interactions exist
-    const interactionCount = db.getInteractionCount();
+    const interactionCount = db.interactions.getCount();
     if (interactionCount === 0) {
       if (isJson) {
         this.log(JSON.stringify({ error: 'No interactions found', hint: 'Run llm interactions first' }));
@@ -135,9 +135,9 @@ export default class Flows extends BaseLlmCommand {
     // Step 2: Build atomic flows (deterministic, no LLM)
     logStep(this, 2, 'Building Atomic Flows (Tier 0)', isJson);
 
-    const interactions = db.getAllInteractions();
-    const allModules = db.getAllModules();
-    const allModulesWithMembers = db.getAllModulesWithMembers();
+    const interactions = db.interactions.getAll();
+    const allModules = db.modules.getAll();
+    const allModulesWithMembers = db.modules.getAllWithMembers();
 
     const atomicFlowBuilder = new AtomicFlowBuilder();
     const atomicFlows = atomicFlowBuilder.buildAtomicFlows(interactions, allModules);
@@ -155,7 +155,7 @@ export default class Flows extends BaseLlmCommand {
     // Step 3: Trace composite flows from entry points (tier 1)
     logStep(this, 3, 'Tracing Composite Flows from Entry Points (Tier 1)', isJson);
 
-    const definitionCallGraph = db.getDefinitionCallGraphMap();
+    const definitionCallGraph = db.interactions.getDefinitionCallGraphMap();
     const tracingContext = buildFlowTracingContext(definitionCallGraph, allModulesWithMembers, interactions);
     const flowTracer = new FlowTracer(tracingContext);
     const flowSuggestions = flowTracer.traceFlowsFromEntryPoints(entryPointModules, atomicFlows);
@@ -365,7 +365,7 @@ export default class Flows extends BaseLlmCommand {
       usedSlugs.add(slug);
 
       try {
-        const flowId = db.insertFlow(flow.name, slug, {
+        const flowId = db.flows.insert(flow.name, slug, {
           entryPointModuleId: flow.entryPointModuleId ?? undefined,
           entryPointId: flow.entryPointId ?? undefined,
           entryPath: flow.entryPath,
@@ -380,12 +380,12 @@ export default class Flows extends BaseLlmCommand {
 
         // Add module-level steps
         if (flow.interactionIds.length > 0) {
-          db.addFlowSteps(flowId, flow.interactionIds);
+          db.flows.addSteps(flowId, flow.interactionIds);
         }
 
         // Add definition-level steps
         if (flow.definitionSteps.length > 0) {
-          db.addFlowDefinitionSteps(
+          db.flows.addDefinitionSteps(
             flowId,
             flow.definitionSteps.map((s) => ({
               fromDefinitionId: s.fromDefinitionId,
@@ -400,7 +400,7 @@ export default class Flows extends BaseLlmCommand {
             .map((s) => slugToFlowId.get(s))
             .filter((id): id is number => id !== undefined);
           if (subflowIds.length > 0) {
-            db.addFlowSubflowSteps(flowId, subflowIds);
+            db.flows.addSubflowSteps(flowId, subflowIds);
           }
         }
       } catch {
@@ -433,7 +433,7 @@ export default class Flows extends BaseLlmCommand {
           coveredByFlows: coveredInteractionIds.size,
           percentage: calculatePercentage(coveredInteractionIds.size, interactions.length),
         }
-      : db.getFlowCoverage();
+      : db.flows.getCoverage();
 
     // Count test-internal exclusions
     const testInternalCount = interactions.filter((i) => i.pattern === 'test-internal').length;
@@ -649,7 +649,7 @@ export default class Flows extends BaseLlmCommand {
         let fixed = 0;
         for (const issue of removableIssues) {
           if (issue.fixData?.targetDefinitionId) {
-            const deleted = db.deleteFlow(issue.fixData.targetDefinitionId);
+            const deleted = db.flows.delete(issue.fixData.targetDefinitionId);
             if (deleted) fixed++;
           }
         }

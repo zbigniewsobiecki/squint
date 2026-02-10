@@ -239,7 +239,7 @@ export default class Parse extends Command {
     const { definitionCount, referenceCount, usageCount } = indexParsedFiles(parsedFiles, db, directory);
 
     // Create inheritance relationships (extends/implements)
-    const inheritanceResult = db.createInheritanceRelationships();
+    const inheritanceResult = db.graph.createInheritanceRelationships();
 
     db.close();
 
@@ -250,13 +250,8 @@ export default class Parse extends Command {
     this.log(chalk.white(`  Definitions found: ${definitionCount}`));
     this.log(chalk.white(`  References found: ${referenceCount}`));
     this.log(chalk.white(`  Symbol usages: ${usageCount}`));
-    const totalInheritance = inheritanceResult.extendsCreated + inheritanceResult.implementsCreated;
-    if (totalInheritance > 0) {
-      this.log(
-        chalk.white(
-          `  Inheritance relationships: ${totalInheritance} (${inheritanceResult.extendsCreated} extends, ${inheritanceResult.implementsCreated} implements)`
-        )
-      );
+    if (inheritanceResult.created > 0) {
+      this.log(chalk.white(`  Inheritance relationships: ${inheritanceResult.created}`));
     }
     if (errorCount > 0) {
       this.log(chalk.yellow(`  Files with errors: ${errorCount}`));

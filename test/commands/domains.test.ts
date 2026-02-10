@@ -20,7 +20,7 @@ describe('domains commands', () => {
     db.initialize();
 
     // Insert test files and definitions
-    const fileId = db.insertFile({
+    const fileId = db.files.insert({
       path: path.join(testDir, 'auth.ts'),
       language: 'typescript',
       contentHash: computeHash('content'),
@@ -28,7 +28,7 @@ describe('domains commands', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    const loginId = db.insertDefinition(fileId, {
+    const loginId = db.files.insertDefinition(fileId, {
       name: 'login',
       kind: 'function',
       isExported: true,
@@ -37,7 +37,7 @@ describe('domains commands', () => {
       endPosition: { row: 5, column: 1 },
     });
 
-    const logoutId = db.insertDefinition(fileId, {
+    const logoutId = db.files.insertDefinition(fileId, {
       name: 'logout',
       kind: 'function',
       isExported: true,
@@ -46,7 +46,7 @@ describe('domains commands', () => {
       endPosition: { row: 10, column: 1 },
     });
 
-    const processPaymentId = db.insertDefinition(fileId, {
+    const processPaymentId = db.files.insertDefinition(fileId, {
       name: 'processPayment',
       kind: 'function',
       isExported: true,
@@ -56,9 +56,9 @@ describe('domains commands', () => {
     });
 
     // Set domain metadata on some symbols
-    db.setDefinitionMetadata(loginId, 'domain', '["auth", "user"]');
-    db.setDefinitionMetadata(logoutId, 'domain', '["auth"]');
-    db.setDefinitionMetadata(processPaymentId, 'domain', '["payment"]');
+    db.metadata.set(loginId, 'domain', '["auth", "user"]');
+    db.metadata.set(logoutId, 'domain', '["auth"]');
+    db.metadata.set(processPaymentId, 'domain', '["payment"]');
 
     db.close();
   });
@@ -86,8 +86,8 @@ describe('domains commands', () => {
     it('lists registered domains with counts', () => {
       // First register some domains
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.addDomain('auth', 'User authentication');
-      setupDb.addDomain('payment', 'Payment processing');
+      setupDb.domains.add('auth', 'User authentication');
+      setupDb.domains.add('payment', 'Payment processing');
       setupDb.close();
 
       const output = runCommand(`domains -d ${dbPath}`);
@@ -99,7 +99,7 @@ describe('domains commands', () => {
 
     it('shows symbol counts for each domain', () => {
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.addDomain('auth', 'Auth');
+      setupDb.domains.add('auth', 'Auth');
       setupDb.close();
 
       const output = runCommand(`domains -d ${dbPath}`);
@@ -114,7 +114,7 @@ describe('domains commands', () => {
 
     it('outputs JSON with --json flag', () => {
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.addDomain('auth', 'Authentication');
+      setupDb.domains.add('auth', 'Authentication');
       setupDb.close();
 
       const output = runCommand(`domains --json -d ${dbPath}`);
@@ -139,7 +139,7 @@ describe('domains commands', () => {
       expect(output).toContain('Registered domain customer');
 
       const verifyDb = new IndexDatabase(dbPath);
-      const domain = verifyDb.getDomain('customer');
+      const domain = verifyDb.domains.get('customer');
       expect(domain).toBeDefined();
       expect(domain!.description).toBe('Customer management');
       verifyDb.close();
@@ -150,7 +150,7 @@ describe('domains commands', () => {
       expect(output).toContain('Registered domain billing');
 
       const verifyDb = new IndexDatabase(dbPath);
-      const domain = verifyDb.getDomain('billing');
+      const domain = verifyDb.domains.get('billing');
       expect(domain!.description).toBe('Billing system');
       verifyDb.close();
     });
@@ -165,7 +165,7 @@ describe('domains commands', () => {
   describe('domains rename', () => {
     beforeEach(() => {
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.addDomain('auth', 'Authentication');
+      setupDb.domains.add('auth', 'Authentication');
       setupDb.close();
     });
 
@@ -174,8 +174,8 @@ describe('domains commands', () => {
       expect(output).toContain('Renamed domain auth -> authentication');
 
       const verifyDb = new IndexDatabase(dbPath);
-      expect(verifyDb.getDomain('auth')).toBeNull();
-      expect(verifyDb.getDomain('authentication')).toBeDefined();
+      expect(verifyDb.domains.get('auth')).toBeNull();
+      expect(verifyDb.domains.get('authentication')).toBeDefined();
       verifyDb.close();
     });
 
@@ -184,7 +184,7 @@ describe('domains commands', () => {
       expect(output).toContain('Updated 2 symbol'); // login and logout
 
       const verifyDb = new IndexDatabase(dbPath);
-      const loginMeta = verifyDb.getDefinitionMetadata(1);
+      const loginMeta = verifyDb.metadata.get(1);
       expect(loginMeta.domain).toContain('authentication');
       expect(loginMeta.domain).not.toContain('"auth"');
       verifyDb.close();
@@ -200,8 +200,8 @@ describe('domains commands', () => {
   describe('domains merge', () => {
     beforeEach(() => {
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.addDomain('user', 'User management');
-      setupDb.addDomain('auth', 'Authentication');
+      setupDb.domains.add('user', 'User management');
+      setupDb.domains.add('auth', 'Authentication');
       setupDb.close();
     });
 
@@ -211,8 +211,8 @@ describe('domains commands', () => {
       expect(output).toContain('Updated 1 symbol'); // login had ["auth", "user"]
 
       const verifyDb = new IndexDatabase(dbPath);
-      expect(verifyDb.getDomain('user')).toBeNull();
-      const loginMeta = verifyDb.getDefinitionMetadata(1);
+      expect(verifyDb.domains.get('user')).toBeNull();
+      const loginMeta = verifyDb.metadata.get(1);
       expect(loginMeta.domain).toBe('["auth"]'); // user removed, auth kept
       verifyDb.close();
     });
@@ -226,8 +226,8 @@ describe('domains commands', () => {
   describe('domains remove', () => {
     beforeEach(() => {
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.addDomain('deprecated', 'Old domain');
-      setupDb.addDomain('auth', 'Authentication');
+      setupDb.domains.add('deprecated', 'Old domain');
+      setupDb.domains.add('auth', 'Authentication');
       setupDb.close();
     });
 
@@ -236,7 +236,7 @@ describe('domains commands', () => {
       expect(output).toContain('Removed domain deprecated');
 
       const verifyDb = new IndexDatabase(dbPath);
-      expect(verifyDb.getDomain('deprecated')).toBeNull();
+      expect(verifyDb.domains.get('deprecated')).toBeNull();
       verifyDb.close();
     });
 
@@ -263,28 +263,28 @@ describe('domains commands', () => {
       expect(output).toContain('user');
 
       const verifyDb = new IndexDatabase(dbPath);
-      expect(verifyDb.getDomainsFromRegistry()).toHaveLength(3);
+      expect(verifyDb.domains.getAll()).toHaveLength(3);
       verifyDb.close();
     });
 
     it('does not duplicate existing domains', () => {
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.addDomain('auth', 'Already registered');
+      setupDb.domains.add('auth', 'Already registered');
       setupDb.close();
 
       const output = runCommand(`domains sync -d ${dbPath}`);
       expect(output).toContain('Registered 2 new domain'); // payment and user
 
       const verifyDb = new IndexDatabase(dbPath);
-      expect(verifyDb.getDomainsFromRegistry()).toHaveLength(3);
+      expect(verifyDb.domains.getAll()).toHaveLength(3);
       verifyDb.close();
     });
 
     it('reports when all domains already registered', () => {
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.addDomain('auth', 'Auth');
-      setupDb.addDomain('payment', 'Payment');
-      setupDb.addDomain('user', 'User');
+      setupDb.domains.add('auth', 'Auth');
+      setupDb.domains.add('payment', 'Payment');
+      setupDb.domains.add('user', 'User');
       setupDb.close();
 
       const output = runCommand(`domains sync -d ${dbPath}`);
@@ -310,7 +310,7 @@ describe('domains commands', () => {
 
     it('does not warn for registered domains', () => {
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.addDomain('registered', 'Registered domain');
+      setupDb.domains.add('registered', 'Registered domain');
       setupDb.close();
 
       const output = runCommand(`symbols set domain '["registered"]' --name login -d ${dbPath}`);

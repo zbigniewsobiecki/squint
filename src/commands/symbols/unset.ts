@@ -41,10 +41,10 @@ export default class Unset extends Command {
       }
 
       // Remove the metadata
-      const removed = db.removeDefinitionMetadata(definition.id, args.key);
+      const removed = db.metadata.remove(definition.id, args.key);
 
       // Get the definition name for output
-      const defDetails = db.getDefinitionById(definition.id);
+      const defDetails = db.definitions.getById(definition.id);
       const displayName = defDetails?.name ?? `ID ${definition.id}`;
 
       if (removed) {

@@ -29,8 +29,8 @@ export default class InteractionsValidate extends Command {
 
     try {
       const processGroups = computeProcessGroups(db);
-      const issues = db.validateInferredInteractions(
-        (from, to) => areSameProcess(from, to, processGroups)
+      const issues = db.interactionAnalysis.validateInferredInteractions(db.interactions, (from, to) =>
+        areSameProcess(from, to, processGroups)
       );
 
       if (issues.length === 0) {
@@ -51,7 +51,7 @@ export default class InteractionsValidate extends Command {
         if (flags.fix) {
           let fixed = 0;
           for (const issue of issues) {
-            db.deleteInteraction(issue.interactionId);
+            db.interactions.delete(issue.interactionId);
             fixed++;
           }
           result.summary.fixed = fixed;
@@ -89,7 +89,7 @@ export default class InteractionsValidate extends Command {
       if (flags.fix) {
         let fixed = 0;
         for (const issue of issues) {
-          db.deleteInteraction(issue.interactionId);
+          db.interactions.delete(issue.interactionId);
           fixed++;
         }
         this.log(chalk.green(`Fixed ${fixed} issues (deleted invalid interactions).`));

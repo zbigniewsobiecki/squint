@@ -3,9 +3,7 @@ import { deduplicateByInteractionOverlap, pickFlowToDrop } from '../../../src/co
 import type { FlowSuggestion } from '../../../src/commands/llm/flows/types.js';
 import type { TracedDefinitionStep } from '../../../src/commands/llm/flows/types.js';
 
-function makeFlow(
-  overrides: Partial<FlowSuggestion> & { interactionIds: number[] }
-): FlowSuggestion {
+function makeFlow(overrides: Partial<FlowSuggestion> & { interactionIds: number[] }): FlowSuggestion {
   return {
     name: 'test-flow',
     slug: `flow-${Math.random().toString(36).slice(2, 8)}`,

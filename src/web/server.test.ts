@@ -3,46 +3,69 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IndexDatabase } from '../db/database.js';
 import { MIME_TYPES, createServer, getMimeType, startServer } from './server.js';
 
-// Create a mock database with all required methods
-function createMockDb(): IndexDatabase {
-  return {
+// Create a mock database with all required methods using repository-style access
+function createMockDb() {
+  const mockDb = {
     getStats: vi.fn().mockReturnValue({ files: 10, definitions: 50, references: 100, imports: 20 }),
-    getAllFiles: vi.fn().mockReturnValue([{ id: 1, path: 'test.ts' }]),
-    getFileById: vi.fn().mockReturnValue({ id: 1, path: 'test.ts' }),
-    getFileDefinitions: vi.fn().mockReturnValue([]),
-    getFileImports: vi.fn().mockReturnValue([]),
-    getAllDefinitions: vi.fn().mockReturnValue([]),
-    getDefinitionById: vi.fn().mockReturnValue(null),
-    getCallsites: vi.fn().mockReturnValue([]),
-    getImportGraph: vi.fn().mockReturnValue({ nodes: [], edges: [] }),
-    getClassHierarchy: vi.fn().mockReturnValue({ nodes: [], edges: [] }),
-    getAllRelationshipAnnotations: vi.fn().mockReturnValue([]),
-    getDefinitionMetadata: vi.fn().mockReturnValue({}),
-    getAllModulesWithMembers: vi.fn().mockReturnValue([]),
-    getAllModules: vi.fn().mockReturnValue([]),
-    getModuleStats: vi.fn().mockReturnValue({ moduleCount: 0, assigned: 0, unassigned: 0 }),
-    getModuleWithMembers: vi.fn().mockReturnValue(null),
-    getAllInteractions: vi.fn().mockReturnValue([]),
-    getInteractionStats: vi
-      .fn()
-      .mockReturnValue({ totalCount: 0, businessCount: 0, utilityCount: 0, biDirectionalCount: 0 }),
-    getInteractionById: vi.fn().mockReturnValue(null),
-    getRelationshipCoverage: vi.fn().mockReturnValue({
-      totalRelationships: 0,
-      crossModuleRelationships: 0,
-      relationshipsContributingToInteractions: 0,
-      sameModuleCount: 0,
-      orphanedCount: 0,
-      coveragePercent: 0,
-    }),
-    getAllFlows: vi.fn().mockReturnValue([]),
-    getFlowStats: vi.fn().mockReturnValue({ flowCount: 0, withEntryPointCount: 0, avgStepsPerFlow: 0 }),
-    getFlowCoverage: vi.fn().mockReturnValue({ totalInteractions: 0, coveredByFlows: 0, percentage: 0 }),
-    getFlowWithSteps: vi.fn().mockReturnValue(null),
-    expandFlow: vi.fn().mockReturnValue([]),
-    getModuleCallGraph: vi.fn().mockReturnValue([]),
-    getFlowWithDefinitionSteps: vi.fn().mockReturnValue(null),
-  } as unknown as IndexDatabase;
+    files: {
+      getAll: vi.fn().mockReturnValue([{ id: 1, path: 'test.ts' }]),
+      getById: vi.fn().mockReturnValue({ id: 1, path: 'test.ts' }),
+      getImports: vi.fn().mockReturnValue([]),
+    },
+    definitions: {
+      getAll: vi.fn().mockReturnValue([]),
+      getById: vi.fn().mockReturnValue(null),
+      getForFile: vi.fn().mockReturnValue([]),
+      getClassHierarchy: vi.fn().mockReturnValue({ nodes: [], edges: [] }),
+    },
+    dependencies: {
+      getCallsites: vi.fn().mockReturnValue([]),
+      getImportGraph: vi.fn().mockReturnValue({ nodes: [], edges: [] }),
+    },
+    relationships: {
+      getAll: vi.fn().mockReturnValue([]),
+    },
+    metadata: {
+      get: vi.fn().mockReturnValue({}),
+    },
+    modules: {
+      getAll: vi.fn().mockReturnValue([]),
+      getAllWithMembers: vi.fn().mockReturnValue([]),
+      getStats: vi.fn().mockReturnValue({ moduleCount: 0, assigned: 0, unassigned: 0 }),
+      getWithMembers: vi.fn().mockReturnValue(null),
+    },
+    interactions: {
+      getAll: vi.fn().mockReturnValue([]),
+      getStats: vi.fn().mockReturnValue({ totalCount: 0, businessCount: 0, utilityCount: 0, biDirectionalCount: 0 }),
+      getById: vi.fn().mockReturnValue(null),
+    },
+    interactionAnalysis: {
+      getRelationshipCoverage: vi.fn().mockReturnValue({
+        totalRelationships: 0,
+        crossModuleRelationships: 0,
+        relationshipsContributingToInteractions: 0,
+        sameModuleCount: 0,
+        orphanedCount: 0,
+        coveragePercent: 0,
+      }),
+    },
+    flows: {
+      getAll: vi.fn().mockReturnValue([]),
+      getStats: vi.fn().mockReturnValue({ flowCount: 0, withEntryPointCount: 0, avgStepsPerFlow: 0 }),
+      getCoverage: vi.fn().mockReturnValue({ totalInteractions: 0, coveredByFlows: 0, percentage: 0 }),
+      getWithSteps: vi.fn().mockReturnValue(null),
+      getWithDefinitionSteps: vi.fn().mockReturnValue(null),
+      expand: vi.fn().mockReturnValue([]),
+    },
+    callGraph: {
+      getModuleCallGraph: vi.fn().mockReturnValue([]),
+    },
+    features: {
+      getAll: vi.fn().mockReturnValue([]),
+      getWithFlows: vi.fn().mockReturnValue(null),
+    },
+  };
+  return mockDb as unknown as IndexDatabase;
 }
 
 // Helper to make HTTP request to server
@@ -184,13 +207,13 @@ describe('server', () => {
         expect(response.statusCode).toBe(200);
         expect(response.headers['content-type']).toBe('application/json');
         expect(JSON.parse(response.body)).toEqual([{ id: 1, path: 'test.ts' }]);
-        expect(mockDb.getAllFiles).toHaveBeenCalled();
+        expect(mockDb.files.getAll).toHaveBeenCalled();
       });
 
       it('GET /api/files/:id returns file with definitions and imports', async () => {
-        (mockDb.getFileById as any).mockReturnValue({ id: 1, path: 'test.ts' });
-        (mockDb.getFileDefinitions as any).mockReturnValue([{ id: 1, name: 'foo' }]);
-        (mockDb.getFileImports as any).mockReturnValue([{ id: 1, module: 'bar' }]);
+        (mockDb.files.getById as any).mockReturnValue({ id: 1, path: 'test.ts' });
+        (mockDb.definitions.getForFile as any).mockReturnValue([{ id: 1, name: 'foo' }]);
+        (mockDb.files.getImports as any).mockReturnValue([{ id: 1, module: 'bar' }]);
 
         const response = await makeRequest(server, '/api/files/1');
 
@@ -202,7 +225,7 @@ describe('server', () => {
       });
 
       it('GET /api/files/:id returns 404 for non-existent file', async () => {
-        (mockDb.getFileById as any).mockReturnValue(null);
+        (mockDb.files.getById as any).mockReturnValue(null);
 
         const response = await makeRequest(server, '/api/files/999');
 
@@ -212,7 +235,7 @@ describe('server', () => {
 
       it('GET /api/definitions returns all definitions', async () => {
         const mockDefs = [{ id: 1, name: 'test', kind: 'function' }];
-        (mockDb.getAllDefinitions as any).mockReturnValue(mockDefs);
+        (mockDb.definitions.getAll as any).mockReturnValue(mockDefs);
 
         const response = await makeRequest(server, '/api/definitions');
 
@@ -222,7 +245,7 @@ describe('server', () => {
 
       it('GET /api/definitions/:id returns definition', async () => {
         const mockDef = { id: 1, name: 'test', kind: 'function' };
-        (mockDb.getDefinitionById as any).mockReturnValue(mockDef);
+        (mockDb.definitions.getById as any).mockReturnValue(mockDef);
 
         const response = await makeRequest(server, '/api/definitions/1');
 
@@ -231,7 +254,7 @@ describe('server', () => {
       });
 
       it('GET /api/definitions/:id returns 404 for non-existent definition', async () => {
-        (mockDb.getDefinitionById as any).mockReturnValue(null);
+        (mockDb.definitions.getById as any).mockReturnValue(null);
 
         const response = await makeRequest(server, '/api/definitions/999');
 
@@ -241,7 +264,7 @@ describe('server', () => {
 
       it('GET /api/definitions/:id/callsites returns callsites', async () => {
         const mockCallsites = [{ id: 1, filePath: 'test.ts', line: 10 }];
-        (mockDb.getCallsites as any).mockReturnValue(mockCallsites);
+        (mockDb.dependencies.getCallsites as any).mockReturnValue(mockCallsites);
 
         const response = await makeRequest(server, '/api/definitions/1/callsites');
 
@@ -251,7 +274,7 @@ describe('server', () => {
 
       it('GET /api/graph/imports returns import graph', async () => {
         const mockGraph = { nodes: [], edges: [] };
-        (mockDb.getImportGraph as any).mockReturnValue(mockGraph);
+        (mockDb.dependencies.getImportGraph as any).mockReturnValue(mockGraph);
 
         const response = await makeRequest(server, '/api/graph/imports');
 
@@ -261,7 +284,7 @@ describe('server', () => {
 
       it('GET /api/graph/classes returns class hierarchy', async () => {
         const mockHierarchy = { nodes: [], edges: [] };
-        (mockDb.getClassHierarchy as any).mockReturnValue(mockHierarchy);
+        (mockDb.definitions.getClassHierarchy as any).mockReturnValue(mockHierarchy);
 
         const response = await makeRequest(server, '/api/graph/classes');
 
@@ -270,8 +293,8 @@ describe('server', () => {
       });
 
       it('GET /api/modules returns modules data', async () => {
-        (mockDb.getAllModulesWithMembers as any).mockReturnValue([]);
-        (mockDb.getModuleStats as any).mockReturnValue({ moduleCount: 0, assigned: 0, unassigned: 0 });
+        (mockDb.modules.getAllWithMembers as any).mockReturnValue([]);
+        (mockDb.modules.getStats as any).mockReturnValue({ moduleCount: 0, assigned: 0, unassigned: 0 });
 
         const response = await makeRequest(server, '/api/modules');
 
@@ -282,7 +305,7 @@ describe('server', () => {
       });
 
       it('GET /api/modules/stats returns module stats', async () => {
-        (mockDb.getModuleStats as any).mockReturnValue({ moduleCount: 5, assigned: 20, unassigned: 10 });
+        (mockDb.modules.getStats as any).mockReturnValue({ moduleCount: 5, assigned: 20, unassigned: 10 });
 
         const response = await makeRequest(server, '/api/modules/stats');
 
@@ -292,7 +315,7 @@ describe('server', () => {
 
       it('GET /api/modules/:id returns module with members', async () => {
         const mockModule = { id: 1, name: 'core', members: [] };
-        (mockDb.getModuleWithMembers as any).mockReturnValue(mockModule);
+        (mockDb.modules.getWithMembers as any).mockReturnValue(mockModule);
 
         const response = await makeRequest(server, '/api/modules/1');
 
@@ -301,7 +324,7 @@ describe('server', () => {
       });
 
       it('GET /api/modules/:id returns 404 for non-existent module', async () => {
-        (mockDb.getModuleWithMembers as any).mockReturnValue(null);
+        (mockDb.modules.getWithMembers as any).mockReturnValue(null);
 
         const response = await makeRequest(server, '/api/modules/999');
 
@@ -310,9 +333,17 @@ describe('server', () => {
       });
 
       it('GET /api/flows returns flows data', async () => {
-        (mockDb.getAllFlows as any).mockReturnValue([]);
-        (mockDb.getFlowStats as any).mockReturnValue({ flowCount: 0, withEntryPointCount: 0, avgStepsPerFlow: 0 });
-        (mockDb.getFlowCoverage as any).mockReturnValue({ totalInteractions: 0, coveredByFlows: 0, percentage: 0 });
+        (mockDb.flows.getAll as any).mockReturnValue([]);
+        (mockDb.flows.getStats as any).mockReturnValue({
+          flowCount: 0,
+          withEntryPointCount: 0,
+          avgStepsPerFlow: 0,
+        });
+        (mockDb.flows.getCoverage as any).mockReturnValue({
+          totalInteractions: 0,
+          coveredByFlows: 0,
+          percentage: 0,
+        });
 
         const response = await makeRequest(server, '/api/flows');
 
@@ -324,7 +355,11 @@ describe('server', () => {
       });
 
       it('GET /api/flows/stats returns flow stats', async () => {
-        (mockDb.getFlowStats as any).mockReturnValue({ flowCount: 3, withEntryPointCount: 2, avgStepsPerFlow: 4.5 });
+        (mockDb.flows.getStats as any).mockReturnValue({
+          flowCount: 3,
+          withEntryPointCount: 2,
+          avgStepsPerFlow: 4.5,
+        });
 
         const response = await makeRequest(server, '/api/flows/stats');
 
@@ -334,7 +369,7 @@ describe('server', () => {
 
       it('GET /api/flows/coverage returns flow coverage', async () => {
         const mockCoverage = { totalInteractions: 10, coveredByFlows: 5, percentage: 50 };
-        (mockDb.getFlowCoverage as any).mockReturnValue(mockCoverage);
+        (mockDb.flows.getCoverage as any).mockReturnValue(mockCoverage);
 
         const response = await makeRequest(server, '/api/flows/coverage');
 
@@ -344,7 +379,7 @@ describe('server', () => {
 
       it('GET /api/flows/:id returns flow with steps', async () => {
         const mockFlow = { id: 1, name: 'User Login', steps: [] };
-        (mockDb.getFlowWithSteps as any).mockReturnValue(mockFlow);
+        (mockDb.flows.getWithSteps as any).mockReturnValue(mockFlow);
 
         const response = await makeRequest(server, '/api/flows/1');
 
@@ -353,7 +388,7 @@ describe('server', () => {
       });
 
       it('GET /api/flows/:id returns 404 for non-existent flow', async () => {
-        (mockDb.getFlowWithSteps as any).mockReturnValue(null);
+        (mockDb.flows.getWithSteps as any).mockReturnValue(null);
 
         const response = await makeRequest(server, '/api/flows/999');
 
@@ -362,14 +397,14 @@ describe('server', () => {
       });
 
       it('GET /api/interactions returns interactions data', async () => {
-        (mockDb.getAllInteractions as any).mockReturnValue([]);
-        (mockDb.getInteractionStats as any).mockReturnValue({
+        (mockDb.interactions.getAll as any).mockReturnValue([]);
+        (mockDb.interactions.getStats as any).mockReturnValue({
           totalCount: 0,
           businessCount: 0,
           utilityCount: 0,
           biDirectionalCount: 0,
         });
-        (mockDb.getRelationshipCoverage as any).mockReturnValue({
+        (mockDb.interactionAnalysis.getRelationshipCoverage as any).mockReturnValue({
           totalRelationships: 0,
           crossModuleRelationships: 0,
           relationshipsContributingToInteractions: 0,
@@ -388,7 +423,7 @@ describe('server', () => {
       });
 
       it('GET /api/interactions/stats returns interaction stats', async () => {
-        (mockDb.getInteractionStats as any).mockReturnValue({
+        (mockDb.interactions.getStats as any).mockReturnValue({
           totalCount: 5,
           businessCount: 3,
           utilityCount: 2,
@@ -407,14 +442,14 @@ describe('server', () => {
       });
 
       it('GET /api/interactions/:id returns interaction with module paths', async () => {
-        (mockDb.getInteractionById as any).mockReturnValue({
+        (mockDb.interactions.getById as any).mockReturnValue({
           id: 1,
           fromModuleId: 10,
           toModuleId: 20,
           direction: 'uni',
           weight: 5,
         });
-        (mockDb.getAllModules as any).mockReturnValue([
+        (mockDb.modules.getAll as any).mockReturnValue([
           { id: 10, fullPath: 'project.auth' },
           { id: 20, fullPath: 'project.api' },
         ]);
@@ -429,7 +464,7 @@ describe('server', () => {
       });
 
       it('GET /api/interactions/:id returns 404 for non-existent interaction', async () => {
-        (mockDb.getInteractionById as any).mockReturnValue(null);
+        (mockDb.interactions.getById as any).mockReturnValue(null);
 
         const response = await makeRequest(server, '/api/interactions/999');
 
@@ -438,13 +473,13 @@ describe('server', () => {
       });
 
       it('GET /api/graph/symbols returns symbol graph', async () => {
-        (mockDb.getAllDefinitions as any).mockReturnValue([
+        (mockDb.definitions.getAll as any).mockReturnValue([
           { id: 1, name: 'test', kind: 'function', line: 1, endLine: 10, fileId: 1 },
         ]);
-        (mockDb.getAllRelationshipAnnotations as any).mockReturnValue([]);
-        (mockDb.getAllFiles as any).mockReturnValue([{ id: 1, path: 'test.ts' }]);
-        (mockDb.getDefinitionMetadata as any).mockReturnValue({});
-        (mockDb.getAllModulesWithMembers as any).mockReturnValue([]);
+        (mockDb.relationships.getAll as any).mockReturnValue([]);
+        (mockDb.files.getAll as any).mockReturnValue([{ id: 1, path: 'test.ts' }]);
+        (mockDb.metadata.get as any).mockReturnValue({});
+        (mockDb.modules.getAllWithMembers as any).mockReturnValue([]);
 
         const response = await makeRequest(server, '/api/graph/symbols');
 
@@ -457,28 +492,28 @@ describe('server', () => {
 
       it('GET /api/definitions supports kind filter', async () => {
         const mockDefs = [{ id: 1, name: 'test', kind: 'function' }];
-        (mockDb.getAllDefinitions as any).mockReturnValue(mockDefs);
+        (mockDb.definitions.getAll as any).mockReturnValue(mockDefs);
 
         const response = await makeRequest(server, '/api/definitions?kind=function');
 
         expect(response.statusCode).toBe(200);
-        expect(mockDb.getAllDefinitions).toHaveBeenCalledWith({ kind: 'function', exported: undefined });
+        expect(mockDb.definitions.getAll).toHaveBeenCalledWith({ kind: 'function', exported: undefined });
       });
 
       it('GET /api/definitions supports exported filter', async () => {
         const mockDefs = [{ id: 1, name: 'test', kind: 'function' }];
-        (mockDb.getAllDefinitions as any).mockReturnValue(mockDefs);
+        (mockDb.definitions.getAll as any).mockReturnValue(mockDefs);
 
         const response = await makeRequest(server, '/api/definitions?exported=true');
 
         expect(response.statusCode).toBe(200);
-        expect(mockDb.getAllDefinitions).toHaveBeenCalledWith({ kind: undefined, exported: true });
+        expect(mockDb.definitions.getAll).toHaveBeenCalledWith({ kind: undefined, exported: true });
       });
 
       it('GET /api/flows/dag returns DAG data', async () => {
-        (mockDb.getAllModulesWithMembers as any).mockReturnValue([]);
-        (mockDb.getModuleCallGraph as any).mockReturnValue([]);
-        (mockDb.getAllFlows as any).mockReturnValue([]);
+        (mockDb.modules.getAllWithMembers as any).mockReturnValue([]);
+        (mockDb.callGraph.getModuleCallGraph as any).mockReturnValue([]);
+        (mockDb.flows.getAll as any).mockReturnValue([]);
 
         const response = await makeRequest(server, '/api/flows/dag');
 
@@ -490,15 +525,15 @@ describe('server', () => {
       });
 
       it('GET /api/flows/dag uses definition-level steps when available', async () => {
-        (mockDb.getAllModulesWithMembers as any).mockReturnValue([
+        (mockDb.modules.getAllWithMembers as any).mockReturnValue([
           { id: 1, parentId: null, name: 'api', fullPath: 'api', depth: 0, members: [] },
           { id: 2, parentId: null, name: 'service', fullPath: 'service', depth: 0, members: [] },
         ]);
-        (mockDb.getModuleCallGraph as any).mockReturnValue([]);
-        (mockDb.getAllFlows as any).mockReturnValue([
+        (mockDb.callGraph.getModuleCallGraph as any).mockReturnValue([]);
+        (mockDb.flows.getAll as any).mockReturnValue([
           { id: 1, name: 'Test Flow', stakeholder: null, description: null },
         ]);
-        (mockDb.getFlowWithDefinitionSteps as any).mockReturnValue({
+        (mockDb.flows.getWithDefinitionSteps as any).mockReturnValue({
           id: 1,
           name: 'Test Flow',
           stakeholder: null,
@@ -540,13 +575,13 @@ describe('server', () => {
 
       it('GET /api/flows/:id/expand returns expanded flow', async () => {
         const mockExpanded = [{ id: 1, fromModulePath: 'a', toModulePath: 'b' }];
-        (mockDb.expandFlow as any).mockReturnValue(mockExpanded);
+        (mockDb.flows.expand as any).mockReturnValue(mockExpanded);
 
         const response = await makeRequest(server, '/api/flows/1/expand');
 
         expect(response.statusCode).toBe(200);
         expect(JSON.parse(response.body)).toEqual(mockExpanded);
-        expect(mockDb.expandFlow).toHaveBeenCalledWith(1);
+        expect(mockDb.flows.expand).toHaveBeenCalledWith(1);
       });
 
       it('OPTIONS request returns 204 with CORS headers', async () => {

@@ -54,7 +54,7 @@ export default class Next extends Command {
     const { flags } = await this.parse(Next);
 
     await withDatabase(flags.database, this, async (db) => {
-      const result = db.getReadyToUnderstandSymbols(flags.aspect, {
+      const result = db.dependencies.getReadySymbols(flags.aspect, {
         limit: flags.count,
       });
 
@@ -75,8 +75,8 @@ export default class Next extends Command {
 
       for (const symbol of result.symbols) {
         const sourceCode = await readSourceAsString(symbol.filePath, symbol.line, symbol.endLine);
-        const dependencies = db.getDependenciesWithMetadata(symbol.id, flags.aspect);
-        const unannotatedRels = db.getUnannotatedRelationships({ fromDefinitionId: symbol.id, limit: 10 });
+        const dependencies = db.dependencies.getWithMetadata(symbol.id, flags.aspect);
+        const unannotatedRels = db.relationships.getUnannotated({ fromDefinitionId: symbol.id, limit: 10 });
         const unannotatedRelationships: UnannotatedRelationship[] = unannotatedRels.map((rel) => ({
           toDefinitionId: rel.toDefinitionId,
           toName: rel.toName,
@@ -96,7 +96,7 @@ export default class Next extends Command {
           const output: NextOutput = {
             symbol: symbols[0],
             remaining: totalRemaining,
-            totalSymbols: db.getDefinitionCount(),
+            totalSymbols: db.definitions.getCount(),
           };
           this.log(JSON.stringify(output, null, 2));
         } else {
@@ -104,7 +104,7 @@ export default class Next extends Command {
           const output = {
             symbols,
             remaining: totalRemaining,
-            totalSymbols: db.getDefinitionCount(),
+            totalSymbols: db.definitions.getCount(),
           };
           this.log(JSON.stringify(output, null, 2));
         }

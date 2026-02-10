@@ -32,12 +32,12 @@ export default class Imports extends Command {
     const filePath = path.resolve(args.file);
 
     await withDatabase(flags.database, this, async (db) => {
-      const fileId = db.getFileId(filePath);
+      const fileId = db.files.getIdByPath(filePath);
       if (fileId === null) {
         this.error(chalk.red(`File "${filePath}" not found in the index.`));
       }
 
-      const imports = db.getFileImports(fileId);
+      const imports = db.files.getImports(fileId);
       const filteredImports = flags['exclude-external']
         ? imports.filter((imp) => !imp.isExternal && imp.toFilePath)
         : imports;

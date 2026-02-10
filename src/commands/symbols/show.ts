@@ -74,7 +74,7 @@ export default class Show extends Command {
       }
 
       // Get full definition details
-      const defDetails = db.getDefinitionById(definition.id);
+      const defDetails = db.definitions.getById(definition.id);
       if (!defDetails) {
         this.error(chalk.red(`Definition with ID ${definition.id} not found`));
       }
@@ -86,7 +86,7 @@ export default class Show extends Command {
       const callSites = await this.getCallSitesWithContext(db, definition.id, flags['context-lines']);
 
       // Get metadata
-      const metadata = db.getDefinitionMetadata(definition.id);
+      const metadata = db.metadata.get(definition.id);
 
       const symbolInfo: SymbolInfo = {
         id: defDetails.id,
@@ -114,7 +114,7 @@ export default class Show extends Command {
     definitionId: number,
     contextLines: number
   ): Promise<CallSiteWithContext[]> {
-    const callsites = db.getCallsites(definitionId);
+    const callsites = db.dependencies.getCallsites(definitionId);
 
     // Group call sites by file for efficient reading
     const byFile = new Map<string, typeof callsites>();
@@ -147,8 +147,8 @@ export default class Show extends Command {
       }
 
       // Get definitions in this file to find containing functions
-      const fileId = db.getFileId(filePath);
-      const fileDefs = fileId ? db.getFileDefinitions(fileId) : [];
+      const fileId = db.files.getIdByPath(filePath);
+      const fileDefs = fileId ? db.definitions.getForFile(fileId) : [];
 
       for (const cs of fileCallsites) {
         // Find containing function (smallest definition that contains this line)

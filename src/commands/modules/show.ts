@@ -25,7 +25,7 @@ export default class ModulesShow extends Command {
     const { args, flags } = await this.parse(ModulesShow);
 
     await withDatabase(flags.database, this, async (db) => {
-      const allModules = db.getAllModulesWithMembers();
+      const allModules = db.modules.getAllWithMembers();
 
       // Try exact match on full path first
       let module = allModules.find((m) => m.fullPath === args.name);

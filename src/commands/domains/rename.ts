@@ -21,12 +21,12 @@ export default class Rename extends Command {
 
     await withDatabase(flags.database, this, async (db) => {
       // Check if new name already exists
-      if (db.getDomain(args.newName)) {
+      if (db.domains.get(args.newName)) {
         this.error(chalk.red(`Domain "${args.newName}" already exists.`));
       }
 
       // Rename the domain
-      const result = db.renameDomain(args.oldName, args.newName);
+      const result = db.domains.rename(args.oldName, args.newName);
 
       if (!result.updated && result.symbolsUpdated === 0) {
         this.error(chalk.red(`Domain "${args.oldName}" not found.`));

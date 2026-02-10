@@ -26,7 +26,7 @@ describe('process-utils', () => {
   // ============================================================
 
   function insertFile(path: string) {
-    return db.insertFile({
+    return db.files.insert({
       path,
       language: 'typescript',
       contentHash: `hash-${path}`,
@@ -36,7 +36,7 @@ describe('process-utils', () => {
   }
 
   function insertDefinition(fileId: number, name: string) {
-    return db.insertDefinition(fileId, {
+    return db.files.insertDefinition(fileId, {
       name,
       kind: 'function',
       isExported: true,
@@ -57,7 +57,7 @@ describe('process-utils', () => {
   }
 
   function setupModule(name: string, slug: string, parentId: number) {
-    return db.insertModule(parentId, slug, name);
+    return db.modules.insert(parentId, slug, name);
   }
 
   // ============================================================
@@ -73,7 +73,7 @@ describe('process-utils', () => {
     });
 
     it('single connected component → modA and modB in same group', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
 
@@ -81,8 +81,8 @@ describe('process-utils', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
       // A imports B (runtime import)
       insertImport(fileA, fileB, false);
@@ -97,7 +97,7 @@ describe('process-utils', () => {
     });
 
     it('two disconnected components → modA and modB in different groups', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
 
@@ -105,8 +105,8 @@ describe('process-utils', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
       // No imports between A and B
 
@@ -117,7 +117,7 @@ describe('process-utils', () => {
     });
 
     it('type-only imports do not bridge components', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
 
@@ -125,8 +125,8 @@ describe('process-utils', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
       // Type-only import
       insertImport(fileA, fileB, true);
@@ -139,7 +139,7 @@ describe('process-utils', () => {
     });
 
     it('modules with no files get isolated groups', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
 
@@ -152,7 +152,7 @@ describe('process-utils', () => {
     });
 
     it('module with files in multiple components is assigned to majority group', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
 
@@ -167,10 +167,10 @@ describe('process-utils', () => {
       const defA3 = insertDefinition(fileA3, 'funcA3');
       const defB1 = insertDefinition(fileB1, 'funcB1');
 
-      db.assignSymbolToModule(defA1, modA);
-      db.assignSymbolToModule(defA2, modA);
-      db.assignSymbolToModule(defA3, modA);
-      db.assignSymbolToModule(defB1, modB);
+      db.modules.assignSymbol(defA1, modA);
+      db.modules.assignSymbol(defA2, modA);
+      db.modules.assignSymbol(defA3, modA);
+      db.modules.assignSymbol(defB1, modB);
 
       // Connect A1 and A2 (component X)
       insertImport(fileA1, fileA2, false);
@@ -187,12 +187,12 @@ describe('process-utils', () => {
     });
 
     it('root module is excluded from grouping', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
 
       const fileA = insertFile('/src/a.ts');
       const defA = insertDefinition(fileA, 'funcA');
-      db.assignSymbolToModule(defA, modA);
+      db.modules.assignSymbol(defA, modA);
 
       const groups = computeProcessGroups(db);
       // Root module (depth 0) is in getAllModules but has no files
@@ -208,7 +208,7 @@ describe('process-utils', () => {
 
   describe('areSameProcess', () => {
     it('returns true for modules in the same group', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
 
@@ -216,8 +216,8 @@ describe('process-utils', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
       insertImport(fileA, fileB, false);
 
@@ -226,7 +226,7 @@ describe('process-utils', () => {
     });
 
     it('returns false for modules in different groups', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
 
@@ -234,20 +234,20 @@ describe('process-utils', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
       const groups = computeProcessGroups(db);
       expect(areSameProcess(modA, modB, groups)).toBe(false);
     });
 
     it('returns true when either module has no group (conservative)', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
 
       const fileA = insertFile('/src/a.ts');
       const defA = insertDefinition(fileA, 'funcA');
-      db.assignSymbolToModule(defA, modA);
+      db.modules.assignSymbol(defA, modA);
 
       const groups = computeProcessGroups(db);
       // 999 is not in any group
@@ -262,7 +262,7 @@ describe('process-utils', () => {
 
   describe('getProcessDescription', () => {
     it('returns "same-process (shared import graph)" for same group', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
 
@@ -270,8 +270,8 @@ describe('process-utils', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
       insertImport(fileA, fileB, false);
 
@@ -280,7 +280,7 @@ describe('process-utils', () => {
     });
 
     it('returns "separate-process (no import connectivity)" for different groups', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
 
@@ -288,8 +288,8 @@ describe('process-utils', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
       const groups = computeProcessGroups(db);
       expect(getProcessDescription(modA, modB, groups)).toBe('separate-process (no import connectivity)');
@@ -345,7 +345,7 @@ describe('process-utils', () => {
 
   describe('getCrossProcessGroupPairs', () => {
     it('1 group → 0 pairs', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
 
@@ -353,8 +353,8 @@ describe('process-utils', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
       insertImport(fileA, fileB, false);
 
@@ -367,7 +367,7 @@ describe('process-utils', () => {
     });
 
     it('2 disconnected groups → at least 1 pair', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
 
@@ -375,8 +375,8 @@ describe('process-utils', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
       const groups = computeProcessGroups(db);
       const pairs = getCrossProcessGroupPairs(groups);
@@ -388,7 +388,7 @@ describe('process-utils', () => {
     });
 
     it('each pair contains correct module arrays', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
       const modC = setupModule('ModC', 'mod-c', rootId);
@@ -399,9 +399,9 @@ describe('process-utils', () => {
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
       const defC = insertDefinition(fileC, 'funcC');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
-      db.assignSymbolToModule(defC, modC);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
+      db.modules.assignSymbol(defC, modC);
 
       // Connect A and B, but not C
       insertImport(fileA, fileB, false);

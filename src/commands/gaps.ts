@@ -54,8 +54,8 @@ export default class Gaps extends Command {
         | undefined;
 
       if (types.includes('symbols')) {
-        const total = db.getFullyUnannotatedSymbolCount({ kind });
-        const items = db.getFullyUnannotatedSymbols({ kind, limit });
+        const total = db.metadata.getDefinitionsWithNoMetadataCount({ kind });
+        const items = db.metadata.getDefinitionsWithNoMetadata({ kind, limit });
         unannotatedSymbols = { items, shown: items.length, total };
       }
 

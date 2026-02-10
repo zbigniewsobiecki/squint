@@ -57,8 +57,8 @@ export default class Deps extends Command {
       }
 
       // Get dependencies with metadata
-      const dependencies = db.getDependenciesWithMetadata(definition.id, flags.aspect);
-      const defDetails = db.getDefinitionById(definition.id);
+      const dependencies = db.dependencies.getWithMetadata(definition.id, flags.aspect);
+      const defDetails = db.definitions.getById(definition.id);
 
       if (!defDetails) {
         this.error(chalk.red('Definition not found'));

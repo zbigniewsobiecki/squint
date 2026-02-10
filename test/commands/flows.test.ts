@@ -26,7 +26,7 @@ describe('flows and interactions commands', () => {
     db.initialize();
 
     // Insert test files
-    const controllerFileId = db.insertFile({
+    const controllerFileId = db.files.insert({
       path: path.join(testDir, 'controller.ts'),
       language: 'typescript',
       contentHash: computeHash('controller content'),
@@ -34,7 +34,7 @@ describe('flows and interactions commands', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    const serviceFileId = db.insertFile({
+    const serviceFileId = db.files.insert({
       path: path.join(testDir, 'service.ts'),
       language: 'typescript',
       contentHash: computeHash('service content'),
@@ -42,7 +42,7 @@ describe('flows and interactions commands', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    const repoFileId = db.insertFile({
+    const repoFileId = db.files.insert({
       path: path.join(testDir, 'repository.ts'),
       language: 'typescript',
       contentHash: computeHash('repo content'),
@@ -51,7 +51,7 @@ describe('flows and interactions commands', () => {
     });
 
     // Create definitions for a typical flow
-    const controllerDefId = db.insertDefinition(controllerFileId, {
+    const controllerDefId = db.files.insertDefinition(controllerFileId, {
       name: 'handleRegister',
       kind: 'function',
       isExported: true,
@@ -60,7 +60,7 @@ describe('flows and interactions commands', () => {
       endPosition: { row: 10, column: 1 },
     });
 
-    const serviceDefId = db.insertDefinition(serviceFileId, {
+    const serviceDefId = db.files.insertDefinition(serviceFileId, {
       name: 'createUser',
       kind: 'function',
       isExported: true,
@@ -69,7 +69,7 @@ describe('flows and interactions commands', () => {
       endPosition: { row: 15, column: 1 },
     });
 
-    const repoDefId = db.insertDefinition(repoFileId, {
+    const repoDefId = db.files.insertDefinition(repoFileId, {
       name: 'insertUser',
       kind: 'function',
       isExported: true,
@@ -79,7 +79,7 @@ describe('flows and interactions commands', () => {
     });
 
     // Create a second set of definitions for login flow
-    const loginHandlerId = db.insertDefinition(controllerFileId, {
+    const loginHandlerId = db.files.insertDefinition(controllerFileId, {
       name: 'handleLogin',
       kind: 'function',
       isExported: true,
@@ -89,34 +89,34 @@ describe('flows and interactions commands', () => {
     });
 
     // Create module tree
-    const rootId = db.ensureRootModule();
+    const rootId = db.modules.ensureRoot();
 
-    controllerModuleId = db.insertModule(rootId, 'user-controller', 'User Controller', 'User API endpoints');
-    serviceModuleId = db.insertModule(rootId, 'user-service', 'User Service', 'User business logic');
-    repoModuleId = db.insertModule(rootId, 'user-repo', 'User Repository', 'User data access');
+    controllerModuleId = db.modules.insert(rootId, 'user-controller', 'User Controller', 'User API endpoints');
+    serviceModuleId = db.modules.insert(rootId, 'user-service', 'User Service', 'User business logic');
+    repoModuleId = db.modules.insert(rootId, 'user-repo', 'User Repository', 'User data access');
 
     // Assign symbols to modules
-    db.assignSymbolToModule(controllerDefId, controllerModuleId);
-    db.assignSymbolToModule(loginHandlerId, controllerModuleId);
-    db.assignSymbolToModule(serviceDefId, serviceModuleId);
-    db.assignSymbolToModule(repoDefId, repoModuleId);
+    db.modules.assignSymbol(controllerDefId, controllerModuleId);
+    db.modules.assignSymbol(loginHandlerId, controllerModuleId);
+    db.modules.assignSymbol(serviceDefId, serviceModuleId);
+    db.modules.assignSymbol(repoDefId, repoModuleId);
 
     // Create interactions (module-to-module edges)
-    interaction1Id = db.insertInteraction(controllerModuleId, serviceModuleId, {
+    interaction1Id = db.interactions.insert(controllerModuleId, serviceModuleId, {
       direction: 'uni',
       pattern: 'business',
       symbols: ['createUser', 'updateUser'],
       semantic: 'Controller delegates to service',
     });
 
-    interaction2Id = db.insertInteraction(serviceModuleId, repoModuleId, {
+    interaction2Id = db.interactions.insert(serviceModuleId, repoModuleId, {
       direction: 'uni',
       pattern: 'business',
       symbols: ['insertUser', 'findUser'],
       semantic: 'Service persists data',
     });
 
-    interaction3Id = db.insertInteraction(controllerModuleId, repoModuleId, {
+    interaction3Id = db.interactions.insert(controllerModuleId, repoModuleId, {
       direction: 'uni',
       pattern: 'utility',
       symbols: ['logAccess'],
@@ -124,27 +124,27 @@ describe('flows and interactions commands', () => {
     });
 
     // Create flows (user journeys)
-    const registerFlowId = db.insertFlow('UserRegistrationFlow', 'user-registration', {
+    const registerFlowId = db.flows.insert('UserRegistrationFlow', 'user-registration', {
       entryPointId: controllerDefId,
       entryPath: 'POST /api/users/register',
       stakeholder: 'user',
       description: 'User registration flow from signup to data persistence',
     });
-    db.addFlowSteps(registerFlowId, [interaction1Id, interaction2Id]);
+    db.flows.addSteps(registerFlowId, [interaction1Id, interaction2Id]);
 
-    const loginFlowId = db.insertFlow('UserLoginFlow', 'user-login', {
+    const loginFlowId = db.flows.insert('UserLoginFlow', 'user-login', {
       entryPointId: loginHandlerId,
       entryPath: 'POST /api/users/login',
       stakeholder: 'user',
       description: 'User login authentication flow',
     });
-    db.addFlowSteps(loginFlowId, [interaction1Id]);
+    db.flows.addSteps(loginFlowId, [interaction1Id]);
 
-    const adminFlowId = db.insertFlow('AdminAuditFlow', 'admin-audit', {
+    const adminFlowId = db.flows.insert('AdminAuditFlow', 'admin-audit', {
       stakeholder: 'admin',
       description: 'Administrative audit logging flow',
     });
-    db.addFlowSteps(adminFlowId, [interaction3Id]);
+    db.flows.addSteps(adminFlowId, [interaction3Id]);
 
     db.close();
   });

@@ -44,7 +44,7 @@ export class FlowValidator {
     entryPointModules?: EntryPointModuleInfo[],
     atomicFlows?: FlowSuggestion[]
   ): Promise<FlowSuggestion[]> {
-    const modules = this.db.getAllModules();
+    const modules = this.db.modules.getAll();
     const moduleByPath = new Map(modules.map((m) => [m.fullPath, m]));
 
     const coveredInteractionIds = new Set(existingFlows.flatMap((f) => f.interactionIds));

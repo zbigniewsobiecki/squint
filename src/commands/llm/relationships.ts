@@ -119,7 +119,7 @@ export default class Relationships extends BaseLlmCommand {
     }
 
     // Check initial state
-    const initialUnannotated = db.getUnannotatedRelationshipCount();
+    const initialUnannotated = db.relationships.getUnannotatedCount();
     if (initialUnannotated === 0) {
       if (isJson) {
         this.log(JSON.stringify({ message: 'All relationships are already annotated' }));
@@ -130,7 +130,7 @@ export default class Relationships extends BaseLlmCommand {
     }
 
     if (!isJson) {
-      const initialAnnotated = db.getRelationshipAnnotationCount();
+      const initialAnnotated = db.relationships.getCount();
       this.log(chalk.gray(`Unannotated relationships: ${initialUnannotated}, Already annotated: ${initialAnnotated}`));
       this.log('');
     }
@@ -147,7 +147,7 @@ export default class Relationships extends BaseLlmCommand {
       }
 
       // Fetch unannotated relationships
-      const unannotated = db.getUnannotatedRelationships();
+      const unannotated = db.relationships.getUnannotated();
       if (unannotated.length === 0) {
         if (!isJson) {
           this.log(chalk.green('All relationships annotated!'));
@@ -266,7 +266,7 @@ export default class Relationships extends BaseLlmCommand {
 
         // Persist
         if (!dryRun) {
-          db.setRelationshipAnnotation(fromId, toId, value);
+          db.relationships.set(fromId, toId, value);
         }
 
         iterationAnnotations++;
@@ -282,7 +282,7 @@ export default class Relationships extends BaseLlmCommand {
           errors: iterationErrors,
         });
       } else {
-        const remaining = db.getUnannotatedRelationshipCount();
+        const remaining = db.relationships.getUnannotatedCount();
         this.log(
           chalk.green(`  ✓ Annotated ${iterationAnnotations} relationships`) + chalk.gray(` (${remaining} remaining)`)
         );
@@ -290,8 +290,8 @@ export default class Relationships extends BaseLlmCommand {
     }
 
     // Final summary
-    const finalAnnotated = db.getRelationshipAnnotationCount();
-    const finalUnannotated = db.getUnannotatedRelationshipCount();
+    const finalAnnotated = db.relationships.getCount();
+    const finalUnannotated = db.relationships.getUnannotatedCount();
     const finalTotal = finalAnnotated + finalUnannotated;
     const finalCoverage: RelationshipCoverageInfo = {
       annotated: finalAnnotated,
@@ -405,7 +405,7 @@ export default class Relationships extends BaseLlmCommand {
         let fixed = 0;
         for (const issue of typeMismatchIssues) {
           if (issue.definitionId && issue.fixData?.targetDefinitionId && issue.fixData?.expectedType) {
-            db.updateRelationshipType(
+            db.relationships.updateType(
               issue.definitionId,
               issue.fixData.targetDefinitionId,
               issue.fixData.expectedType as 'extends' | 'implements'
@@ -488,11 +488,11 @@ export default class Relationships extends BaseLlmCommand {
       const rels = grouped.get(sourceId);
       if (!rels || rels.length === 0) continue;
 
-      const def = db.getDefinitionById(sourceId);
+      const def = db.definitions.getById(sourceId);
       if (!def) continue;
 
       const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
-      const sourceMeta = db.getDefinitionMetadata(sourceId);
+      const sourceMeta = db.metadata.get(sourceId);
 
       let sourceDomains: string[] | null = null;
       try {
@@ -506,7 +506,7 @@ export default class Relationships extends BaseLlmCommand {
       // Build target info
       const relationships: RelationshipTarget[] = [];
       for (const rel of rels) {
-        const targetMeta = db.getDefinitionMetadata(rel.toDefinitionId);
+        const targetMeta = db.metadata.get(rel.toDefinitionId);
 
         relationships.push({
           toId: rel.toDefinitionId,

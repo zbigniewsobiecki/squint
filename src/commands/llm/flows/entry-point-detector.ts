@@ -39,7 +39,7 @@ export class EntryPointDetector {
    * Detect entry point modules using LLM classification.
    */
   async detectEntryPointModules(model: string, llmOptions: LlmOptions): Promise<EntryPointModuleInfo[]> {
-    const allModulesWithMembers = this.db.getAllModulesWithMembers();
+    const allModulesWithMembers = this.db.modules.getAllWithMembers();
 
     // Build module candidates (only modules with members, skip test modules)
     const candidates: ModuleCandidate[] = [];
@@ -146,8 +146,8 @@ export class EntryPointDetector {
     model: string,
     llmOptions: LlmOptions
   ): Promise<MemberClassification[]> {
-    const interactions = this.db.getEnrichedModuleCallGraph();
-    const relationships = this.db.getAllRelationshipAnnotations({ limit: 200 });
+    const interactions = this.db.callGraph.getEnrichedModuleCallGraph();
+    const relationships = this.db.relationships.getAll({ limit: 200 });
 
     const systemPrompt = this.buildClassificationSystemPrompt();
     const moduleList = this.buildModuleContext(candidates);

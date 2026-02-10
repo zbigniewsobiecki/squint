@@ -61,7 +61,7 @@ export default class FlowsTrace extends Command {
       }
 
       // Get full definition details
-      const defDetails = db.getDefinitionById(definition.id);
+      const defDetails = db.definitions.getById(definition.id);
       if (!defDetails) {
         this.error(chalk.red(`Definition with ID ${definition.id} not found`));
       }
@@ -111,7 +111,7 @@ export default class FlowsTrace extends Command {
     maxDepth: number
   ): Array<{ definitionId: number; depth: number; moduleId: number | null }> {
     // Build call graph adjacency list
-    const edges = db.getCallGraph();
+    const edges = db.modules.getCallGraph();
     const adjacency = new Map<number, number[]>();
     for (const edge of edges) {
       if (!adjacency.has(edge.fromId)) {
@@ -144,7 +144,7 @@ export default class FlowsTrace extends Command {
     const result: Array<{ definitionId: number; depth: number; moduleId: number | null }> = [];
 
     for (const [definitionId, depth] of visited) {
-      const moduleInfo = db.getDefinitionModule(definitionId);
+      const moduleInfo = db.modules.getDefinitionModule(definitionId);
       result.push({
         definitionId,
         depth,
@@ -164,7 +164,7 @@ export default class FlowsTrace extends Command {
     trace: Array<{ definitionId: number; depth: number; moduleId: number | null }>
   ): TraceNode {
     // Build adjacency list from call graph
-    const edges = db.getCallGraph();
+    const edges = db.modules.getCallGraph();
     const adjacency = new Map<number, number[]>();
     for (const edge of edges) {
       if (!adjacency.has(edge.fromId)) {
@@ -186,10 +186,10 @@ export default class FlowsTrace extends Command {
       if (visited.has(id)) return null;
       visited.add(id);
 
-      const def = db.getDefinitionById(id);
+      const def = db.definitions.getById(id);
       if (!def) return null;
 
-      const moduleInfo = db.getDefinitionModule(id);
+      const moduleInfo = db.modules.getDefinitionModule(id);
       const children: TraceNode[] = [];
 
       const neighbors = adjacency.get(id) ?? [];

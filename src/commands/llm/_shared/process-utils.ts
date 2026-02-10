@@ -79,9 +79,9 @@ class UnionFind {
  * 5. Build the ProcessGroups result
  */
 export function computeProcessGroups(db: IndexDatabase): ProcessGroups {
-  const fileToModule = db.getFileToModuleMap();
-  const importEdges = db.getRuntimeImportEdges();
-  const allModules = db.getAllModules();
+  const fileToModule = db.interactions.getFileToModuleMap();
+  const importEdges = db.interactions.getRuntimeImportEdges();
+  const allModules = db.modules.getAll();
 
   // Build union-find over file IDs
   const uf = new UnionFind();

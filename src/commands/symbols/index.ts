@@ -51,7 +51,7 @@ export default class Symbols extends Command {
     await withDatabase(flags.database, this, async (db) => {
       // Handle --domains flag: list all unique domains
       if (flags.domains) {
-        const domains = db.getAllDomains();
+        const domains = db.metadata.getAllDomains();
         if (domains.length === 0) {
           this.log(
             chalk.gray(
@@ -61,7 +61,7 @@ export default class Symbols extends Command {
         } else {
           this.log('Domains in use:');
           for (const domain of domains) {
-            const count = db.getSymbolsByDomain(domain).length;
+            const count = db.domains.getSymbolsByDomain(domain).length;
             this.log(`  ${chalk.cyan(domain)} (${count} symbol${count !== 1 ? 's' : ''})`);
           }
         }
@@ -70,7 +70,7 @@ export default class Symbols extends Command {
 
       // Handle --domain filter: show symbols with a specific domain
       if (flags.domain) {
-        const symbols = db.getSymbolsByDomain(flags.domain);
+        const symbols = db.domains.getSymbolsByDomain(flags.domain);
         if (symbols.length === 0) {
           this.log(chalk.gray(`No symbols found with domain "${flags.domain}".`));
         } else {
@@ -91,7 +91,7 @@ export default class Symbols extends Command {
         if (flags.pure !== 'true' && flags.pure !== 'false') {
           this.error(chalk.red('--pure must be "true" or "false"'));
         }
-        const symbols = db.getSymbolsByPurity(isPure);
+        const symbols = db.domains.getSymbolsByPurity(isPure);
         if (symbols.length === 0) {
           this.log(chalk.gray(`No symbols found with pure=${flags.pure}.`));
         } else {
@@ -111,24 +111,24 @@ export default class Symbols extends Command {
       let fileId: number | null = null;
       if (flags.file) {
         const filePath = path.resolve(flags.file);
-        fileId = db.getFileId(filePath);
+        fileId = db.files.getIdByPath(filePath);
         if (fileId === null) {
           this.error(chalk.red(`File "${filePath}" not found in the index.`));
         }
       }
 
-      let symbols = db.getSymbols({
+      let symbols = db.definitions.getSymbols({
         kind: flags.kind,
         fileId: fileId ?? undefined,
       });
 
       // Apply metadata filters
       if (flags.has) {
-        const idsWithKey = new Set(db.getDefinitionsWithMetadata(flags.has));
+        const idsWithKey = new Set(db.metadata.getDefinitionsWith(flags.has));
         symbols = symbols.filter((sym) => idsWithKey.has(sym.id));
       }
       if (flags.missing) {
-        const idsWithoutKey = new Set(db.getDefinitionsWithoutMetadata(flags.missing));
+        const idsWithoutKey = new Set(db.metadata.getDefinitionsWithout(flags.missing));
         symbols = symbols.filter((sym) => idsWithoutKey.has(sym.id));
       }
 

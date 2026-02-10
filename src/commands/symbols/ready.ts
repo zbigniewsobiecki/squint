@@ -63,7 +63,7 @@ export default class Ready extends Command {
     const { flags } = await this.parse(Ready);
 
     await withDatabase(flags.database, this, async (db) => {
-      const result = db.getReadyToUnderstandSymbols(flags.aspect, {
+      const result = db.dependencies.getReadySymbols(flags.aspect, {
         limit: flags.limit,
         kind: flags.kind,
         filePattern: flags.file,
@@ -72,7 +72,7 @@ export default class Ready extends Command {
       // Enhance symbols with dependency info when verbose
       const symbols: ReadySymbolWithDeps[] = result.symbols.map((symbol) => {
         if (flags.verbose) {
-          const dependencies = db.getDependenciesWithMetadata(symbol.id, flags.aspect);
+          const dependencies = db.dependencies.getWithMetadata(symbol.id, flags.aspect);
           return { ...symbol, dependencies };
         }
         return symbol;

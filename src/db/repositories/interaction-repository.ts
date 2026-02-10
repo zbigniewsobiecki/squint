@@ -1,16 +1,7 @@
 import type Database from 'better-sqlite3';
 import { ensureInteractionsTables, ensureModulesTables } from '../schema-manager.js';
-import type {
-  CallGraphEdge,
-  CalledSymbolInfo,
-  EnrichedModuleCallEdge,
-  Interaction,
-  InteractionSource,
-  InteractionWithPaths,
-  ModuleCallEdge,
-  RelationshipCoverageBreakdown,
-  RelationshipInteractionCoverage,
-} from '../schema.js';
+import type { CallGraphEdge, Interaction, InteractionSource, InteractionWithPaths } from '../schema.js';
+import { queryCallGraphEdges } from './_shared/call-graph-query.js';
 
 export interface InteractionInsertOptions {
   direction?: 'uni' | 'bi';
@@ -33,6 +24,43 @@ export interface InteractionStats {
   businessCount: number;
   utilityCount: number;
   biDirectionalCount: number;
+}
+
+const INTERACTION_COLS = `
+  id,
+  from_module_id as fromModuleId,
+  to_module_id as toModuleId,
+  direction,
+  weight,
+  pattern,
+  symbols,
+  semantic,
+  source,
+  created_at as createdAt`;
+
+const INTERACTION_WITH_PATHS_SELECT = `
+  SELECT
+    i.id,
+    i.from_module_id as fromModuleId,
+    i.to_module_id as toModuleId,
+    i.direction,
+    i.weight,
+    i.pattern,
+    i.symbols,
+    i.semantic,
+    i.source,
+    i.created_at as createdAt,
+    from_m.full_path as fromModulePath,
+    to_m.full_path as toModulePath
+  FROM interactions i
+  JOIN modules from_m ON i.from_module_id = from_m.id
+  JOIN modules to_m ON i.to_module_id = to_m.id`;
+
+function parseSymbols(row: Interaction): Interaction {
+  if (row.symbols) {
+    row.symbols = JSON.parse(row.symbols as unknown as string);
+  }
+  return row;
 }
 
 /**
@@ -96,28 +124,10 @@ export class InteractionRepository {
    */
   getById(id: number): Interaction | null {
     ensureInteractionsTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        from_module_id as fromModuleId,
-        to_module_id as toModuleId,
-        direction,
-        weight,
-        pattern,
-        symbols,
-        semantic,
-        source,
-        created_at as createdAt
-      FROM interactions
-      WHERE id = ?
-    `);
+    const stmt = this.db.prepare(`SELECT ${INTERACTION_COLS} FROM interactions WHERE id = ?`);
     const row = stmt.get(id) as Interaction | undefined;
     if (!row) return null;
-    // Parse symbols JSON
-    if (row.symbols) {
-      row.symbols = JSON.parse(row.symbols as unknown as string);
-    }
-    return row;
+    return parseSymbols(row);
   }
 
   /**
@@ -125,27 +135,12 @@ export class InteractionRepository {
    */
   getByModules(fromModuleId: number, toModuleId: number): Interaction | null {
     ensureInteractionsTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        from_module_id as fromModuleId,
-        to_module_id as toModuleId,
-        direction,
-        weight,
-        pattern,
-        symbols,
-        semantic,
-        source,
-        created_at as createdAt
-      FROM interactions
-      WHERE from_module_id = ? AND to_module_id = ?
-    `);
+    const stmt = this.db.prepare(
+      `SELECT ${INTERACTION_COLS} FROM interactions WHERE from_module_id = ? AND to_module_id = ?`
+    );
     const row = stmt.get(fromModuleId, toModuleId) as Interaction | undefined;
     if (!row) return null;
-    if (row.symbols) {
-      row.symbols = JSON.parse(row.symbols as unknown as string);
-    }
-    return row;
+    return parseSymbols(row);
   }
 
   /**
@@ -154,28 +149,7 @@ export class InteractionRepository {
   getAll(): InteractionWithPaths[] {
     ensureInteractionsTables(this.db);
     ensureModulesTables(this.db);
-
-    const stmt = this.db.prepare(`
-      SELECT
-        i.id,
-        i.from_module_id as fromModuleId,
-        i.to_module_id as toModuleId,
-        i.direction,
-        i.weight,
-        i.pattern,
-        i.symbols,
-        i.semantic,
-        i.source,
-        i.created_at as createdAt,
-        from_m.full_path as fromModulePath,
-        to_m.full_path as toModulePath
-      FROM interactions i
-      JOIN modules from_m ON i.from_module_id = from_m.id
-      JOIN modules to_m ON i.to_module_id = to_m.id
-      ORDER BY i.weight DESC
-    `);
-
-    return stmt.all() as InteractionWithPaths[];
+    return this.db.prepare(`${INTERACTION_WITH_PATHS_SELECT} ORDER BY i.weight DESC`).all() as InteractionWithPaths[];
   }
 
   /**
@@ -184,29 +158,9 @@ export class InteractionRepository {
   getByPattern(pattern: 'utility' | 'business'): InteractionWithPaths[] {
     ensureInteractionsTables(this.db);
     ensureModulesTables(this.db);
-
-    const stmt = this.db.prepare(`
-      SELECT
-        i.id,
-        i.from_module_id as fromModuleId,
-        i.to_module_id as toModuleId,
-        i.direction,
-        i.weight,
-        i.pattern,
-        i.symbols,
-        i.semantic,
-        i.source,
-        i.created_at as createdAt,
-        from_m.full_path as fromModulePath,
-        to_m.full_path as toModulePath
-      FROM interactions i
-      JOIN modules from_m ON i.from_module_id = from_m.id
-      JOIN modules to_m ON i.to_module_id = to_m.id
-      WHERE i.pattern = ?
-      ORDER BY i.weight DESC
-    `);
-
-    return stmt.all(pattern) as InteractionWithPaths[];
+    return this.db
+      .prepare(`${INTERACTION_WITH_PATHS_SELECT} WHERE i.pattern = ? ORDER BY i.weight DESC`)
+      .all(pattern) as InteractionWithPaths[];
   }
 
   /**
@@ -215,29 +169,9 @@ export class InteractionRepository {
   getFromModule(moduleId: number): InteractionWithPaths[] {
     ensureInteractionsTables(this.db);
     ensureModulesTables(this.db);
-
-    const stmt = this.db.prepare(`
-      SELECT
-        i.id,
-        i.from_module_id as fromModuleId,
-        i.to_module_id as toModuleId,
-        i.direction,
-        i.weight,
-        i.pattern,
-        i.symbols,
-        i.semantic,
-        i.source,
-        i.created_at as createdAt,
-        from_m.full_path as fromModulePath,
-        to_m.full_path as toModulePath
-      FROM interactions i
-      JOIN modules from_m ON i.from_module_id = from_m.id
-      JOIN modules to_m ON i.to_module_id = to_m.id
-      WHERE i.from_module_id = ?
-      ORDER BY i.weight DESC
-    `);
-
-    return stmt.all(moduleId) as InteractionWithPaths[];
+    return this.db
+      .prepare(`${INTERACTION_WITH_PATHS_SELECT} WHERE i.from_module_id = ? ORDER BY i.weight DESC`)
+      .all(moduleId) as InteractionWithPaths[];
   }
 
   /**
@@ -246,29 +180,9 @@ export class InteractionRepository {
   getToModule(moduleId: number): InteractionWithPaths[] {
     ensureInteractionsTables(this.db);
     ensureModulesTables(this.db);
-
-    const stmt = this.db.prepare(`
-      SELECT
-        i.id,
-        i.from_module_id as fromModuleId,
-        i.to_module_id as toModuleId,
-        i.direction,
-        i.weight,
-        i.pattern,
-        i.symbols,
-        i.semantic,
-        i.source,
-        i.created_at as createdAt,
-        from_m.full_path as fromModulePath,
-        to_m.full_path as toModulePath
-      FROM interactions i
-      JOIN modules from_m ON i.from_module_id = from_m.id
-      JOIN modules to_m ON i.to_module_id = to_m.id
-      WHERE i.to_module_id = ?
-      ORDER BY i.weight DESC
-    `);
-
-    return stmt.all(moduleId) as InteractionWithPaths[];
+    return this.db
+      .prepare(`${INTERACTION_WITH_PATHS_SELECT} WHERE i.to_module_id = ? ORDER BY i.weight DESC`)
+      .all(moduleId) as InteractionWithPaths[];
   }
 
   /**
@@ -341,23 +255,15 @@ export class InteractionRepository {
   getStats(): InteractionStats {
     ensureInteractionsTables(this.db);
 
-    const totalCount = this.getCount();
-
-    const businessStmt = this.db.prepare("SELECT COUNT(*) as count FROM interactions WHERE pattern = 'business'");
-    const businessCount = (businessStmt.get() as { count: number }).count;
-
-    const utilityStmt = this.db.prepare("SELECT COUNT(*) as count FROM interactions WHERE pattern = 'utility'");
-    const utilityCount = (utilityStmt.get() as { count: number }).count;
-
-    const biStmt = this.db.prepare("SELECT COUNT(*) as count FROM interactions WHERE direction = 'bi'");
-    const biDirectionalCount = (biStmt.get() as { count: number }).count;
-
-    return {
-      totalCount,
-      businessCount,
-      utilityCount,
-      biDirectionalCount,
-    };
+    const stmt = this.db.prepare(`
+      SELECT
+        COUNT(*) as totalCount,
+        SUM(CASE WHEN pattern = 'business' THEN 1 ELSE 0 END) as businessCount,
+        SUM(CASE WHEN pattern = 'utility' THEN 1 ELSE 0 END) as utilityCount,
+        SUM(CASE WHEN direction = 'bi' THEN 1 ELSE 0 END) as biDirectionalCount
+      FROM interactions
+    `);
+    return stmt.get() as InteractionStats;
   }
 
   /**
@@ -366,29 +272,9 @@ export class InteractionRepository {
   getBySource(source: InteractionSource): InteractionWithPaths[] {
     ensureInteractionsTables(this.db);
     ensureModulesTables(this.db);
-
-    const stmt = this.db.prepare(`
-      SELECT
-        i.id,
-        i.from_module_id as fromModuleId,
-        i.to_module_id as toModuleId,
-        i.direction,
-        i.weight,
-        i.pattern,
-        i.symbols,
-        i.semantic,
-        i.source,
-        i.created_at as createdAt,
-        from_m.full_path as fromModulePath,
-        to_m.full_path as toModulePath
-      FROM interactions i
-      JOIN modules from_m ON i.from_module_id = from_m.id
-      JOIN modules to_m ON i.to_module_id = to_m.id
-      WHERE i.source = ?
-      ORDER BY i.weight DESC
-    `);
-
-    return stmt.all(source) as InteractionWithPaths[];
+    return this.db
+      .prepare(`${INTERACTION_WITH_PATHS_SELECT} WHERE i.source = ? ORDER BY i.weight DESC`)
+      .all(source) as InteractionWithPaths[];
   }
 
   /**
@@ -399,483 +285,6 @@ export class InteractionRepository {
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM interactions WHERE source = ?');
     const row = stmt.get(source) as { count: number };
     return row.count;
-  }
-
-  /**
-   * Get the module-level call graph (for detecting interactions).
-   */
-  getModuleCallGraph(): ModuleCallEdge[] {
-    ensureModulesTables(this.db);
-
-    // Get symbol-level call graph
-    const symbolEdges = this.getCallGraphInternal();
-
-    // Build module lookup for definitions
-    const defModuleMap = new Map<number, { moduleId: number; modulePath: string }>();
-    const moduleMembers = this.db
-      .prepare(`
-      SELECT mm.definition_id, mm.module_id, m.full_path
-      FROM module_members mm
-      JOIN modules m ON mm.module_id = m.id
-    `)
-      .all() as Array<{ definition_id: number; module_id: number; full_path: string }>;
-
-    for (const mm of moduleMembers) {
-      defModuleMap.set(mm.definition_id, {
-        moduleId: mm.module_id,
-        modulePath: mm.full_path,
-      });
-    }
-
-    // Aggregate to module-level edges
-    const edgeMap = new Map<string, ModuleCallEdge>();
-
-    for (const edge of symbolEdges) {
-      const fromModule = defModuleMap.get(edge.fromId);
-      const toModule = defModuleMap.get(edge.toId);
-
-      if (!fromModule || !toModule) continue;
-      if (fromModule.moduleId === toModule.moduleId) continue;
-
-      const key = `${fromModule.moduleId}->${toModule.moduleId}`;
-      const existing = edgeMap.get(key);
-
-      if (existing) {
-        existing.weight += edge.weight;
-      } else {
-        edgeMap.set(key, {
-          fromModuleId: fromModule.moduleId,
-          toModuleId: toModule.moduleId,
-          weight: edge.weight,
-          fromModulePath: fromModule.modulePath,
-          toModulePath: toModule.modulePath,
-        });
-      }
-    }
-
-    return Array.from(edgeMap.values()).sort((a, b) => b.weight - a.weight);
-  }
-
-  /**
-   * Get enriched module-level call graph with symbol details.
-   */
-  getEnrichedModuleCallGraph(): EnrichedModuleCallEdge[] {
-    ensureModulesTables(this.db);
-
-    // Query for symbol-level details with module context
-    const symbolEdges = this.db
-      .prepare(`
-      SELECT
-        from_mm.module_id as from_module_id,
-        to_mm.module_id as to_module_id,
-        from_m.full_path as from_module_path,
-        to_m.full_path as to_module_path,
-        to_d.name as symbol_name,
-        to_d.kind as symbol_kind,
-        from_d.id as caller_id,
-        COUNT(*) as call_count,
-        MIN(u.line) as min_usage_line
-      FROM definitions from_d
-      JOIN files f ON from_d.file_id = f.id
-      JOIN module_members from_mm ON from_mm.definition_id = from_d.id
-      JOIN modules from_m ON from_mm.module_id = from_m.id
-      JOIN symbols s ON s.file_id = f.id AND s.definition_id IS NOT NULL
-      JOIN definitions to_d ON s.definition_id = to_d.id
-      JOIN module_members to_mm ON to_mm.definition_id = to_d.id
-      JOIN modules to_m ON to_mm.module_id = to_m.id
-      JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression', 'jsx_self_closing_element', 'jsx_opening_element')
-        AND from_d.line <= u.line AND u.line <= from_d.end_line
-        AND s.definition_id != from_d.id
-        AND from_mm.module_id != to_mm.module_id
-      GROUP BY from_mm.module_id, to_mm.module_id, to_d.id, from_d.id
-      UNION ALL
-      SELECT
-        from_mm.module_id as from_module_id,
-        to_mm.module_id as to_module_id,
-        from_m.full_path as from_module_path,
-        to_m.full_path as to_module_path,
-        to_d.name as symbol_name,
-        to_d.kind as symbol_kind,
-        from_d.id as caller_id,
-        COUNT(*) as call_count,
-        MIN(u.line) as min_usage_line
-      FROM definitions from_d
-      JOIN files f ON from_d.file_id = f.id
-      JOIN module_members from_mm ON from_mm.definition_id = from_d.id
-      JOIN modules from_m ON from_mm.module_id = from_m.id
-      JOIN imports i ON i.from_file_id = f.id
-      JOIN symbols s ON s.reference_id = i.id AND s.definition_id IS NOT NULL
-      JOIN definitions to_d ON s.definition_id = to_d.id
-      JOIN module_members to_mm ON to_mm.definition_id = to_d.id
-      JOIN modules to_m ON to_mm.module_id = to_m.id
-      JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression', 'jsx_self_closing_element', 'jsx_opening_element')
-        AND from_d.line <= u.line AND u.line <= from_d.end_line
-        AND s.definition_id != from_d.id
-        AND from_mm.module_id != to_mm.module_id
-      GROUP BY from_mm.module_id, to_mm.module_id, to_d.id, from_d.id
-    `)
-      .all() as Array<{
-      from_module_id: number;
-      to_module_id: number;
-      from_module_path: string;
-      to_module_path: string;
-      symbol_name: string;
-      symbol_kind: string;
-      caller_id: number;
-      call_count: number;
-      min_usage_line: number;
-    }>;
-
-    // Aggregate into enriched edges
-    const edgeMap = new Map<
-      string,
-      {
-        fromModuleId: number;
-        toModuleId: number;
-        fromModulePath: string;
-        toModulePath: string;
-        weight: number;
-        symbols: Map<string, CalledSymbolInfo>;
-        callers: Set<number>;
-        minUsageLine: number;
-      }
-    >();
-
-    for (const row of symbolEdges) {
-      const key = `${row.from_module_id}->${row.to_module_id}`;
-      let edge = edgeMap.get(key);
-
-      if (!edge) {
-        edge = {
-          fromModuleId: row.from_module_id,
-          toModuleId: row.to_module_id,
-          fromModulePath: row.from_module_path,
-          toModulePath: row.to_module_path,
-          weight: 0,
-          symbols: new Map(),
-          callers: new Set(),
-          minUsageLine: row.min_usage_line,
-        };
-        edgeMap.set(key, edge);
-      }
-
-      edge.weight += row.call_count;
-      edge.callers.add(row.caller_id);
-      edge.minUsageLine = Math.min(edge.minUsageLine, row.min_usage_line);
-
-      const symbolKey = row.symbol_name;
-      const existing = edge.symbols.get(symbolKey);
-      if (existing) {
-        existing.callCount += row.call_count;
-      } else {
-        edge.symbols.set(symbolKey, {
-          name: row.symbol_name,
-          kind: row.symbol_kind,
-          callCount: row.call_count,
-        });
-      }
-    }
-
-    // Convert to EnrichedModuleCallEdge with classification
-    const result: EnrichedModuleCallEdge[] = [];
-
-    // Get test module IDs for test-internal classification
-    const testModuleRows = this.db.prepare('SELECT id FROM modules WHERE is_test = 1').all() as Array<{ id: number }>;
-    const testModuleIds = new Set(testModuleRows.map((r) => r.id));
-
-    for (const edge of edgeMap.values()) {
-      const calledSymbols = Array.from(edge.symbols.values()).sort((a, b) => b.callCount - a.callCount);
-
-      const symbolCount = calledSymbols.length;
-      const avgCallsPerSymbol = symbolCount > 0 ? edge.weight / symbolCount : 0;
-      const distinctCallers = edge.callers.size;
-      const isHighFrequency = edge.weight > 10;
-
-      // Classify edge: test-internal if both modules are test, otherwise utility/business
-      let edgePattern: 'utility' | 'business' | 'test-internal';
-      if (testModuleIds.has(edge.fromModuleId) && testModuleIds.has(edge.toModuleId)) {
-        edgePattern = 'test-internal';
-      } else {
-        const hasClassCall = calledSymbols.some((s) => s.kind === 'class');
-        const isLikelyUtility = isHighFrequency && distinctCallers >= 3 && avgCallsPerSymbol > 3 && !hasClassCall;
-        edgePattern = isLikelyUtility ? 'utility' : 'business';
-      }
-
-      result.push({
-        fromModuleId: edge.fromModuleId,
-        toModuleId: edge.toModuleId,
-        fromModulePath: edge.fromModulePath,
-        toModulePath: edge.toModulePath,
-        weight: edge.weight,
-        calledSymbols,
-        avgCallsPerSymbol,
-        distinctCallers,
-        isHighFrequency,
-        edgePattern,
-        minUsageLine: edge.minUsageLine,
-      });
-    }
-
-    return result.sort((a, b) => b.weight - a.weight);
-  }
-
-  /**
-   * Sync interactions from the module call graph.
-   * Creates or updates interactions based on detected module edges.
-   */
-  syncFromCallGraph(): { created: number; updated: number } {
-    const enrichedEdges = this.getEnrichedModuleCallGraph();
-    let created = 0;
-    let updated = 0;
-
-    for (const edge of enrichedEdges) {
-      const existing = this.getByModules(edge.fromModuleId, edge.toModuleId);
-      const symbols = edge.calledSymbols.map((s) => s.name);
-
-      if (existing) {
-        this.update(existing.id, {
-          pattern: edge.edgePattern,
-          symbols,
-        });
-        // Update weight
-        this.db.prepare('UPDATE interactions SET weight = ? WHERE id = ?').run(edge.weight, existing.id);
-        updated++;
-      } else {
-        this.insert(edge.fromModuleId, edge.toModuleId, {
-          weight: edge.weight,
-          pattern: edge.edgePattern,
-          symbols,
-        });
-        created++;
-      }
-    }
-
-    return { created, updated };
-  }
-
-  /**
-   * Get relationship-to-interaction coverage statistics.
-   * Tracks how well symbol-level relationships are represented in module-level interactions.
-   * Same-module relationships are excluded from the coverage denominator since they
-   * represent internal module cohesion, not cross-module interactions.
-   */
-  getRelationshipCoverage(): RelationshipInteractionCoverage {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
-    // Count total relationship annotations
-    const totalStmt = this.db.prepare('SELECT COUNT(*) as count FROM relationship_annotations');
-    const totalRelationships = (totalStmt.get() as { count: number }).count;
-
-    // Count cross-module relationships (both symbols in different modules)
-    const crossModuleStmt = this.db.prepare(`
-      SELECT COUNT(*) as count
-      FROM relationship_annotations ra
-      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
-      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
-      WHERE mm1.module_id != mm2.module_id
-    `);
-    const crossModuleRelationships = (crossModuleStmt.get() as { count: number }).count;
-
-    // Count same-module relationships
-    const sameModuleStmt = this.db.prepare(`
-      SELECT COUNT(*) as count
-      FROM relationship_annotations ra
-      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
-      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
-      WHERE mm1.module_id = mm2.module_id
-    `);
-    const sameModuleCount = (sameModuleStmt.get() as { count: number }).count;
-
-    // Count relationships where both symbols have module assignments
-    const withModulesStmt = this.db.prepare(`
-      SELECT COUNT(*) as count
-      FROM relationship_annotations ra
-      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
-      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
-    `);
-    const relationshipsWithModules = (withModulesStmt.get() as { count: number }).count;
-
-    // Count cross-module relationships that contribute to an interaction
-    const contributingStmt = this.db.prepare(`
-      SELECT COUNT(DISTINCT ra.id) as count
-      FROM relationship_annotations ra
-      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
-      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
-      JOIN interactions i ON i.from_module_id = mm1.module_id
-                         AND i.to_module_id = mm2.module_id
-      WHERE mm1.module_id != mm2.module_id
-    `);
-    const contributing = (contributingStmt.get() as { count: number }).count;
-
-    return {
-      totalRelationships,
-      crossModuleRelationships,
-      relationshipsContributingToInteractions: contributing,
-      sameModuleCount,
-      orphanedCount: totalRelationships - relationshipsWithModules,
-      // Coverage is now based on cross-module relationships only
-      coveragePercent: crossModuleRelationships > 0 ? (contributing / crossModuleRelationships) * 100 : 100,
-    };
-  }
-
-  /**
-   * Get detailed breakdown of relationship coverage for diagnostics.
-   * Categorizes each relationship into: covered, same-module, no-call-edge, or orphaned.
-   */
-  getRelationshipCoverageBreakdown(): RelationshipCoverageBreakdown {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
-    const stmt = this.db.prepare(`
-      SELECT
-        ra.relationship_type,
-        CASE
-          WHEN mm1.module_id IS NULL OR mm2.module_id IS NULL THEN 'orphaned'
-          WHEN mm1.module_id = mm2.module_id THEN 'same_module'
-          WHEN EXISTS (
-            SELECT 1 FROM interactions i
-            WHERE i.from_module_id = mm1.module_id
-              AND i.to_module_id = mm2.module_id
-          ) THEN 'covered'
-          ELSE 'no_call_edge'
-        END as reason,
-        COUNT(*) as count
-      FROM relationship_annotations ra
-      LEFT JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
-      LEFT JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
-      GROUP BY ra.relationship_type, reason
-    `);
-
-    const rows = stmt.all() as Array<{
-      relationship_type: string;
-      reason: string;
-      count: number;
-    }>;
-
-    // Aggregate results
-    const result: RelationshipCoverageBreakdown = {
-      covered: 0,
-      sameModule: 0,
-      noCallEdge: 0,
-      orphaned: 0,
-      byType: {
-        uses: 0,
-        extends: 0,
-        implements: 0,
-      },
-    };
-
-    for (const row of rows) {
-      // Aggregate by reason
-      switch (row.reason) {
-        case 'covered':
-          result.covered += row.count;
-          break;
-        case 'same_module':
-          result.sameModule += row.count;
-          break;
-        case 'no_call_edge':
-          result.noCallEdge += row.count;
-          break;
-        case 'orphaned':
-          result.orphaned += row.count;
-          break;
-      }
-
-      // Aggregate by type (only for non-orphaned relationships)
-      if (row.reason !== 'orphaned') {
-        switch (row.relationship_type) {
-          case 'uses':
-            result.byType.uses += row.count;
-            break;
-          case 'extends':
-            result.byType.extends += row.count;
-            break;
-          case 'implements':
-            result.byType.implements += row.count;
-            break;
-        }
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * Get cross-module relationship pairs that have no corresponding interaction.
-   * These are module pairs with symbol-level relationships but no detected interaction.
-   */
-  getUncoveredModulePairs(): Array<{
-    fromModuleId: number;
-    toModuleId: number;
-    fromPath: string;
-    toPath: string;
-    relationshipCount: number;
-  }> {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
-    const stmt = this.db.prepare(`
-      SELECT DISTINCT mm1.module_id as fromModuleId, mm2.module_id as toModuleId,
-             m1.full_path as fromPath, m2.full_path as toPath,
-             COUNT(*) as relationshipCount
-      FROM relationship_annotations ra
-      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
-      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
-      JOIN modules m1 ON mm1.module_id = m1.id
-      JOIN modules m2 ON mm2.module_id = m2.id
-      WHERE mm1.module_id != mm2.module_id
-        AND NOT EXISTS (
-          SELECT 1 FROM interactions i
-          WHERE i.from_module_id = mm1.module_id AND i.to_module_id = mm2.module_id
-        )
-      GROUP BY mm1.module_id, mm2.module_id
-      ORDER BY relationshipCount DESC
-    `);
-
-    return stmt.all() as Array<{
-      fromModuleId: number;
-      toModuleId: number;
-      fromPath: string;
-      toPath: string;
-      relationshipCount: number;
-    }>;
-  }
-
-  /**
-   * Create interaction edges for inheritance relationships (extends/implements).
-   * These relationships don't generate call edges in the call graph, but they ARE
-   * significant architectural dependencies between modules.
-   */
-  syncInheritanceInteractions(): { created: number } {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
-    const stmt = this.db.prepare(`
-      INSERT OR IGNORE INTO interactions (from_module_id, to_module_id, direction, weight, pattern)
-      SELECT DISTINCT
-        mm1.module_id,
-        mm2.module_id,
-        'uni',
-        1,
-        'inheritance'
-      FROM relationship_annotations ra
-      JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
-      JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
-      WHERE ra.relationship_type IN ('extends', 'implements')
-        AND mm1.module_id != mm2.module_id
-        AND NOT EXISTS (
-          SELECT 1 FROM interactions i
-          WHERE i.from_module_id = mm1.module_id
-            AND i.to_module_id = mm2.module_id
-        )
-    `);
-
-    const result = stmt.run();
-    return { created: result.changes };
   }
 
   // ============================================================
@@ -980,10 +389,7 @@ export class InteractionRepository {
    * Get actual symbols that fromModule imports from toModule.
    * Returns symbol names and kinds for enriching prompts and deriving `symbols` field.
    */
-  getModuleImportedSymbols(
-    fromModuleId: number,
-    toModuleId: number
-  ): Array<{ name: string; kind: string }> {
+  getModuleImportedSymbols(fromModuleId: number, toModuleId: number): Array<{ name: string; kind: string }> {
     ensureModulesTables(this.db);
 
     const stmt = this.db.prepare(`
@@ -1002,227 +408,11 @@ export class InteractionRepository {
     return stmt.all(fromModuleId, toModuleId) as Array<{ name: string; kind: string }>;
   }
 
-  /**
-   * Validate all llm-inferred interactions.
-   * For same-process pairs: flags those with no import path.
-   * For separate-process pairs: skips import checks (runtime communication expected).
-   * Flags those where reverse direction has an AST interaction.
-   *
-   * @param isSameProcess - Function to check if two modules are in the same process group.
-   *   If not provided, all pairs are treated as same-process (conservative: apply import checks).
-   */
-  validateInferredInteractions(
-    isSameProcess?: (fromModuleId: number, toModuleId: number) => boolean
-  ): Array<{
-    interactionId: number;
-    fromModuleId: number;
-    toModuleId: number;
-    fromPath: string;
-    toPath: string;
-    issue: string;
-  }> {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
-    const inferred = this.getBySource('llm-inferred');
-    const issues: Array<{
-      interactionId: number;
-      fromModuleId: number;
-      toModuleId: number;
-      fromPath: string;
-      toPath: string;
-      issue: string;
-    }> = [];
-
-    for (const interaction of inferred) {
-      // Check if reverse direction has an AST interaction
-      const reverseInteraction = this.getByModules(interaction.toModuleId, interaction.fromModuleId);
-      if (reverseInteraction && reverseInteraction.source === 'ast') {
-        issues.push({
-          interactionId: interaction.id,
-          fromModuleId: interaction.fromModuleId,
-          toModuleId: interaction.toModuleId,
-          fromPath: interaction.fromModulePath,
-          toPath: interaction.toModulePath,
-          issue: `REVERSED: AST interaction exists in reverse direction (${interaction.toModulePath} → ${interaction.fromModulePath})`,
-        });
-        continue;
-      }
-
-      // Skip import checks for separate-process pairs (they communicate via runtime protocols)
-      const sameProcess = isSameProcess
-        ? isSameProcess(interaction.fromModuleId, interaction.toModuleId)
-        : true;
-
-      if (!sameProcess) continue;
-
-      // Same-process: check if no import path exists
-      const hasImports = this.hasModuleImportPath(interaction.fromModuleId, interaction.toModuleId);
-      if (!hasImports) {
-        // Check if reverse imports exist (direction confusion)
-        const hasReverseImports = this.hasModuleImportPath(interaction.toModuleId, interaction.fromModuleId);
-        if (hasReverseImports) {
-          issues.push({
-            interactionId: interaction.id,
-            fromModuleId: interaction.fromModuleId,
-            toModuleId: interaction.toModuleId,
-            fromPath: interaction.fromModulePath,
-            toPath: interaction.toModulePath,
-            issue: `DIRECTION_CONFUSED: No forward imports, but reverse imports exist (${interaction.toModulePath} imports from ${interaction.fromModulePath})`,
-          });
-        } else {
-          issues.push({
-            interactionId: interaction.id,
-            fromModuleId: interaction.fromModuleId,
-            toModuleId: interaction.toModuleId,
-            fromPath: interaction.fromModulePath,
-            toPath: interaction.toModulePath,
-            issue: 'NO_IMPORTS: No import path exists in either direction between these modules',
-          });
-        }
-      }
-    }
-
-    return issues;
-  }
-
-  /**
-   * Get detailed relationship annotation rows between two modules' members.
-   * Returns definition names, kinds, and semantics for each relationship.
-   */
-  getRelationshipDetailsForModulePair(
-    fromModuleId: number,
-    toModuleId: number
-  ): Array<{
-    fromName: string;
-    fromKind: string;
-    toName: string;
-    toKind: string;
-    semantic: string;
-    relationshipType: string;
-  }> {
-    ensureModulesTables(this.db);
-
-    const stmt = this.db.prepare(`
-      SELECT
-        from_d.name as fromName,
-        from_d.kind as fromKind,
-        to_d.name as toName,
-        to_d.kind as toKind,
-        ra.semantic,
-        ra.relationship_type as relationshipType
-      FROM relationship_annotations ra
-      JOIN module_members from_mm ON ra.from_definition_id = from_mm.definition_id
-      JOIN module_members to_mm ON ra.to_definition_id = to_mm.definition_id
-      JOIN definitions from_d ON ra.from_definition_id = from_d.id
-      JOIN definitions to_d ON ra.to_definition_id = to_d.id
-      WHERE from_mm.module_id = ? AND to_mm.module_id = ?
-      ORDER BY ra.relationship_type, from_d.name
-    `);
-
-    return stmt.all(fromModuleId, toModuleId) as Array<{
-      fromName: string;
-      fromKind: string;
-      toName: string;
-      toKind: string;
-      semantic: string;
-      relationshipType: string;
-    }>;
-  }
-
-  /**
-   * Check if an interaction exists in the reverse direction (toModuleId → fromModuleId).
-   */
-  hasReverseInteraction(fromModuleId: number, toModuleId: number): boolean {
-    ensureInteractionsTables(this.db);
-
-    const stmt = this.db.prepare(`
-      SELECT EXISTS (
-        SELECT 1 FROM interactions
-        WHERE from_module_id = ? AND to_module_id = ?
-      ) as has_reverse
-    `);
-
-    const row = stmt.get(toModuleId, fromModuleId) as { has_reverse: number };
-    return row.has_reverse === 1;
-  }
-
-  /**
-   * Get symbols from relationship annotations for a module pair.
-   * Fallback for deriving symbols when import data is unavailable.
-   */
-  getRelationshipSymbolsForPair(
-    fromModuleId: number,
-    toModuleId: number
-  ): string[] {
-    const details = this.getRelationshipDetailsForModulePair(fromModuleId, toModuleId);
-    const symbols = new Set<string>();
-    for (const d of details) {
-      symbols.add(d.toName);
-    }
-    return Array.from(symbols);
-  }
-
   // ============================================================
   // Private helpers
   // ============================================================
 
   private getCallGraphInternal(): CallGraphEdge[] {
-    const stmt = this.db.prepare(`
-      SELECT
-        caller.id as from_id,
-        s.definition_id as to_id,
-        COUNT(*) as weight,
-        MIN(u.line) as min_usage_line
-      FROM definitions caller
-      JOIN files f ON caller.file_id = f.id
-      JOIN symbols s ON s.file_id = f.id AND s.definition_id IS NOT NULL
-      JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression', 'jsx_self_closing_element', 'jsx_opening_element')
-        AND caller.line <= u.line AND u.line <= caller.end_line
-        AND s.definition_id != caller.id
-      GROUP BY caller.id, s.definition_id
-      UNION ALL
-      SELECT
-        caller.id as from_id,
-        s.definition_id as to_id,
-        COUNT(*) as weight,
-        MIN(u.line) as min_usage_line
-      FROM definitions caller
-      JOIN files f ON caller.file_id = f.id
-      JOIN imports i ON i.from_file_id = f.id
-      JOIN symbols s ON s.reference_id = i.id AND s.definition_id IS NOT NULL
-      JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression', 'jsx_self_closing_element', 'jsx_opening_element')
-        AND caller.line <= u.line AND u.line <= caller.end_line
-        AND s.definition_id != caller.id
-      GROUP BY caller.id, s.definition_id
-    `);
-
-    const rows = stmt.all() as Array<{
-      from_id: number;
-      to_id: number;
-      weight: number;
-      min_usage_line: number;
-    }>;
-
-    const edgeMap = new Map<string, CallGraphEdge>();
-    for (const row of rows) {
-      const key = `${row.from_id}-${row.to_id}`;
-      const existing = edgeMap.get(key);
-      if (existing) {
-        existing.weight += row.weight;
-        existing.minUsageLine = Math.min(existing.minUsageLine, row.min_usage_line);
-      } else {
-        edgeMap.set(key, {
-          fromId: row.from_id,
-          toId: row.to_id,
-          weight: row.weight,
-          minUsageLine: row.min_usage_line,
-        });
-      }
-    }
-
-    return Array.from(edgeMap.values());
+    return queryCallGraphEdges(this.db, { includeJsx: true });
   }
 }

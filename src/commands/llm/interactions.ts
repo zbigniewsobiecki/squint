@@ -67,13 +67,13 @@ export default class Interactions extends BaseLlmCommand {
     const showLlmResponses = ctx.llmOptions.showLlmResponses;
 
     // Check if interactions already exist
-    const existingCount = db.getInteractionCount();
+    const existingCount = db.interactions.getCount();
     if (
       !this.checkExistingAndClear(ctx, {
         entityName: 'Interactions',
         existingCount,
         force: flags.force as boolean,
-        clearFn: () => db.clearInteractions(),
+        clearFn: () => db.interactions.clear(),
         forceHint: 'Use --force to re-detect',
       })
     ) {
@@ -83,7 +83,7 @@ export default class Interactions extends BaseLlmCommand {
     this.logHeader(ctx, 'Interaction Detection');
 
     // Get enriched module call graph
-    const enrichedEdges = db.getEnrichedModuleCallGraph();
+    const enrichedEdges = db.callGraph.getEnrichedModuleCallGraph();
 
     if (enrichedEdges.length === 0) {
       if (isJson) {
@@ -141,7 +141,7 @@ export default class Interactions extends BaseLlmCommand {
     }
 
     // Tag test-internal interactions: if either module is a test module, override pattern
-    const testModuleIds = db.getTestModuleIds();
+    const testModuleIds = db.modules.getTestModuleIds();
     if (testModuleIds.size > 0) {
       for (const interaction of interactions) {
         if (testModuleIds.has(interaction.fromModuleId) || testModuleIds.has(interaction.toModuleId)) {
@@ -159,7 +159,7 @@ export default class Interactions extends BaseLlmCommand {
     if (!dryRun) {
       for (const interaction of interactions) {
         try {
-          db.upsertInteraction(interaction.fromModuleId, interaction.toModuleId, {
+          db.interactions.upsert(interaction.fromModuleId, interaction.toModuleId, {
             weight: interaction.weight,
             pattern: interaction.pattern,
             symbols: interaction.symbols,
@@ -174,7 +174,7 @@ export default class Interactions extends BaseLlmCommand {
 
       // Create inheritance-based interactions (extends/implements)
       // These don't generate call edges but ARE significant architectural dependencies
-      const inheritanceResult = db.syncInheritanceInteractions();
+      const inheritanceResult = db.interactionAnalysis.syncInheritanceInteractions();
       if (!isJson && verbose && inheritanceResult.created > 0) {
         this.log(chalk.gray(`  Inheritance edges: ${inheritanceResult.created}`));
       }
@@ -197,7 +197,7 @@ export default class Interactions extends BaseLlmCommand {
     }
 
     // Get existing edges to avoid duplicates
-    const existingEdges = db.getModuleCallGraph();
+    const existingEdges = db.callGraph.getModuleCallGraph();
 
     const logicalInteractions = await this.inferCrossProcessInteractions(
       db,
@@ -214,7 +214,7 @@ export default class Interactions extends BaseLlmCommand {
       for (const li of logicalInteractions) {
         try {
           // Derive symbols from target module's exported definitions
-          const toModuleWithMembers = db.getModuleWithMembers(li.toModuleId);
+          const toModuleWithMembers = db.modules.getWithMembers(li.toModuleId);
           const symbols = toModuleWithMembers
             ? toModuleWithMembers.members
                 .filter((m) => m.kind === 'function' || m.kind === 'class')
@@ -222,7 +222,7 @@ export default class Interactions extends BaseLlmCommand {
                 .map((m) => m.name)
             : [];
 
-          db.upsertInteraction(li.fromModuleId, li.toModuleId, {
+          db.interactions.upsert(li.fromModuleId, li.toModuleId, {
             semantic: li.reason,
             source: 'llm-inferred',
             pattern: 'business',
@@ -233,7 +233,7 @@ export default class Interactions extends BaseLlmCommand {
         } catch {
           // Skip duplicates (edge may already exist from AST detection)
           if (verbose && !isJson) {
-            const modules = db.getAllModules();
+            const modules = db.modules.getAll();
             const fromMod = modules.find((m) => m.id === li.fromModuleId);
             const toMod = modules.find((m) => m.id === li.toModuleId);
             this.log(chalk.gray(`  Skipping: ${fromMod?.fullPath} → ${toMod?.fullPath} (exists)`));
@@ -256,12 +256,12 @@ export default class Interactions extends BaseLlmCommand {
     if (!dryRun) {
       const minRelCoverage = flags['min-relationship-coverage'] as number;
       const maxGateRetries = flags['max-gate-retries'] as number;
-      const allModules = db.getAllModules();
+      const allModules = db.modules.getAll();
       const moduleMap = new Map(allModules.map((m) => [m.id, m]));
 
       for (let attempt = 0; attempt < maxGateRetries; attempt++) {
-        const coverageCheck = db.getRelationshipCoverage();
-        const breakdown = db.getRelationshipCoverageBreakdown();
+        const coverageCheck = db.interactionAnalysis.getRelationshipCoverage();
+        const breakdown = db.interactionAnalysis.getRelationshipCoverageBreakdown();
 
         if (coverageCheck.coveragePercent >= minRelCoverage || breakdown.noCallEdge === 0) {
           break;
@@ -279,7 +279,7 @@ export default class Interactions extends BaseLlmCommand {
           );
         }
 
-        const uncoveredPairs = db.getUncoveredModulePairs();
+        const uncoveredPairs = db.interactionAnalysis.getUncoveredModulePairs();
         if (uncoveredPairs.length === 0) break;
 
         // Pre-filter: partition into auto-skip, auto-flip, and needs-llm
@@ -302,7 +302,7 @@ export default class Interactions extends BaseLlmCommand {
           }
 
           // Same-layer: check import paths
-          const hasForwardImports = db.hasModuleImportPath(pair.fromModuleId, pair.toModuleId);
+          const hasForwardImports = db.interactions.hasModuleImportPath(pair.fromModuleId, pair.toModuleId);
 
           if (hasForwardImports) {
             // Has forward imports → send to LLM for confirmation
@@ -311,7 +311,7 @@ export default class Interactions extends BaseLlmCommand {
           }
 
           // No forward imports for same-layer pair
-          const hasReverseAst = db.hasReverseInteraction(pair.fromModuleId, pair.toModuleId);
+          const hasReverseAst = db.interactionAnalysis.hasReverseInteraction(pair.fromModuleId, pair.toModuleId);
           if (hasReverseAst) {
             // Direction confusion: reverse AST interaction exists → auto-skip
             if (verbose && !isJson) {
@@ -321,7 +321,7 @@ export default class Interactions extends BaseLlmCommand {
             continue;
           }
 
-          const hasReverseImports = db.hasModuleImportPath(pair.toModuleId, pair.fromModuleId);
+          const hasReverseImports = db.interactions.hasModuleImportPath(pair.toModuleId, pair.fromModuleId);
           if (hasReverseImports) {
             // No forward, but reverse imports → direction confusion, auto-skip
             if (verbose && !isJson) {
@@ -359,15 +359,15 @@ export default class Interactions extends BaseLlmCommand {
         for (const ti of targetedResults) {
           try {
             // Derive symbols from imports or relationship annotations
-            const importedSymbols = db.getModuleImportedSymbols(ti.fromModuleId, ti.toModuleId);
+            const importedSymbols = db.interactions.getModuleImportedSymbols(ti.fromModuleId, ti.toModuleId);
             let symbols: string[];
             if (importedSymbols.length > 0) {
               symbols = importedSymbols.map((s) => s.name);
             } else {
-              symbols = db.getRelationshipSymbolsForPair(ti.fromModuleId, ti.toModuleId);
+              symbols = db.interactionAnalysis.getRelationshipSymbolsForPair(ti.fromModuleId, ti.toModuleId);
             }
 
-            db.upsertInteraction(ti.fromModuleId, ti.toModuleId, {
+            db.interactions.upsert(ti.fromModuleId, ti.toModuleId, {
               semantic: ti.reason,
               source: 'llm-inferred',
               pattern: 'business',
@@ -389,7 +389,7 @@ export default class Interactions extends BaseLlmCommand {
     }
 
     // Get relationship coverage
-    const relCoverage = db.getRelationshipCoverage();
+    const relCoverage = db.interactionAnalysis.getRelationshipCoverage();
 
     // Output results
     const result = {
@@ -462,7 +462,7 @@ Guidelines:
 - Focus on the business purpose, not implementation details`;
 
     // Build module lookup for descriptions
-    const allModules = db.getAllModules();
+    const allModules = db.modules.getAll();
     const moduleMap = new Map(allModules.map((m) => [m.id, m]));
 
     // Build edge descriptions with symbol details and module context
@@ -591,14 +591,14 @@ Generate semantic descriptions for each interaction in CSV format.`;
       return [];
     }
 
-    const modules = db.getAllModules();
-    const modulesWithMembers = db.getAllModulesWithMembers();
+    const modules = db.modules.getAll();
+    const modulesWithMembers = db.modules.getAllWithMembers();
 
     // Build existing edge lookup to avoid duplicates
     const existingPairs = new Set(existingEdges.map((e) => `${e.fromModuleId}->${e.toModuleId}`));
 
     // Also include existing interactions (both AST and already-inferred)
-    const existingInteractions = db.getAllInteractions();
+    const existingInteractions = db.interactions.getAll();
     for (const interaction of existingInteractions) {
       existingPairs.add(`${interaction.fromModuleId}->${interaction.toModuleId}`);
     }
@@ -711,16 +711,16 @@ For each pair:
         const processDesc = getProcessDescription(p.fromModuleId, p.toModuleId, processGroups);
 
         // Import evidence
-        const hasForwardImports = db.hasModuleImportPath(p.fromModuleId, p.toModuleId);
-        const hasReverseImports = db.hasModuleImportPath(p.toModuleId, p.fromModuleId);
+        const hasForwardImports = db.interactions.hasModuleImportPath(p.fromModuleId, p.toModuleId);
+        const hasReverseImports = db.interactions.hasModuleImportPath(p.toModuleId, p.fromModuleId);
         const forwardImportStr = hasForwardImports ? 'YES' : 'NONE';
         const reverseImportStr = hasReverseImports ? 'YES' : 'NONE';
 
         // Reverse AST interaction
-        const hasReverseAst = db.hasReverseInteraction(p.fromModuleId, p.toModuleId);
+        const hasReverseAst = db.interactionAnalysis.hasReverseInteraction(p.fromModuleId, p.toModuleId);
 
         // Relationship details
-        const relDetails = db.getRelationshipDetailsForModulePair(p.fromModuleId, p.toModuleId);
+        const relDetails = db.interactionAnalysis.getRelationshipDetailsForModulePair(p.fromModuleId, p.toModuleId);
 
         let desc = `${i + 1}. ${p.fromPath} → ${p.toPath}`;
         if (fromDesc) desc += `\n   From: "${fromDesc}"`;

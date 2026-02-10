@@ -60,7 +60,7 @@ export const userService = {
     );
 
     // Insert test files
-    const controllerFileId = db.insertFile({
+    const controllerFileId = db.files.insert({
       path: controllerPath,
       language: 'typescript',
       contentHash: computeHash('controller'),
@@ -68,7 +68,7 @@ export const userService = {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    const serviceFileId = db.insertFile({
+    const serviceFileId = db.files.insert({
       path: servicePath,
       language: 'typescript',
       contentHash: computeHash('service'),
@@ -77,7 +77,7 @@ export const userService = {
     });
 
     // Insert definitions
-    controllerDefId = db.insertDefinition(controllerFileId, {
+    controllerDefId = db.files.insertDefinition(controllerFileId, {
       name: 'loginController',
       kind: 'function',
       isExported: true,
@@ -86,7 +86,7 @@ export const userService = {
       endPosition: { row: 7, column: 1 },
     });
 
-    authServiceDefId = db.insertDefinition(serviceFileId, {
+    authServiceDefId = db.files.insertDefinition(serviceFileId, {
       name: 'authService',
       kind: 'variable',
       isExported: true,
@@ -95,7 +95,7 @@ export const userService = {
       endPosition: { row: 5, column: 1 },
     });
 
-    userServiceDefId = db.insertDefinition(serviceFileId, {
+    userServiceDefId = db.files.insertDefinition(serviceFileId, {
       name: 'userService',
       kind: 'variable',
       isExported: true,
@@ -141,13 +141,13 @@ export const userService = {
     });
 
     // Set some metadata
-    db.setDefinitionMetadata(controllerDefId, 'purpose', 'Handles login requests');
-    db.setDefinitionMetadata(controllerDefId, 'domain', '["auth", "user"]');
-    db.setDefinitionMetadata(controllerDefId, 'role', 'controller');
-    db.setDefinitionMetadata(authServiceDefId, 'purpose', 'Validates credentials');
-    db.setDefinitionMetadata(authServiceDefId, 'domain', '["auth"]');
-    db.setDefinitionMetadata(authServiceDefId, 'pure', 'false');
-    db.setDefinitionMetadata(userServiceDefId, 'domain', '["user"]');
+    db.metadata.set(controllerDefId, 'purpose', 'Handles login requests');
+    db.metadata.set(controllerDefId, 'domain', '["auth", "user"]');
+    db.metadata.set(controllerDefId, 'role', 'controller');
+    db.metadata.set(authServiceDefId, 'purpose', 'Validates credentials');
+    db.metadata.set(authServiceDefId, 'domain', '["auth"]');
+    db.metadata.set(authServiceDefId, 'pure', 'false');
+    db.metadata.set(userServiceDefId, 'domain', '["user"]');
 
     db.close();
   });
@@ -234,8 +234,8 @@ export const userService = {
     it('shows all relationships annotated message when done', () => {
       // Annotate all relationships
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setRelationshipAnnotation(controllerDefId, authServiceDefId, 'delegates auth');
-      setupDb.setRelationshipAnnotation(controllerDefId, userServiceDefId, 'fetches profile');
+      setupDb.relationships.set(controllerDefId, authServiceDefId, 'delegates auth');
+      setupDb.relationships.set(controllerDefId, userServiceDefId, 'fetches profile');
       setupDb.close();
 
       const output = runCommand(`relationships next -d ${dbPath}`);
@@ -255,7 +255,7 @@ export const userService = {
 
       // Verify it was saved
       const verifyDb = new IndexDatabase(dbPath);
-      const annotation = verifyDb.getRelationshipAnnotation(controllerDefId, authServiceDefId);
+      const annotation = verifyDb.relationships.get(controllerDefId, authServiceDefId);
       expect(annotation).toBeDefined();
       expect(annotation!.semantic).toBe('delegates authentication');
       verifyDb.close();
@@ -275,7 +275,7 @@ export const userService = {
       runCommand(`relationships set "new" --from-id ${controllerDefId} --to-id ${authServiceDefId} -d ${dbPath}`);
 
       const verifyDb = new IndexDatabase(dbPath);
-      const annotation = verifyDb.getRelationshipAnnotation(controllerDefId, authServiceDefId);
+      const annotation = verifyDb.relationships.get(controllerDefId, authServiceDefId);
       expect(annotation!.semantic).toBe('new');
       verifyDb.close();
     });
@@ -290,7 +290,7 @@ export const userService = {
     beforeEach(() => {
       // Add an annotation to remove
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setRelationshipAnnotation(controllerDefId, authServiceDefId, 'test annotation');
+      setupDb.relationships.set(controllerDefId, authServiceDefId, 'test annotation');
       setupDb.close();
     });
 
@@ -301,7 +301,7 @@ export const userService = {
       expect(output).toContain('Removed');
 
       const verifyDb = new IndexDatabase(dbPath);
-      const annotation = verifyDb.getRelationshipAnnotation(controllerDefId, authServiceDefId);
+      const annotation = verifyDb.relationships.get(controllerDefId, authServiceDefId);
       expect(annotation).toBeNull();
       verifyDb.close();
     });
@@ -326,8 +326,8 @@ export const userService = {
     beforeEach(() => {
       // Add some annotations
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setRelationshipAnnotation(controllerDefId, authServiceDefId, 'validates credentials');
-      setupDb.setRelationshipAnnotation(controllerDefId, userServiceDefId, 'fetches user profile');
+      setupDb.relationships.set(controllerDefId, authServiceDefId, 'validates credentials');
+      setupDb.relationships.set(controllerDefId, userServiceDefId, 'fetches user profile');
       setupDb.close();
     });
 
@@ -364,8 +364,8 @@ export const userService = {
     it('shows message when no annotated relationships', () => {
       // Remove annotations
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.removeRelationshipAnnotation(controllerDefId, authServiceDefId);
-      setupDb.removeRelationshipAnnotation(controllerDefId, userServiceDefId);
+      setupDb.relationships.remove(controllerDefId, authServiceDefId);
+      setupDb.relationships.remove(controllerDefId, userServiceDefId);
       setupDb.close();
 
       const output = runCommand(`relationships -d ${dbPath}`);

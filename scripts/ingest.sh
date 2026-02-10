@@ -40,7 +40,7 @@ rm -f $DB
 wait_for_enter "parsing done"
 
 ./bin/dev.js llm annotate --aspect purpose --aspect domain --aspect pure --model $MODEL -d $DB --batch-size 40 --max-iterations 80 $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
-./bin/dev.js llm annotate --verify --fix -d $DB 2>&1 | tee -a "$LOG"
+./bin/dev.js llm annotate --aspect purpose --aspect domain --aspect pure --verify --fix -d $DB 2>&1 | tee -a "$LOG"
 wait_for_enter "annotate done"
 
 ./bin/dev.js llm relationships --model $MODEL -d $DB --batch-size 40 --max-iterations 80 $DEBUG_FLAGS 2>&1 | tee -a "$LOG"

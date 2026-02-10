@@ -61,13 +61,13 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
       if (path === '/api/stats') {
         jsonResponse(res, db.getStats());
       } else if (path === '/api/files') {
-        jsonResponse(res, db.getAllFiles());
+        jsonResponse(res, db.files.getAll());
       } else if (path.match(/^\/api\/files\/(\d+)$/)) {
         const id = Number.parseInt(path.split('/')[3]);
-        const file = db.getFileById(id);
+        const file = db.files.getById(id);
         if (file) {
-          const definitions = db.getFileDefinitions(id);
-          const imports = db.getFileImports(id);
+          const definitions = db.definitions.getForFile(id);
+          const imports = db.files.getImports(id);
           jsonResponse(res, { ...file, definitions, imports });
         } else {
           notFound(res, 'File not found');
@@ -76,10 +76,10 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
         const kind = url.searchParams.get('kind') || undefined;
         const exportedParam = url.searchParams.get('exported');
         const exported = exportedParam === null ? undefined : exportedParam === 'true';
-        jsonResponse(res, db.getAllDefinitions({ kind, exported }));
+        jsonResponse(res, db.definitions.getAll({ kind, exported }));
       } else if (path.match(/^\/api\/definitions\/(\d+)$/)) {
         const id = Number.parseInt(path.split('/')[3]);
-        const def = db.getDefinitionById(id);
+        const def = db.definitions.getById(id);
         if (def) {
           jsonResponse(res, def);
         } else {
@@ -87,21 +87,21 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
         }
       } else if (path.match(/^\/api\/definitions\/(\d+)\/callsites$/)) {
         const id = Number.parseInt(path.split('/')[3]);
-        const callsites = db.getCallsites(id);
+        const callsites = db.dependencies.getCallsites(id);
         jsonResponse(res, callsites);
       } else if (path === '/api/graph/imports') {
-        jsonResponse(res, db.getImportGraph());
+        jsonResponse(res, db.dependencies.getImportGraph());
       } else if (path === '/api/graph/classes') {
-        jsonResponse(res, db.getClassHierarchy());
+        jsonResponse(res, db.definitions.getClassHierarchy());
       } else if (path === '/api/graph/symbols') {
         jsonResponse(res, getSymbolGraph(db));
       } else if (path === '/api/modules') {
         jsonResponse(res, getModulesData(db));
       } else if (path === '/api/modules/stats') {
-        jsonResponse(res, db.getModuleStats());
+        jsonResponse(res, db.modules.getStats());
       } else if (path.match(/^\/api\/modules\/(\d+)$/)) {
         const id = Number.parseInt(path.split('/')[3]);
-        const module = db.getModuleWithMembers(id);
+        const module = db.modules.getWithMembers(id);
         if (module) {
           jsonResponse(res, module);
         } else {
@@ -112,12 +112,12 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
       } else if (path === '/api/interactions') {
         jsonResponse(res, getInteractionsData(db));
       } else if (path === '/api/interactions/stats') {
-        jsonResponse(res, db.getInteractionStats());
+        jsonResponse(res, db.interactions.getStats());
       } else if (path.match(/^\/api\/interactions\/(\d+)$/)) {
         const id = Number.parseInt(path.split('/')[3]);
-        const interaction = db.getInteractionById(id);
+        const interaction = db.interactions.getById(id);
         if (interaction) {
-          const modules = db.getAllModules();
+          const modules = db.modules.getAll();
           const moduleMap = new Map(modules.map((m) => [m.id, m.fullPath]));
           jsonResponse(res, {
             ...interaction,
@@ -130,15 +130,15 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
       } else if (path === '/api/flows') {
         jsonResponse(res, getFlowsData(db));
       } else if (path === '/api/flows/stats') {
-        jsonResponse(res, db.getFlowStats());
+        jsonResponse(res, db.flows.getStats());
       } else if (path === '/api/flows/coverage') {
-        const coverage = db.getFlowCoverage();
+        const coverage = db.flows.getCoverage();
         jsonResponse(res, coverage);
       } else if (path === '/api/flows/dag') {
         jsonResponse(res, getFlowsDagData(db));
       } else if (path.match(/^\/api\/flows\/(\d+)$/)) {
         const id = Number.parseInt(path.split('/')[3]);
-        const flowWithSteps = db.getFlowWithSteps(id);
+        const flowWithSteps = db.flows.getWithSteps(id);
         if (flowWithSteps) {
           jsonResponse(res, flowWithSteps);
         } else {
@@ -146,7 +146,7 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
         }
       } else if (path.match(/^\/api\/flows\/(\d+)\/expand$/)) {
         const id = Number.parseInt(path.split('/')[3]);
-        const expanded = db.expandFlow(id);
+        const expanded = db.flows.expand(id);
         jsonResponse(res, expanded);
       } else {
         // Serve static files from ui/dist

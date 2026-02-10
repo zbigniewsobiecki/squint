@@ -213,6 +213,10 @@ assignment,123,project.shared.utils
 - Group related symbols together
 - Consider the file path as a hint but prioritize functionality
 
+## Completeness Requirement
+CRITICAL: Your response MUST contain exactly one assignment row for EVERY symbol listed.
+If unsure about the best module, assign to the closest parent module. Never skip a symbol.
+
 ## Test Symbol Rules
 - Symbols from test files (*.test.ts, *.spec.ts) that are NOT exported are test-file-local.
   Assign them to the nearest test module (project.testing.*) — never to production modules.
@@ -269,10 +273,10 @@ export function buildAssignmentUserPrompt(
     parts.push(`### #${sym.id}: ${sym.name} (${sym.kind})`);
     parts.push(`File: ${sym.filePath}`);
     if (!sym.isExported) {
-      parts.push(`Exported: no (file-local symbol)`);
+      parts.push('Exported: no (file-local symbol)');
     }
     if (isTestFile(sym.filePath)) {
-      parts.push(`Test file: yes`);
+      parts.push('Test file: yes');
     }
 
     if (sym.purpose) {
@@ -287,7 +291,9 @@ export function buildAssignmentUserPrompt(
     parts.push('');
   }
 
-  parts.push('Assign each symbol to exactly ONE module path.');
+  parts.push(
+    `IMPORTANT: You MUST output exactly ${symbols.length} assignment rows — one for each of the ${symbols.length} symbols above. Do not skip any.`
+  );
 
   return parts.join('\n');
 }

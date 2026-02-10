@@ -64,8 +64,10 @@ export default class Prereqs extends Command {
       }
 
       // Get prerequisite chain
-      const prerequisites = db.getPrerequisiteChain(definition.id, flags.aspect);
-      const defDetails = db.getDefinitionById(definition.id);
+      const prerequisites = db.dependencies.getPrerequisiteChain(definition.id, flags.aspect, (id) =>
+        db.definitions.getById(id)
+      );
+      const defDetails = db.definitions.getById(definition.id);
 
       if (!defDetails) {
         this.error(chalk.red('Definition not found'));

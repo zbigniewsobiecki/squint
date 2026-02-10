@@ -24,7 +24,7 @@ describe('coverage-checker', () => {
   // ============================================================
 
   function insertFile(filePath: string) {
-    return db.insertFile({
+    return db.files.insert({
       path: filePath,
       language: 'typescript',
       contentHash: `hash-${filePath}`,
@@ -39,7 +39,7 @@ describe('coverage-checker', () => {
     kind = 'function',
     opts?: { line?: number; endLine?: number; isExported?: boolean; extends?: string }
   ) {
-    return db.insertDefinition(fileId, {
+    return db.files.insertDefinition(fileId, {
       name,
       kind,
       isExported: opts?.isExported ?? true,
@@ -65,7 +65,7 @@ describe('coverage-checker', () => {
     it('all definitions have aspect → passed', () => {
       const fileId = insertFile('/src/a.ts');
       const defId = insertDefinition(fileId, 'funcA');
-      db.setDefinitionMetadata(defId, 'purpose', 'Does stuff');
+      db.metadata.set(defId, 'purpose', 'Does stuff');
 
       const result = checkAnnotationCoverage(db, ['purpose']);
       expect(result.passed).toBe(true);
@@ -100,7 +100,7 @@ describe('coverage-checker', () => {
     it('multiple aspects checked', () => {
       const fileId = insertFile('/src/a.ts');
       const defId = insertDefinition(fileId, 'funcA');
-      db.setDefinitionMetadata(defId, 'purpose', 'Does stuff');
+      db.metadata.set(defId, 'purpose', 'Does stuff');
 
       const result = checkAnnotationCoverage(db, ['purpose', 'domain']);
       expect(result.passed).toBe(false);
@@ -112,9 +112,9 @@ describe('coverage-checker', () => {
       const fileId = insertFile('/src/a.ts');
       const def1 = insertDefinition(fileId, 'funcA');
       const def2 = insertDefinition(fileId, 'funcB');
-      db.setDefinitionMetadata(def1, 'purpose', 'A');
-      db.setDefinitionMetadata(def2, 'purpose', 'B');
-      db.setRelationshipAnnotation(def1, def2, 'calls', 'uses');
+      db.metadata.set(def1, 'purpose', 'A');
+      db.metadata.set(def2, 'purpose', 'B');
+      db.relationships.set(def1, def2, 'calls', 'uses');
 
       const result = checkAnnotationCoverage(db, ['purpose']);
       expect(result.stats.annotatedRelationships).toBeGreaterThanOrEqual(1);
@@ -125,7 +125,7 @@ describe('coverage-checker', () => {
       const fileId = insertFile('/src/a.ts');
       const defId = insertDefinition(fileId, 'funcA');
       // Mark as pure — file won't exist on disk, so readSourceSync returns ''
-      db.setDefinitionMetadata(defId, 'pure', 'true');
+      db.metadata.set(defId, 'pure', 'true');
 
       const result = checkAnnotationCoverage(db, ['pure']);
       expect(result).toBeDefined();
@@ -168,8 +168,8 @@ describe('coverage-checker', () => {
       const defTo1 = insertDefinition(fileId, 'BaseClass', 'class', { line: 20, endLine: 30 });
       const defTo2 = insertDefinition(fileId, 'BaseClass', 'class', { line: 40, endLine: 50 });
 
-      db.setRelationshipAnnotation(defFrom, defTo1, 'inherits', 'extends');
-      db.setRelationshipAnnotation(defFrom, defTo2, 'inherits', 'extends');
+      db.relationships.set(defFrom, defTo1, 'inherits', 'extends');
+      db.relationships.set(defFrom, defTo2, 'inherits', 'extends');
 
       const result = checkRelationshipCoverage(db);
       const dupIssues = result.issues.filter((i) => i.category === 'duplicate-target');
@@ -185,7 +185,7 @@ describe('coverage-checker', () => {
       const defParent = insertDefinition(fileId, 'ParentClass', 'class', { line: 20, endLine: 30 });
 
       // Mark as 'uses' but should be 'extends'
-      db.setRelationshipAnnotation(defChild, defParent, 'inherits from', 'uses');
+      db.relationships.set(defChild, defParent, 'inherits from', 'uses');
 
       const result = checkRelationshipCoverage(db);
       const mismatchIssues = result.issues.filter((i) => i.category === 'wrong-relationship-type');
@@ -233,20 +233,20 @@ describe('coverage-checker', () => {
 
   describe('checkFlowQuality', () => {
     it('no flows → passed', () => {
-      db.ensureRootModule();
+      db.modules.ensureRoot();
       const result = checkFlowQuality(db);
       expect(result.passed).toBe(true);
       expect(result.stats.totalDefinitions).toBe(0);
     });
 
     it('orphan entry point (module with no callable members)', () => {
-      const rootId = db.ensureRootModule();
-      const modId = db.insertModule(rootId, 'types', 'Types Module');
+      const rootId = db.modules.ensureRoot();
+      const modId = db.modules.insert(rootId, 'types', 'Types Module');
       const fileId = insertFile('/src/types.ts');
       const defId = insertDefinition(fileId, 'MyInterface', 'interface');
-      db.assignSymbolToModule(defId, modId);
+      db.modules.assignSymbol(defId, modId);
 
-      db.insertFlow('Type Flow', 'type-flow', { entryPointModuleId: modId });
+      db.flows.insert('Type Flow', 'type-flow', { entryPointModuleId: modId });
 
       const result = checkFlowQuality(db);
       const orphanIssues = result.issues.filter((i) => i.category === 'orphan-entry-point');
@@ -254,8 +254,8 @@ describe('coverage-checker', () => {
     });
 
     it('empty flow (0 steps) → warning', () => {
-      db.ensureRootModule();
-      db.insertFlow('Empty', 'empty');
+      db.modules.ensureRoot();
+      db.flows.insert('Empty', 'empty');
 
       const result = checkFlowQuality(db);
       const emptyIssues = result.issues.filter((i) => i.category === 'empty-flow');
@@ -263,15 +263,15 @@ describe('coverage-checker', () => {
     });
 
     it('uncovered interactions (>20 triggers truncation)', () => {
-      const rootId = db.ensureRootModule();
+      const rootId = db.modules.ensureRoot();
       const mods: number[] = [];
       for (let i = 0; i < 22; i++) {
-        mods.push(db.insertModule(rootId, `m${i}`, `Mod${i}`));
+        mods.push(db.modules.insert(rootId, `m${i}`, `Mod${i}`));
       }
       for (let i = 0; i < 21; i++) {
-        db.insertInteraction(mods[i], mods[i + 1]);
+        db.interactions.insert(mods[i], mods[i + 1]);
       }
-      db.insertFlow('F', 'f');
+      db.flows.insert('F', 'f');
 
       const result = checkFlowQuality(db);
       const uncoveredIssues = result.issues.filter((i) => i.category === 'uncovered-interactions');
@@ -281,37 +281,37 @@ describe('coverage-checker', () => {
     });
 
     it('covered interactions → no uncovered warning', () => {
-      const rootId = db.ensureRootModule();
-      const modA = db.insertModule(rootId, 'a', 'A');
-      const modB = db.insertModule(rootId, 'b', 'B');
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
       const fileA = insertFile('/src/a.ts');
       const defA = insertDefinition(fileA, 'funcA');
-      db.assignSymbolToModule(defA, modA);
+      db.modules.assignSymbol(defA, modA);
 
-      const intId = db.insertInteraction(modA, modB);
-      const flowId = db.insertFlow('Good Flow', 'good-flow', { entryPointModuleId: modA });
-      db.addFlowStep(flowId, intId);
+      const intId = db.interactions.insert(modA, modB);
+      const flowId = db.flows.insert('Good Flow', 'good-flow', { entryPointModuleId: modA });
+      db.flows.addStep(flowId, intId);
 
       const result = checkFlowQuality(db);
       expect(result.passed).toBe(true);
     });
 
     it('multiple flows with steps → passed', () => {
-      const rootId = db.ensureRootModule();
-      const modA = db.insertModule(rootId, 'a', 'A');
-      const modB = db.insertModule(rootId, 'b', 'B');
-      const modC = db.insertModule(rootId, 'c', 'C');
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+      const modC = db.modules.insert(rootId, 'c', 'C');
       const fileA = insertFile('/src/a.ts');
       const defA = insertDefinition(fileA, 'funcA');
-      db.assignSymbolToModule(defA, modA);
+      db.modules.assignSymbol(defA, modA);
 
-      const int1 = db.insertInteraction(modA, modB);
-      const int2 = db.insertInteraction(modB, modC);
+      const int1 = db.interactions.insert(modA, modB);
+      const int2 = db.interactions.insert(modB, modC);
 
-      const f1 = db.insertFlow('Flow1', 'flow-1', { entryPointModuleId: modA });
-      db.addFlowStep(f1, int1);
-      const f2 = db.insertFlow('Flow2', 'flow-2', { entryPointModuleId: modA });
-      db.addFlowStep(f2, int2);
+      const f1 = db.flows.insert('Flow1', 'flow-1', { entryPointModuleId: modA });
+      db.flows.addStep(f1, int1);
+      const f2 = db.flows.insert('Flow2', 'flow-2', { entryPointModuleId: modA });
+      db.flows.addStep(f2, int2);
 
       const result = checkFlowQuality(db);
       expect(result.passed).toBe(true);
@@ -331,11 +331,11 @@ describe('coverage-checker', () => {
     });
 
     it('test file symbol in production module → warning', () => {
-      const rootId = db.ensureRootModule();
-      const prodModule = db.insertModule(rootId, 'prod', 'Production');
+      const rootId = db.modules.ensureRoot();
+      const prodModule = db.modules.insert(rootId, 'prod', 'Production');
       const fileId = insertFile('/src/utils.test.ts');
       const defId = insertDefinition(fileId, 'testHelper');
-      db.assignSymbolToModule(defId, prodModule);
+      db.modules.assignSymbol(defId, prodModule);
 
       const result = checkModuleAssignments(db);
       const testInProd = result.issues.filter((i) => i.category === 'test-in-production');
@@ -344,15 +344,15 @@ describe('coverage-checker', () => {
     });
 
     it('non-exported test symbol in shared multi-file module → info', () => {
-      const rootId = db.ensureRootModule();
-      const sharedModule = db.insertModule(rootId, 'shared', 'Shared');
+      const rootId = db.modules.ensureRoot();
+      const sharedModule = db.modules.insert(rootId, 'shared', 'Shared');
 
       const fileA = insertFile('/src/a.ts');
       const fileB = insertFile('/src/b.test.ts');
       const defA = insertDefinition(fileA, 'prodFunc');
       const defB = insertDefinition(fileB, 'testHelper', 'function', { isExported: false });
-      db.assignSymbolToModule(defA, sharedModule);
-      db.assignSymbolToModule(defB, sharedModule);
+      db.modules.assignSymbol(defA, sharedModule);
+      db.modules.assignSymbol(defB, sharedModule);
 
       const result = checkModuleAssignments(db);
       const nonExported = result.issues.filter((i) => i.category === 'non-exported-in-shared');
@@ -360,22 +360,22 @@ describe('coverage-checker', () => {
     });
 
     it('clean state → passed', () => {
-      const rootId = db.ensureRootModule();
-      const modId = db.insertModule(rootId, 'clean', 'Clean Module');
+      const rootId = db.modules.ensureRoot();
+      const modId = db.modules.insert(rootId, 'clean', 'Clean Module');
       const fileId = insertFile('/src/clean.ts');
       const defId = insertDefinition(fileId, 'cleanFunc');
-      db.assignSymbolToModule(defId, modId);
+      db.modules.assignSymbol(defId, modId);
 
       const result = checkModuleAssignments(db);
       expect(result.passed).toBe(true);
     });
 
     it('single-file module skips shared-module check', () => {
-      const rootId = db.ensureRootModule();
-      const modId = db.insertModule(rootId, 'single', 'Single');
+      const rootId = db.modules.ensureRoot();
+      const modId = db.modules.insert(rootId, 'single', 'Single');
       const fileId = insertFile('/src/a.test.ts');
       const defId = insertDefinition(fileId, 'testOnly', 'function', { isExported: false });
-      db.assignSymbolToModule(defId, modId);
+      db.modules.assignSymbol(defId, modId);
 
       const result = checkModuleAssignments(db);
       const nonExported = result.issues.filter((i) => i.category === 'non-exported-in-shared');

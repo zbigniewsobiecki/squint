@@ -30,7 +30,7 @@ export default class Add extends Command {
       const description = args.description || flags.description;
 
       // Add the domain
-      const id = db.addDomain(args.name, description);
+      const id = db.domains.add(args.name, description);
 
       if (id === null) {
         this.error(chalk.red(`Domain "${args.name}" already exists.`));

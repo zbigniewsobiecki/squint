@@ -88,10 +88,10 @@ export async function verifyAnnotationContent(
   const systemPrompt = buildAnnotationVerifySystemPrompt();
 
   // Get all definitions that have all aspects annotated
-  const allDefIds = db.getDefinitionsWithMetadata(aspects[0]);
+  const allDefIds = db.metadata.getDefinitionsWith(aspects[0]);
   // Filter to those that have all aspects
   const fullyAnnotatedIds = allDefIds.filter((id) => {
-    const meta = db.getDefinitionMetadata(id);
+    const meta = db.metadata.get(id);
     return aspects.every((a) => a in meta);
   });
 
@@ -114,11 +114,11 @@ export async function verifyAnnotationContent(
     }> = [];
 
     for (const defId of batchIds) {
-      const def = db.getDefinitionById(defId);
+      const def = db.definitions.getById(defId);
       if (!def) continue;
 
       const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
-      const annotations = db.getDefinitionMetadata(defId);
+      const annotations = db.metadata.get(defId);
 
       symbolsForPrompt.push({
         id: defId,
@@ -152,7 +152,7 @@ export async function verifyAnnotationContent(
         const severity = verdictToSeverity(row.verdict);
         if (!severity) continue; // correct, skip
 
-        const def = db.getDefinitionById(row.definitionId);
+        const def = db.definitions.getById(row.definitionId);
         issues.push({
           definitionId: row.definitionId,
           definitionName: def?.name,
@@ -196,7 +196,7 @@ export async function verifyRelationshipContent(
   const systemPrompt = buildRelationshipVerifySystemPrompt();
 
   // Get all annotated relationships
-  const allRels = db.getAllRelationshipAnnotations({ limit: 100000 });
+  const allRels = db.relationships.getAll({ limit: 100000 });
   // Filter to those that have real annotations (not PENDING)
   const annotatedRels = allRels.filter((r) => r.semantic !== 'PENDING_LLM_ANNOTATION');
 
@@ -231,7 +231,7 @@ export async function verifyRelationshipContent(
     }> = [];
 
     for (const fromId of batchSourceIds) {
-      const def = db.getDefinitionById(fromId);
+      const def = db.definitions.getById(fromId);
       if (!def) continue;
 
       const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
@@ -273,8 +273,8 @@ export async function verifyRelationshipContent(
         const severity = verdictToSeverity(row.verdict);
         if (!severity) continue;
 
-        const fromDef = db.getDefinitionById(row.fromId);
-        const toDef = db.getDefinitionById(row.toId);
+        const fromDef = db.definitions.getById(row.fromId);
+        const toDef = db.definitions.getById(row.toId);
         issues.push({
           definitionId: row.fromId,
           definitionName: fromDef?.name,

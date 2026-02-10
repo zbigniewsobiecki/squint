@@ -82,10 +82,10 @@ export default class Set extends Command {
       }
 
       // Set the metadata
-      db.setDefinitionMetadata(definition.id, args.key, args.value!);
+      db.metadata.set(definition.id, args.key, args.value!);
 
       // Get the definition name for output
-      const defDetails = db.getDefinitionById(definition.id);
+      const defDetails = db.definitions.getById(definition.id);
       const displayName = defDetails?.name ?? `ID ${definition.id}`;
 
       this.log(`Set ${chalk.cyan(args.key)}="${args.value}" on ${chalk.yellow(displayName)}`);
@@ -166,7 +166,7 @@ export default class Set extends Command {
           }
 
           // Set the metadata
-          db.setDefinitionMetadata(definition.id, key, entry.value);
+          db.metadata.set(definition.id, key, entry.value);
 
           results.push({ symbol: definition.name, success: true });
         } catch (error) {
@@ -197,7 +197,7 @@ export default class Set extends Command {
             /* skip */
           }
         }
-        const unregistered = Array.from(allDomainsSet).filter((d: string) => !db2!.isDomainRegistered(d));
+        const unregistered = Array.from(allDomainsSet).filter((d: string) => !db2!.domains.isRegistered(d));
         if (unregistered.length > 0) {
           this.log('');
           this.log(chalk.yellow(`Warning: ${unregistered.length} unregistered domain(s): ${unregistered.join(', ')}`));
@@ -263,7 +263,7 @@ export default class Set extends Command {
 
       const unregistered: string[] = [];
       for (const domain of domains) {
-        if (typeof domain === 'string' && !db.isDomainRegistered(domain)) {
+        if (typeof domain === 'string' && !db.domains.isRegistered(domain)) {
           unregistered.push(domain);
         }
       }

@@ -23,12 +23,12 @@ export default class Files extends Command {
 
     await withDatabase(flags.database, this, async (db) => {
       if (flags.stats) {
-        const files = db.getAllFilesWithStats();
+        const files = db.files.getAllWithStats();
         for (const file of files) {
           this.log(`${file.path}\t${file.importedByCount}\t${file.importsCount}`);
         }
       } else {
-        const files = db.getAllFiles();
+        const files = db.files.getAll();
         for (const file of files) {
           this.log(file.path);
         }

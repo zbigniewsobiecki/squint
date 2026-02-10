@@ -46,12 +46,14 @@ describe('SymbolResolver', () => {
     errorThrown = null;
 
     mockDb = {
-      getDefinitionById: vi.fn((id: number) => {
-        return mockDefinitions.find((d) => d.id === id) ?? null;
-      }),
-      getDefinitionsByName: vi.fn((name: string) => {
-        return mockDefinitions.filter((d) => d.name === name);
-      }),
+      definitions: {
+        getById: vi.fn((id: number) => {
+          return mockDefinitions.find((d) => d.id === id) ?? null;
+        }),
+        getAllByName: vi.fn((name: string) => {
+          return mockDefinitions.filter((d) => d.name === name);
+        }),
+      },
     } as unknown as IndexDatabase;
 
     mockCommand = {
@@ -73,7 +75,7 @@ describe('SymbolResolver', () => {
 
       expect(result).not.toBeNull();
       expect(result!.id).toBe(3);
-      expect(mockDb.getDefinitionsByName).toHaveBeenCalledWith('AuthHelper');
+      expect(mockDb.definitions.getAllByName).toHaveBeenCalledWith('AuthHelper');
     });
 
     it('resolves by ID (direct lookup)', () => {
@@ -81,7 +83,7 @@ describe('SymbolResolver', () => {
 
       expect(result).not.toBeNull();
       expect(result!.id).toBe(1);
-      expect(mockDb.getDefinitionById).toHaveBeenCalledWith(1);
+      expect(mockDb.definitions.getById).toHaveBeenCalledWith(1);
     });
 
     it('handles ambiguous names (multiple matches) - returns null with disambiguation', () => {

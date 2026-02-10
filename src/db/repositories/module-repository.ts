@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { ensureModulesTables } from '../schema-manager.js';
 import type { AnnotatedSymbolInfo, CallGraphEdge, Module, ModuleTreeNode, ModuleWithMembers } from '../schema.js';
 import { buildSingleRootTree } from '../utils/tree-builder.js';
+import { queryCallGraphEdges } from './_shared/call-graph-query.js';
 
 export interface ModuleSymbol {
   id: number;
@@ -32,6 +33,44 @@ export interface IncomingEdge {
   callerName: string;
   callerModuleId: number | null;
   weight: number;
+}
+
+const MODULE_COLS = `
+  id,
+  parent_id as parentId,
+  slug,
+  full_path as fullPath,
+  name,
+  description,
+  depth,
+  color_index as colorIndex,
+  is_test as isTest,
+  created_at as createdAt`;
+
+const MODULE_COLS_M = `
+  m.id,
+  m.parent_id as parentId,
+  m.slug,
+  m.full_path as fullPath,
+  m.name,
+  m.description,
+  m.depth,
+  m.color_index as colorIndex,
+  m.is_test as isTest,
+  m.created_at as createdAt`;
+
+type RawModule = Omit<Module, 'isTest'> & { isTest: number };
+
+function toModule(row: RawModule): Module {
+  return { ...row, isTest: row.isTest === 1 };
+}
+
+function toModuleWithMembers(
+  m: Module & { memberCount?: number },
+  getMemberInfo: (id: number) => ModuleMemberInfo[]
+): ModuleWithMembers {
+  const members = getMemberInfo(m.id);
+  return { ...m, members };
 }
 
 /**
@@ -109,24 +148,11 @@ export class ModuleRepository {
    */
   getByPath(fullPath: string): Module | null {
     ensureModulesTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        parent_id as parentId,
-        slug,
-        full_path as fullPath,
-        name,
-        description,
-        depth,
-        color_index as colorIndex,
-        is_test as isTest,
-        created_at as createdAt
-      FROM modules
-      WHERE full_path = ?
-    `);
-    const row = stmt.get(fullPath) as (Omit<Module, 'isTest'> & { isTest: number }) | null;
+    const row = this.db
+      .prepare(`SELECT ${MODULE_COLS} FROM modules WHERE full_path = ?`)
+      .get(fullPath) as RawModule | null;
     if (!row) return null;
-    return { ...row, isTest: row.isTest === 1 };
+    return toModule(row);
   }
 
   /**
@@ -134,24 +160,9 @@ export class ModuleRepository {
    */
   getById(id: number): Module | null {
     ensureModulesTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        parent_id as parentId,
-        slug,
-        full_path as fullPath,
-        name,
-        description,
-        depth,
-        color_index as colorIndex,
-        is_test as isTest,
-        created_at as createdAt
-      FROM modules
-      WHERE id = ?
-    `);
-    const row = stmt.get(id) as (Omit<Module, 'isTest'> & { isTest: number }) | null;
+    const row = this.db.prepare(`SELECT ${MODULE_COLS} FROM modules WHERE id = ?`).get(id) as RawModule | null;
     if (!row) return null;
-    return { ...row, isTest: row.isTest === 1 };
+    return toModule(row);
   }
 
   /**
@@ -159,24 +170,10 @@ export class ModuleRepository {
    */
   getChildren(moduleId: number): Module[] {
     ensureModulesTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        parent_id as parentId,
-        slug,
-        full_path as fullPath,
-        name,
-        description,
-        depth,
-        color_index as colorIndex,
-        is_test as isTest,
-        created_at as createdAt
-      FROM modules
-      WHERE parent_id = ?
-      ORDER BY slug
-    `);
-    const rows = stmt.all(moduleId) as Array<Omit<Module, 'isTest'> & { isTest: number }>;
-    return rows.map((row) => ({ ...row, isTest: row.isTest === 1 }));
+    const rows = this.db
+      .prepare(`SELECT ${MODULE_COLS} FROM modules WHERE parent_id = ? ORDER BY slug`)
+      .all(moduleId) as RawModule[];
+    return rows.map(toModule);
   }
 
   /**
@@ -184,23 +181,8 @@ export class ModuleRepository {
    */
   getAll(): Module[] {
     ensureModulesTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        parent_id as parentId,
-        slug,
-        full_path as fullPath,
-        name,
-        description,
-        depth,
-        color_index as colorIndex,
-        is_test as isTest,
-        created_at as createdAt
-      FROM modules
-      ORDER BY depth, full_path
-    `);
-    const rows = stmt.all() as Array<Omit<Module, 'isTest'> & { isTest: number }>;
-    return rows.map((row) => ({ ...row, isTest: row.isTest === 1 }));
+    const rows = this.db.prepare(`SELECT ${MODULE_COLS} FROM modules ORDER BY depth, full_path`).all() as RawModule[];
+    return rows.map(toModule);
   }
 
   /**
@@ -375,25 +357,13 @@ export class ModuleRepository {
    */
   getDefinitionModule(definitionId: number): { module: Module } | null {
     ensureModulesTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        m.id,
-        m.parent_id as parentId,
-        m.slug,
-        m.full_path as fullPath,
-        m.name,
-        m.description,
-        m.depth,
-        m.color_index as colorIndex,
-        m.is_test as isTest,
-        m.created_at as createdAt
-      FROM module_members mm
-      JOIN modules m ON mm.module_id = m.id
-      WHERE mm.definition_id = ?
-    `);
-    const row = stmt.get(definitionId) as (Omit<Module, 'isTest'> & { isTest: number }) | undefined;
+    const row = this.db
+      .prepare(
+        `SELECT ${MODULE_COLS_M} FROM module_members mm JOIN modules m ON mm.module_id = m.id WHERE mm.definition_id = ?`
+      )
+      .get(definitionId) as RawModule | undefined;
     if (!row) return null;
-    return { module: { ...row, isTest: row.isTest === 1 } };
+    return { module: toModule(row) };
   }
 
   /**
@@ -401,64 +371,7 @@ export class ModuleRepository {
    * This is needed by getModuleCallGraph and getIncomingEdgesFor.
    */
   getCallGraph(): CallGraphEdge[] {
-    // Query for both internal and imported calls
-    const stmt = this.db.prepare(`
-      SELECT
-        caller.id as from_id,
-        s.definition_id as to_id,
-        COUNT(*) as weight,
-        MIN(u.line) as min_usage_line
-      FROM definitions caller
-      JOIN files f ON caller.file_id = f.id
-      JOIN symbols s ON s.file_id = f.id AND s.definition_id IS NOT NULL
-      JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression')
-        AND caller.line <= u.line AND u.line <= caller.end_line
-        AND s.definition_id != caller.id
-      GROUP BY caller.id, s.definition_id
-      UNION ALL
-      SELECT
-        caller.id as from_id,
-        s.definition_id as to_id,
-        COUNT(*) as weight,
-        MIN(u.line) as min_usage_line
-      FROM definitions caller
-      JOIN files f ON caller.file_id = f.id
-      JOIN imports i ON i.from_file_id = f.id
-      JOIN symbols s ON s.reference_id = i.id AND s.definition_id IS NOT NULL
-      JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression')
-        AND caller.line <= u.line AND u.line <= caller.end_line
-        AND s.definition_id != caller.id
-      GROUP BY caller.id, s.definition_id
-    `);
-
-    const rows = stmt.all() as Array<{
-      from_id: number;
-      to_id: number;
-      weight: number;
-      min_usage_line: number;
-    }>;
-
-    // Aggregate duplicate edges (from the UNION), keeping minimum usage line
-    const edgeMap = new Map<string, CallGraphEdge>();
-    for (const row of rows) {
-      const key = `${row.from_id}-${row.to_id}`;
-      const existing = edgeMap.get(key);
-      if (existing) {
-        existing.weight += row.weight;
-        existing.minUsageLine = Math.min(existing.minUsageLine, row.min_usage_line);
-      } else {
-        edgeMap.set(key, {
-          fromId: row.from_id,
-          toId: row.to_id,
-          weight: row.weight,
-          minUsageLine: row.min_usage_line,
-        });
-      }
-    }
-
-    return Array.from(edgeMap.values());
+    return queryCallGraphEdges(this.db);
   }
 
   /**
@@ -468,49 +381,18 @@ export class ModuleRepository {
   getModulesExceedingThreshold(threshold: number): ModuleWithMembers[] {
     ensureModulesTables(this.db);
 
-    // First find modules that exceed the threshold
-    const modulesStmt = this.db.prepare(`
-      SELECT
-        m.id,
-        m.parent_id as parentId,
-        m.slug,
-        m.full_path as fullPath,
-        m.name,
-        m.description,
-        m.depth,
-        m.color_index as colorIndex,
-        m.is_test as isTest,
-        m.created_at as createdAt,
-        COUNT(mm.definition_id) as memberCount
+    const rawModules = this.db
+      .prepare(`
+      SELECT ${MODULE_COLS_M}, COUNT(mm.definition_id) as memberCount
       FROM modules m
       JOIN module_members mm ON mm.module_id = m.id
       GROUP BY m.id
       HAVING COUNT(mm.definition_id) > ?
       ORDER BY m.depth, m.full_path
-    `);
+    `)
+      .all(threshold) as Array<RawModule & { memberCount: number }>;
 
-    const rawModules = modulesStmt.all(threshold) as Array<
-      Omit<Module, 'isTest'> & { isTest: number; memberCount: number }
-    >;
-    const modules = rawModules.map((m) => ({ ...m, isTest: m.isTest === 1 }));
-
-    // For each module, get its members with details
-    return modules.map((m) => {
-      const members = this.getMemberInfo(m.id);
-      return {
-        id: m.id,
-        parentId: m.parentId,
-        slug: m.slug,
-        fullPath: m.fullPath,
-        name: m.name,
-        description: m.description,
-        depth: m.depth,
-        colorIndex: m.colorIndex,
-        isTest: m.isTest,
-        createdAt: m.createdAt,
-        members,
-      };
-    });
+    return rawModules.map((m) => toModuleWithMembers(toModule(m), (id) => this.getMemberInfo(id)));
   }
 
   /**
@@ -602,48 +484,19 @@ export class ModuleRepository {
   getLeafModulesExceedingThreshold(threshold: number): ModuleWithMembers[] {
     ensureModulesTables(this.db);
 
-    const modulesStmt = this.db.prepare(`
-      SELECT
-        m.id,
-        m.parent_id as parentId,
-        m.slug,
-        m.full_path as fullPath,
-        m.name,
-        m.description,
-        m.depth,
-        m.color_index as colorIndex,
-        m.is_test as isTest,
-        m.created_at as createdAt,
-        COUNT(mm.definition_id) as memberCount
+    const rawModules = this.db
+      .prepare(`
+      SELECT ${MODULE_COLS_M}, COUNT(mm.definition_id) as memberCount
       FROM modules m
       JOIN module_members mm ON mm.module_id = m.id
       WHERE m.id NOT IN (SELECT DISTINCT parent_id FROM modules WHERE parent_id IS NOT NULL)
       GROUP BY m.id
       HAVING COUNT(mm.definition_id) > ?
       ORDER BY COUNT(mm.definition_id) DESC
-    `);
+    `)
+      .all(threshold) as Array<RawModule & { memberCount: number }>;
 
-    const rawModules = modulesStmt.all(threshold) as Array<
-      Omit<Module, 'isTest'> & { isTest: number; memberCount: number }
-    >;
-    const modules = rawModules.map((m) => ({ ...m, isTest: m.isTest === 1 }));
-
-    return modules.map((m) => {
-      const members = this.getMemberInfo(m.id);
-      return {
-        id: m.id,
-        parentId: m.parentId,
-        slug: m.slug,
-        fullPath: m.fullPath,
-        name: m.name,
-        description: m.description,
-        depth: m.depth,
-        colorIndex: m.colorIndex,
-        isTest: m.isTest,
-        createdAt: m.createdAt,
-        members,
-      };
-    });
+    return rawModules.map((m) => toModuleWithMembers(toModule(m), (id) => this.getMemberInfo(id)));
   }
 
   /**
@@ -653,48 +506,19 @@ export class ModuleRepository {
   getBranchModulesWithDirectMembers(threshold: number): ModuleWithMembers[] {
     ensureModulesTables(this.db);
 
-    const modulesStmt = this.db.prepare(`
-      SELECT
-        m.id,
-        m.parent_id as parentId,
-        m.slug,
-        m.full_path as fullPath,
-        m.name,
-        m.description,
-        m.depth,
-        m.color_index as colorIndex,
-        m.is_test as isTest,
-        m.created_at as createdAt,
-        COUNT(mm.definition_id) as memberCount
+    const rawModules = this.db
+      .prepare(`
+      SELECT ${MODULE_COLS_M}, COUNT(mm.definition_id) as memberCount
       FROM modules m
       JOIN module_members mm ON mm.module_id = m.id
       WHERE m.id IN (SELECT DISTINCT parent_id FROM modules WHERE parent_id IS NOT NULL)
       GROUP BY m.id
       HAVING COUNT(mm.definition_id) > ?
       ORDER BY COUNT(mm.definition_id) DESC
-    `);
+    `)
+      .all(threshold) as Array<RawModule & { memberCount: number }>;
 
-    const rawModules = modulesStmt.all(threshold) as Array<
-      Omit<Module, 'isTest'> & { isTest: number; memberCount: number }
-    >;
-    const modules = rawModules.map((m) => ({ ...m, isTest: m.isTest === 1 }));
-
-    return modules.map((m) => {
-      const members = this.getMemberInfo(m.id);
-      return {
-        id: m.id,
-        parentId: m.parentId,
-        slug: m.slug,
-        fullPath: m.fullPath,
-        name: m.name,
-        description: m.description,
-        depth: m.depth,
-        colorIndex: m.colorIndex,
-        isTest: m.isTest,
-        createdAt: m.createdAt,
-        members,
-      };
-    });
+    return rawModules.map((m) => toModuleWithMembers(toModule(m), (id) => this.getMemberInfo(id)));
   }
 
   /**

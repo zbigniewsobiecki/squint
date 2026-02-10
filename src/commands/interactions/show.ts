@@ -24,7 +24,7 @@ export default class InteractionsShow extends Command {
     const isJson = flags.json;
 
     try {
-      const interaction = db.getInteractionById(args.id);
+      const interaction = db.interactions.getById(args.id);
 
       if (!interaction) {
         if (isJson) {
@@ -36,7 +36,7 @@ export default class InteractionsShow extends Command {
       }
 
       // Get module paths
-      const modules = db.getAllModules();
+      const modules = db.modules.getAll();
       const moduleMap = new Map(modules.map((m) => [m.id, m.fullPath]));
 
       const interactionWithPaths: InteractionWithPaths = {
@@ -46,7 +46,7 @@ export default class InteractionsShow extends Command {
       };
 
       // Get flows that use this interaction
-      const flows = db.getFlowsWithInteraction(args.id);
+      const flows = db.flows.getFlowsWithInteraction(args.id);
 
       if (isJson) {
         this.log(

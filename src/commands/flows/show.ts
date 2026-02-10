@@ -33,7 +33,7 @@ export default class FlowsShow extends Command {
 
       if (!flow) {
         // Try partial match
-        const allFlows = db.getAllFlows();
+        const allFlows = db.flows.getAll();
         const matches = allFlows.filter(
           (f) =>
             f.name.toLowerCase().includes(args.identifier.toLowerCase()) ||
@@ -81,23 +81,23 @@ export default class FlowsShow extends Command {
     // Try by ID
     const id = Number.parseInt(identifier, 10);
     if (!Number.isNaN(id)) {
-      const flow = db.getFlowById(id);
+      const flow = db.flows.getById(id);
       if (flow) return flow;
     }
 
     // Try by slug
-    const bySlug = db.getFlowBySlug(identifier);
+    const bySlug = db.flows.getBySlug(identifier);
     if (bySlug) return bySlug;
 
     // Try exact name match
-    const allFlows = db.getAllFlows();
+    const allFlows = db.flows.getAll();
     const byName = allFlows.find((f) => f.name === identifier);
     return byName ?? null;
   }
 
   private displayFlow(db: IndexDatabase, flow: Flow, isJson: boolean): void {
     // Get flow with steps
-    const flowWithSteps = db.getFlowWithSteps(flow.id);
+    const flowWithSteps = db.flows.getWithSteps(flow.id);
 
     if (isJson) {
       this.log(JSON.stringify(flowWithSteps, null, 2));

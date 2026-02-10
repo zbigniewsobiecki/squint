@@ -15,7 +15,7 @@ describe('Interactions and Flows', () => {
 
   // Helper to create a file
   function createFile(path: string): number {
-    return db.insertFile({
+    return db.files.insert({
       path,
       language: 'typescript',
       contentHash: computeHash(path),
@@ -33,7 +33,7 @@ describe('Interactions and Flows', () => {
     endRow: number,
     isExported = true
   ): number {
-    return db.insertDefinition(fileId, {
+    return db.files.insertDefinition(fileId, {
       name,
       kind,
       isExported,
@@ -76,10 +76,10 @@ describe('Interactions and Flows', () => {
 
   // Helper to create modules
   function createModules(): { module1: number; module2: number; module3: number } {
-    const rootId = db.ensureRootModule();
-    const module1 = db.insertModule(rootId, 'controllers', 'Controllers');
-    const module2 = db.insertModule(rootId, 'services', 'Services');
-    const module3 = db.insertModule(rootId, 'repositories', 'Repositories');
+    const rootId = db.modules.ensureRoot();
+    const module1 = db.modules.insert(rootId, 'controllers', 'Controllers');
+    const module2 = db.modules.insert(rootId, 'services', 'Services');
+    const module3 = db.modules.insert(rootId, 'repositories', 'Repositories');
     return { module1, module2, module3 };
   }
 
@@ -88,7 +88,7 @@ describe('Interactions and Flows', () => {
       const fileId = createFile('/project/controller.ts');
       createDefinition(fileId, 'SimpleFunction', 'function', 0, 10);
 
-      const edges = db.getCallGraph();
+      const edges = db.modules.getCallGraph();
       expect(edges).toEqual([]);
     });
 
@@ -102,7 +102,7 @@ describe('Interactions and Flows', () => {
       // Row 10 becomes line 11 (1-indexed)
       createCallRelationship(callerFile, calleeFile, callerDef, calleeDef, 'callee', 10);
 
-      const edges = db.getCallGraph();
+      const edges = db.modules.getCallGraph();
       expect(edges).toHaveLength(1);
       expect(edges[0]).toEqual({
         fromId: callerDef,
@@ -145,7 +145,7 @@ describe('Interactions and Flows', () => {
         context: 'call_expression',
       });
 
-      const edges = db.getCallGraph();
+      const edges = db.modules.getCallGraph();
       expect(edges).toHaveLength(1);
       expect(edges[0].weight).toBe(2);
       expect(edges[0].minUsageLine).toBe(11); // row 10 + 1 = line 11 (minimum)
@@ -154,7 +154,7 @@ describe('Interactions and Flows', () => {
 
   describe('getModuleCallGraph', () => {
     it('returns empty array when no modules or calls exist', () => {
-      const edges = db.getModuleCallGraph();
+      const edges = db.callGraph.getModuleCallGraph();
       expect(edges).toEqual([]);
     });
 
@@ -166,18 +166,18 @@ describe('Interactions and Flows', () => {
       const def2 = createDefinition(file2, 'userService', 'function', 0, 30);
 
       // Create modules
-      const rootId = db.ensureRootModule();
-      const controllerModule = db.insertModule(rootId, 'controllers', 'Controllers');
-      const serviceModule = db.insertModule(rootId, 'services', 'Services');
+      const rootId = db.modules.ensureRoot();
+      const controllerModule = db.modules.insert(rootId, 'controllers', 'Controllers');
+      const serviceModule = db.modules.insert(rootId, 'services', 'Services');
 
       // Assign definitions to modules
-      db.assignSymbolToModule(def1, controllerModule);
-      db.assignSymbolToModule(def2, serviceModule);
+      db.modules.assignSymbol(def1, controllerModule);
+      db.modules.assignSymbol(def2, serviceModule);
 
       // Create call relationship
       createCallRelationship(file1, file2, def1, def2, 'userService', 20);
 
-      const moduleEdges = db.getModuleCallGraph();
+      const moduleEdges = db.callGraph.getModuleCallGraph();
       expect(moduleEdges).toHaveLength(1);
       expect(moduleEdges[0].fromModuleId).toBe(controllerModule);
       expect(moduleEdges[0].toModuleId).toBe(serviceModule);
@@ -193,20 +193,20 @@ describe('Interactions and Flows', () => {
       const def2b = createDefinition(file2, 'updateUser', 'function', 35, 60);
 
       // Create modules
-      const rootId = db.ensureRootModule();
-      const controllerModule = db.insertModule(rootId, 'controllers', 'Controllers');
-      const serviceModule = db.insertModule(rootId, 'services', 'Services');
+      const rootId = db.modules.ensureRoot();
+      const controllerModule = db.modules.insert(rootId, 'controllers', 'Controllers');
+      const serviceModule = db.modules.insert(rootId, 'services', 'Services');
 
       // Assign definitions to modules
-      db.assignSymbolToModule(def1, controllerModule);
-      db.assignSymbolToModule(def2a, serviceModule);
-      db.assignSymbolToModule(def2b, serviceModule);
+      db.modules.assignSymbol(def1, controllerModule);
+      db.modules.assignSymbol(def2a, serviceModule);
+      db.modules.assignSymbol(def2b, serviceModule);
 
       // Create call relationships
       createCallRelationship(file1, file2, def1, def2a, 'createUser', 20);
       createCallRelationship(file1, file2, def1, def2b, 'updateUser', 30);
 
-      const moduleEdges = db.getModuleCallGraph();
+      const moduleEdges = db.callGraph.getModuleCallGraph();
       expect(moduleEdges).toHaveLength(1);
       expect(moduleEdges[0].weight).toBe(2); // Aggregated
     });
@@ -217,7 +217,7 @@ describe('Interactions and Flows', () => {
       it('inserts a basic interaction', () => {
         const { module1, module2 } = createModules();
 
-        const id = db.insertInteraction(module1, module2, {
+        const id = db.interactions.insert(module1, module2, {
           direction: 'uni',
           weight: 1,
           pattern: 'business',
@@ -225,7 +225,7 @@ describe('Interactions and Flows', () => {
 
         expect(id).toBeGreaterThan(0);
 
-        const interaction = db.getInteractionById(id);
+        const interaction = db.interactions.getById(id);
         expect(interaction).not.toBeNull();
         expect(interaction!.fromModuleId).toBe(module1);
         expect(interaction!.toModuleId).toBe(module2);
@@ -236,24 +236,24 @@ describe('Interactions and Flows', () => {
       it('inserts interaction with symbols', () => {
         const { module1, module2 } = createModules();
 
-        const id = db.insertInteraction(module1, module2, {
+        const id = db.interactions.insert(module1, module2, {
           direction: 'uni',
           symbols: ['getUser', 'createUser', 'deleteUser'],
         });
 
-        const interaction = db.getInteractionById(id);
+        const interaction = db.interactions.getById(id);
         expect(interaction!.symbols).toEqual(['getUser', 'createUser', 'deleteUser']);
       });
 
       it('inserts interaction with semantic', () => {
         const { module1, module2 } = createModules();
 
-        const id = db.insertInteraction(module1, module2, {
+        const id = db.interactions.insert(module1, module2, {
           direction: 'uni',
           semantic: 'Controller delegates business logic to service',
         });
 
-        const interaction = db.getInteractionById(id);
+        const interaction = db.interactions.getById(id);
         expect(interaction!.semantic).toBe('Controller delegates business logic to service');
       });
     });
@@ -262,12 +262,12 @@ describe('Interactions and Flows', () => {
       it('inserts when not exists', () => {
         const { module1, module2 } = createModules();
 
-        const id = db.upsertInteraction(module1, module2, {
+        const id = db.interactions.upsert(module1, module2, {
           direction: 'uni',
           weight: 5,
         });
 
-        const interaction = db.getInteractionById(id);
+        const interaction = db.interactions.getById(id);
         expect(interaction!.weight).toBe(5);
       });
 
@@ -275,14 +275,14 @@ describe('Interactions and Flows', () => {
         const { module1, module2 } = createModules();
 
         // First insert
-        const id1 = db.insertInteraction(module1, module2, {
+        const id1 = db.interactions.insert(module1, module2, {
           direction: 'uni',
           weight: 1,
           pattern: 'utility',
         });
 
         // Upsert with new values
-        const id2 = db.upsertInteraction(module1, module2, {
+        const id2 = db.interactions.upsert(module1, module2, {
           direction: 'bi',
           weight: 10,
           pattern: 'business',
@@ -291,7 +291,7 @@ describe('Interactions and Flows', () => {
 
         expect(id2).toBe(id1);
 
-        const interaction = db.getInteractionById(id2);
+        const interaction = db.interactions.getById(id2);
         expect(interaction!.direction).toBe('bi');
         expect(interaction!.weight).toBe(10);
         expect(interaction!.pattern).toBe('business');
@@ -303,9 +303,9 @@ describe('Interactions and Flows', () => {
       it('returns interaction by module pair', () => {
         const { module1, module2 } = createModules();
 
-        db.insertInteraction(module1, module2, { direction: 'uni' });
+        db.interactions.insert(module1, module2, { direction: 'uni' });
 
-        const interaction = db.getInteractionByModules(module1, module2);
+        const interaction = db.interactions.getByModules(module1, module2);
         expect(interaction).not.toBeNull();
         expect(interaction!.fromModuleId).toBe(module1);
         expect(interaction!.toModuleId).toBe(module2);
@@ -314,7 +314,7 @@ describe('Interactions and Flows', () => {
       it('returns null when not found', () => {
         const { module1, module2 } = createModules();
 
-        const interaction = db.getInteractionByModules(module1, module2);
+        const interaction = db.interactions.getByModules(module1, module2);
         expect(interaction).toBeNull();
       });
     });
@@ -323,10 +323,10 @@ describe('Interactions and Flows', () => {
       it('returns all interactions with module paths', () => {
         const { module1, module2, module3 } = createModules();
 
-        db.insertInteraction(module1, module2, { direction: 'uni', pattern: 'business' });
-        db.insertInteraction(module2, module3, { direction: 'uni', pattern: 'business' });
+        db.interactions.insert(module1, module2, { direction: 'uni', pattern: 'business' });
+        db.interactions.insert(module2, module3, { direction: 'uni', pattern: 'business' });
 
-        const interactions = db.getAllInteractions();
+        const interactions = db.interactions.getAll();
         expect(interactions).toHaveLength(2);
         expect(interactions[0].fromModulePath).toBeDefined();
         expect(interactions[0].toModulePath).toBeDefined();
@@ -337,14 +337,14 @@ describe('Interactions and Flows', () => {
       it('filters interactions by pattern', () => {
         const { module1, module2, module3 } = createModules();
 
-        db.insertInteraction(module1, module2, { direction: 'uni', pattern: 'business' });
-        db.insertInteraction(module2, module3, { direction: 'uni', pattern: 'utility' });
+        db.interactions.insert(module1, module2, { direction: 'uni', pattern: 'business' });
+        db.interactions.insert(module2, module3, { direction: 'uni', pattern: 'utility' });
 
-        const business = db.getInteractionsByPattern('business');
+        const business = db.interactions.getByPattern('business');
         expect(business).toHaveLength(1);
         expect(business[0].fromModuleId).toBe(module1);
 
-        const utility = db.getInteractionsByPattern('utility');
+        const utility = db.interactions.getByPattern('utility');
         expect(utility).toHaveLength(1);
         expect(utility[0].fromModuleId).toBe(module2);
       });
@@ -354,13 +354,13 @@ describe('Interactions and Flows', () => {
       it('returns correct count', () => {
         const { module1, module2, module3 } = createModules();
 
-        expect(db.getInteractionCount()).toBe(0);
+        expect(db.interactions.getCount()).toBe(0);
 
-        db.insertInteraction(module1, module2, { direction: 'uni' });
-        expect(db.getInteractionCount()).toBe(1);
+        db.interactions.insert(module1, module2, { direction: 'uni' });
+        expect(db.interactions.getCount()).toBe(1);
 
-        db.insertInteraction(module2, module3, { direction: 'uni' });
-        expect(db.getInteractionCount()).toBe(2);
+        db.interactions.insert(module2, module3, { direction: 'uni' });
+        expect(db.interactions.getCount()).toBe(2);
       });
     });
 
@@ -368,14 +368,14 @@ describe('Interactions and Flows', () => {
       it('removes all interactions', () => {
         const { module1, module2, module3 } = createModules();
 
-        db.insertInteraction(module1, module2, { direction: 'uni' });
-        db.insertInteraction(module2, module3, { direction: 'uni' });
+        db.interactions.insert(module1, module2, { direction: 'uni' });
+        db.interactions.insert(module2, module3, { direction: 'uni' });
 
-        expect(db.getInteractionCount()).toBe(2);
+        expect(db.interactions.getCount()).toBe(2);
 
-        const cleared = db.clearInteractions();
+        const cleared = db.interactions.clear();
         expect(cleared).toBe(2);
-        expect(db.getInteractionCount()).toBe(0);
+        expect(db.interactions.getCount()).toBe(0);
       });
     });
   });
@@ -383,14 +383,14 @@ describe('Interactions and Flows', () => {
   describe('Flows', () => {
     describe('insertFlow', () => {
       it('inserts a basic flow', () => {
-        const id = db.insertFlow('UserLoginFlow', 'user-login-flow', {
+        const id = db.flows.insert('UserLoginFlow', 'user-login-flow', {
           description: 'Handles user login',
           stakeholder: 'user',
         });
 
         expect(id).toBeGreaterThan(0);
 
-        const flow = db.getFlowById(id);
+        const flow = db.flows.getById(id);
         expect(flow).not.toBeNull();
         expect(flow!.name).toBe('UserLoginFlow');
         expect(flow!.slug).toBe('user-login-flow');
@@ -402,62 +402,62 @@ describe('Interactions and Flows', () => {
         const fileId = createFile('/project/controllers/auth.ts');
         const entryPointId = createDefinition(fileId, 'handleLogin', 'function', 0, 50);
 
-        const id = db.insertFlow('UserLoginFlow', 'user-login-flow', {
+        const id = db.flows.insert('UserLoginFlow', 'user-login-flow', {
           entryPointId,
           entryPath: 'POST /api/auth/login',
         });
 
-        const flow = db.getFlowById(id);
+        const flow = db.flows.getById(id);
         expect(flow!.entryPointId).toBe(entryPointId);
         expect(flow!.entryPath).toBe('POST /api/auth/login');
       });
 
       it('enforces unique slug', () => {
-        db.insertFlow('Flow1', 'my-flow', {});
+        db.flows.insert('Flow1', 'my-flow', {});
 
         expect(() => {
-          db.insertFlow('Flow2', 'my-flow', {});
+          db.flows.insert('Flow2', 'my-flow', {});
         }).toThrow();
       });
     });
 
     describe('getFlowBySlug', () => {
       it('returns flow by slug', () => {
-        db.insertFlow('TestFlow', 'test-flow', { description: 'Test' });
+        db.flows.insert('TestFlow', 'test-flow', { description: 'Test' });
 
-        const flow = db.getFlowBySlug('test-flow');
+        const flow = db.flows.getBySlug('test-flow');
         expect(flow).not.toBeNull();
         expect(flow!.name).toBe('TestFlow');
       });
 
       it('returns null for non-existent slug', () => {
-        const flow = db.getFlowBySlug('non-existent');
+        const flow = db.flows.getBySlug('non-existent');
         expect(flow).toBeNull();
       });
     });
 
     describe('getAllFlows', () => {
       it('returns all flows', () => {
-        db.insertFlow('Flow1', 'flow-1', {});
-        db.insertFlow('Flow2', 'flow-2', {});
-        db.insertFlow('Flow3', 'flow-3', {});
+        db.flows.insert('Flow1', 'flow-1', {});
+        db.flows.insert('Flow2', 'flow-2', {});
+        db.flows.insert('Flow3', 'flow-3', {});
 
-        const flows = db.getAllFlows();
+        const flows = db.flows.getAll();
         expect(flows).toHaveLength(3);
       });
     });
 
     describe('getFlowsByStakeholder', () => {
       it('filters flows by stakeholder', () => {
-        db.insertFlow('UserFlow', 'user-flow', { stakeholder: 'user' });
-        db.insertFlow('AdminFlow', 'admin-flow', { stakeholder: 'admin' });
-        db.insertFlow('SystemFlow', 'system-flow', { stakeholder: 'system' });
+        db.flows.insert('UserFlow', 'user-flow', { stakeholder: 'user' });
+        db.flows.insert('AdminFlow', 'admin-flow', { stakeholder: 'admin' });
+        db.flows.insert('SystemFlow', 'system-flow', { stakeholder: 'system' });
 
-        const userFlows = db.getFlowsByStakeholder('user');
+        const userFlows = db.flows.getByStakeholder('user');
         expect(userFlows).toHaveLength(1);
         expect(userFlows[0].name).toBe('UserFlow');
 
-        const adminFlows = db.getFlowsByStakeholder('admin');
+        const adminFlows = db.flows.getByStakeholder('admin');
         expect(adminFlows).toHaveLength(1);
         expect(adminFlows[0].name).toBe('AdminFlow');
       });
@@ -465,70 +465,70 @@ describe('Interactions and Flows', () => {
 
     describe('updateFlow', () => {
       it('updates flow name', () => {
-        const id = db.insertFlow('OldName', 'test-flow', {});
+        const id = db.flows.insert('OldName', 'test-flow', {});
 
-        const updated = db.updateFlow(id, { name: 'NewName' });
+        const updated = db.flows.update(id, { name: 'NewName' });
         expect(updated).toBe(true);
 
-        const flow = db.getFlowById(id);
+        const flow = db.flows.getById(id);
         expect(flow!.name).toBe('NewName');
       });
 
       it('updates flow description', () => {
-        const id = db.insertFlow('Test', 'test-flow', {});
+        const id = db.flows.insert('Test', 'test-flow', {});
 
-        db.updateFlow(id, { description: 'New description' });
+        db.flows.update(id, { description: 'New description' });
 
-        const flow = db.getFlowById(id);
+        const flow = db.flows.getById(id);
         expect(flow!.description).toBe('New description');
       });
 
       it('returns false for non-existent flow', () => {
-        const updated = db.updateFlow(999, { name: 'Test' });
+        const updated = db.flows.update(999, { name: 'Test' });
         expect(updated).toBe(false);
       });
 
       it('returns false when no updates provided', () => {
-        const id = db.insertFlow('Test', 'test-flow', {});
+        const id = db.flows.insert('Test', 'test-flow', {});
 
-        const updated = db.updateFlow(id, {});
+        const updated = db.flows.update(id, {});
         expect(updated).toBe(false);
       });
     });
 
     describe('deleteFlow', () => {
       it('deletes a flow', () => {
-        const id = db.insertFlow('Test', 'test-flow', {});
-        expect(db.getFlowCount()).toBe(1);
+        const id = db.flows.insert('Test', 'test-flow', {});
+        expect(db.flows.getCount()).toBe(1);
 
-        const deleted = db.deleteFlow(id);
+        const deleted = db.flows.delete(id);
         expect(deleted).toBe(true);
-        expect(db.getFlowCount()).toBe(0);
+        expect(db.flows.getCount()).toBe(0);
       });
     });
 
     describe('getFlowCount', () => {
       it('returns correct count', () => {
-        expect(db.getFlowCount()).toBe(0);
+        expect(db.flows.getCount()).toBe(0);
 
-        db.insertFlow('Flow1', 'flow-1', {});
-        expect(db.getFlowCount()).toBe(1);
+        db.flows.insert('Flow1', 'flow-1', {});
+        expect(db.flows.getCount()).toBe(1);
 
-        db.insertFlow('Flow2', 'flow-2', {});
-        expect(db.getFlowCount()).toBe(2);
+        db.flows.insert('Flow2', 'flow-2', {});
+        expect(db.flows.getCount()).toBe(2);
       });
     });
 
     describe('clearFlows', () => {
       it('removes all flows', () => {
-        db.insertFlow('Flow1', 'flow-1', {});
-        db.insertFlow('Flow2', 'flow-2', {});
+        db.flows.insert('Flow1', 'flow-1', {});
+        db.flows.insert('Flow2', 'flow-2', {});
 
-        expect(db.getFlowCount()).toBe(2);
+        expect(db.flows.getCount()).toBe(2);
 
-        const cleared = db.clearFlows();
+        const cleared = db.flows.clear();
         expect(cleared).toBe(2);
-        expect(db.getFlowCount()).toBe(0);
+        expect(db.flows.getCount()).toBe(0);
       });
     });
   });
@@ -538,17 +538,17 @@ describe('Interactions and Flows', () => {
       const { module1, module2, module3 } = createModules();
 
       // Create interactions
-      const int1 = db.insertInteraction(module1, module2, { direction: 'uni' });
-      const int2 = db.insertInteraction(module2, module3, { direction: 'uni' });
+      const int1 = db.interactions.insert(module1, module2, { direction: 'uni' });
+      const int2 = db.interactions.insert(module2, module3, { direction: 'uni' });
 
       // Create flow
-      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
+      const flowId = db.flows.insert('TestFlow', 'test-flow', {});
 
       // Add steps
-      db.addFlowSteps(flowId, [int1, int2]);
+      db.flows.addSteps(flowId, [int1, int2]);
 
       // Get flow with steps
-      const flow = db.getFlowWithSteps(flowId);
+      const flow = db.flows.getWithSteps(flowId);
       expect(flow).not.toBeNull();
       expect(flow!.steps).toHaveLength(2);
       expect(flow!.steps[0].stepOrder).toBe(1);
@@ -561,21 +561,21 @@ describe('Interactions and Flows', () => {
       const { module1, module2, module3 } = createModules();
 
       // Create interactions
-      const int1 = db.insertInteraction(module1, module2, {
+      const int1 = db.interactions.insert(module1, module2, {
         direction: 'uni',
         semantic: 'First step',
       });
-      const int2 = db.insertInteraction(module2, module3, {
+      const int2 = db.interactions.insert(module2, module3, {
         direction: 'uni',
         semantic: 'Second step',
       });
 
       // Create flow with steps
-      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
-      db.addFlowSteps(flowId, [int1, int2]);
+      const flowId = db.flows.insert('TestFlow', 'test-flow', {});
+      db.flows.addSteps(flowId, [int1, int2]);
 
       // Expand flow
-      const expanded = db.expandFlow(flowId);
+      const expanded = db.flows.expand(flowId);
       expect(expanded).not.toBeNull();
       expect(expanded!.interactions).toHaveLength(2);
       expect(expanded!.interactions[0].id).toBe(int1);
@@ -587,16 +587,16 @@ describe('Interactions and Flows', () => {
     it('clears steps from a flow', () => {
       const { module1, module2 } = createModules();
 
-      const int1 = db.insertInteraction(module1, module2, { direction: 'uni' });
-      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
-      db.addFlowSteps(flowId, [int1]);
+      const int1 = db.interactions.insert(module1, module2, { direction: 'uni' });
+      const flowId = db.flows.insert('TestFlow', 'test-flow', {});
+      db.flows.addSteps(flowId, [int1]);
 
-      let flow = db.getFlowWithSteps(flowId);
+      let flow = db.flows.getWithSteps(flowId);
       expect(flow!.steps).toHaveLength(1);
 
-      db.clearFlowSteps(flowId);
+      db.flows.clearSteps(flowId);
 
-      flow = db.getFlowWithSteps(flowId);
+      flow = db.flows.getWithSteps(flowId);
       expect(flow!.steps).toHaveLength(0);
     });
   });
@@ -606,15 +606,15 @@ describe('Interactions and Flows', () => {
       const { module1, module2, module3 } = createModules();
 
       // Create 3 interactions
-      const int1 = db.insertInteraction(module1, module2, { direction: 'uni' });
-      const int2 = db.insertInteraction(module2, module3, { direction: 'uni' });
-      db.insertInteraction(module1, module3, { direction: 'uni' }); // Uncovered
+      const int1 = db.interactions.insert(module1, module2, { direction: 'uni' });
+      const int2 = db.interactions.insert(module2, module3, { direction: 'uni' });
+      db.interactions.insert(module1, module3, { direction: 'uni' }); // Uncovered
 
       // Create flow covering 2 interactions
-      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
-      db.addFlowSteps(flowId, [int1, int2]);
+      const flowId = db.flows.insert('TestFlow', 'test-flow', {});
+      db.flows.addSteps(flowId, [int1, int2]);
 
-      const coverage = db.getFlowCoverage();
+      const coverage = db.flows.getCoverage();
       expect(coverage.totalInteractions).toBe(3);
       expect(coverage.coveredByFlows).toBe(2);
       expect(coverage.percentage).toBeCloseTo(66.67, 1);
@@ -623,12 +623,12 @@ describe('Interactions and Flows', () => {
     it('returns 100% when all interactions are covered', () => {
       const { module1, module2 } = createModules();
 
-      const int1 = db.insertInteraction(module1, module2, { direction: 'uni' });
+      const int1 = db.interactions.insert(module1, module2, { direction: 'uni' });
 
-      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
-      db.addFlowSteps(flowId, [int1]);
+      const flowId = db.flows.insert('TestFlow', 'test-flow', {});
+      db.flows.addSteps(flowId, [int1]);
 
-      const coverage = db.getFlowCoverage();
+      const coverage = db.flows.getCoverage();
       expect(coverage.totalInteractions).toBe(1);
       expect(coverage.coveredByFlows).toBe(1);
       expect(coverage.percentage).toBe(100.0);
@@ -637,9 +637,9 @@ describe('Interactions and Flows', () => {
     it('returns 0% when no flows exist', () => {
       const { module1, module2 } = createModules();
 
-      db.insertInteraction(module1, module2, { direction: 'uni' });
+      db.interactions.insert(module1, module2, { direction: 'uni' });
 
-      const coverage = db.getFlowCoverage();
+      const coverage = db.flows.getCoverage();
       expect(coverage.totalInteractions).toBe(1);
       expect(coverage.coveredByFlows).toBe(0);
       expect(coverage.percentage).toBe(0);
@@ -648,15 +648,15 @@ describe('Interactions and Flows', () => {
     it('finds uncovered interactions', () => {
       const { module1, module2, module3 } = createModules();
 
-      const int1 = db.insertInteraction(module1, module2, { direction: 'uni' });
-      const int2 = db.insertInteraction(module2, module3, { direction: 'uni' });
-      const int3 = db.insertInteraction(module1, module3, { direction: 'uni' });
+      const int1 = db.interactions.insert(module1, module2, { direction: 'uni' });
+      const int2 = db.interactions.insert(module2, module3, { direction: 'uni' });
+      const int3 = db.interactions.insert(module1, module3, { direction: 'uni' });
 
       // Cover only int1 and int2
-      const flowId = db.insertFlow('TestFlow', 'test-flow', {});
-      db.addFlowSteps(flowId, [int1, int2]);
+      const flowId = db.flows.insert('TestFlow', 'test-flow', {});
+      db.flows.addSteps(flowId, [int1, int2]);
 
-      const uncovered = db.getUncoveredInteractions();
+      const uncovered = db.flows.getUncoveredInteractions();
       expect(uncovered).toHaveLength(1);
       expect(uncovered[0].id).toBe(int3);
     });
@@ -674,41 +674,41 @@ describe('Interactions and Flows', () => {
       const repoDef = createDefinition(repoFile, 'salesRepository', 'function', 0, 30);
 
       // Create modules
-      const rootId = db.ensureRootModule();
-      const controllerModule = db.insertModule(rootId, 'sales-api', 'Sales API');
-      const serviceModule = db.insertModule(rootId, 'sales-service', 'Sales Service');
-      const repoModule = db.insertModule(rootId, 'sales-repository', 'Sales Repository');
+      const rootId = db.modules.ensureRoot();
+      const controllerModule = db.modules.insert(rootId, 'sales-api', 'Sales API');
+      const serviceModule = db.modules.insert(rootId, 'sales-service', 'Sales Service');
+      const repoModule = db.modules.insert(rootId, 'sales-repository', 'Sales Repository');
 
-      db.assignSymbolToModule(controllerDef, controllerModule);
-      db.assignSymbolToModule(serviceDef, serviceModule);
-      db.assignSymbolToModule(repoDef, repoModule);
+      db.modules.assignSymbol(controllerDef, controllerModule);
+      db.modules.assignSymbol(serviceDef, serviceModule);
+      db.modules.assignSymbol(repoDef, repoModule);
 
       // Create call relationships
       createCallRelationship(controllerFile, serviceFile, controllerDef, serviceDef, 'salesService', 20);
       createCallRelationship(serviceFile, repoFile, serviceDef, repoDef, 'salesRepository', 15);
 
       // Verify module call graph
-      const moduleEdges = db.getModuleCallGraph();
+      const moduleEdges = db.callGraph.getModuleCallGraph();
       expect(moduleEdges).toHaveLength(2);
 
       // Create interactions
-      const int1 = db.insertInteraction(controllerModule, serviceModule, {
+      const int1 = db.interactions.insert(controllerModule, serviceModule, {
         direction: 'uni',
         pattern: 'business',
         semantic: 'Controller delegates to service',
       });
-      const int2 = db.insertInteraction(serviceModule, repoModule, {
+      const int2 = db.interactions.insert(serviceModule, repoModule, {
         direction: 'uni',
         pattern: 'business',
         semantic: 'Service persists data',
       });
 
       // Verify interactions
-      const interactions = db.getAllInteractions();
+      const interactions = db.interactions.getAll();
       expect(interactions).toHaveLength(2);
 
       // Create flow
-      const flowId = db.insertFlow('CreateSaleFlow', 'create-sale-flow', {
+      const flowId = db.flows.insert('CreateSaleFlow', 'create-sale-flow', {
         entryPointId: controllerDef,
         entryPath: 'POST /api/sales',
         stakeholder: 'user',
@@ -716,24 +716,24 @@ describe('Interactions and Flows', () => {
       });
 
       // Add steps
-      db.addFlowSteps(flowId, [int1, int2]);
+      db.flows.addSteps(flowId, [int1, int2]);
 
       // Verify flow structure
-      const flow = db.getFlowById(flowId);
+      const flow = db.flows.getById(flowId);
       expect(flow!.name).toBe('CreateSaleFlow');
       expect(flow!.stakeholder).toBe('user');
 
-      const flowWithSteps = db.getFlowWithSteps(flowId);
+      const flowWithSteps = db.flows.getWithSteps(flowId);
       expect(flowWithSteps!.steps).toHaveLength(2);
 
       // Verify expanded flow
-      const expanded = db.expandFlow(flowId);
+      const expanded = db.flows.expand(flowId);
       expect(expanded!.interactions).toHaveLength(2);
       expect(expanded!.interactions[0].semantic).toBe('Controller delegates to service');
       expect(expanded!.interactions[1].semantic).toBe('Service persists data');
 
       // Verify coverage
-      const coverage = db.getFlowCoverage();
+      const coverage = db.flows.getCoverage();
       expect(coverage.totalInteractions).toBe(2);
       expect(coverage.coveredByFlows).toBe(2);
       expect(coverage.percentage).toBe(100.0);

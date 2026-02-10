@@ -235,7 +235,7 @@ export default class Annotate extends BaseLlmCommand {
 
       if (forceMode) {
         // Force mode: get all unannotated symbols regardless of dependencies
-        const result = db.getAllUnannotatedSymbols(primaryAspect, {
+        const result = db.graph.getAllUnannotated(primaryAspect, {
           limit: batchSize,
           kind: flags.kind as string | undefined,
           filePattern: flags.file as string | undefined,
@@ -246,7 +246,7 @@ export default class Annotate extends BaseLlmCommand {
         blockedCount = 0; // No blocking in force mode
       } else {
         // Normal mode: only get symbols with all dependencies annotated
-        const result = db.getReadyToUnderstandSymbols(primaryAspect, {
+        const result = db.dependencies.getReadySymbols(primaryAspect, {
           limit: batchSize,
           kind: flags.kind as string | undefined,
           filePattern: flags.file as string | undefined,
@@ -265,7 +265,7 @@ export default class Annotate extends BaseLlmCommand {
         }
         if (blockedCount > 0 && !forceMode) {
           // Check for circular dependencies
-          const cycles = db.findCycles(primaryAspect);
+          const cycles = db.graph.findCycles(primaryAspect);
 
           if (cycles.length === 0) {
             // No cycles found - truly blocked
@@ -286,7 +286,7 @@ export default class Annotate extends BaseLlmCommand {
           for (const cycle of cycles) {
             // Get full symbol info for cycle members
             const cycleSymbols: ReadySymbolInfo[] = cycle
-              .map((id) => db.getDefinitionById(id))
+              .map((id) => db.definitions.getById(id))
               .filter((def): def is NonNullable<typeof def> => def !== null)
               .map((def) => ({
                 id: def.id,
@@ -309,11 +309,11 @@ export default class Annotate extends BaseLlmCommand {
             const enhancedCycleSymbols = await this.enhanceSymbols(db, cycleSymbols, aspects, relationshipLimit);
 
             // Get current coverage for the prompt
-            const cycleCoverage = db.getAspectCoverage({
+            const cycleCoverage = db.metadata.getAspectCoverage({
               kind: flags.kind as string | undefined,
               filePattern: flags.file as string | undefined,
             });
-            const cycleTotalSymbols = db.getFilteredDefinitionCount({
+            const cycleTotalSymbols = db.metadata.getFilteredCount({
               kind: flags.kind as string | undefined,
               filePattern: flags.file as string | undefined,
             });
@@ -405,7 +405,7 @@ export default class Annotate extends BaseLlmCommand {
               }
 
               if (!dryRun) {
-                db.setDefinitionMetadata(row.symbolId, row.aspect, value);
+                db.metadata.set(row.symbolId, row.aspect, value);
               }
               cycleAnnotations++;
               totalAnnotations++;
@@ -427,7 +427,7 @@ export default class Annotate extends BaseLlmCommand {
               }
 
               if (!dryRun) {
-                db.setRelationshipAnnotation(fromId, toId, row.value);
+                db.relationships.set(fromId, toId, row.value);
               }
               cycleRelAnnotations++;
               totalRelationshipAnnotations++;
@@ -450,11 +450,11 @@ export default class Annotate extends BaseLlmCommand {
       const enhancedSymbols = await this.enhanceSymbols(db, symbols, aspects, relationshipLimit);
 
       // Get current coverage for the prompt
-      const allCoverage = db.getAspectCoverage({
+      const allCoverage = db.metadata.getAspectCoverage({
         kind: flags.kind as string | undefined,
         filePattern: flags.file as string | undefined,
       });
-      const totalSymbols = db.getFilteredDefinitionCount({
+      const totalSymbols = db.metadata.getFilteredCount({
         kind: flags.kind as string | undefined,
         filePattern: flags.file as string | undefined,
       });
@@ -617,7 +617,7 @@ export default class Annotate extends BaseLlmCommand {
 
         // Persist (unless dry-run)
         if (!dryRun) {
-          db.setDefinitionMetadata(symbolId, row.aspect, value);
+          db.metadata.set(symbolId, row.aspect, value);
         }
 
         iterationResults.push({
@@ -685,7 +685,7 @@ export default class Annotate extends BaseLlmCommand {
 
         // Persist (unless dry-run)
         if (!dryRun) {
-          db.setRelationshipAnnotation(fromId, toId, row.value);
+          db.relationships.set(fromId, toId, row.value);
         }
 
         iterationRelResults.push({
@@ -700,7 +700,7 @@ export default class Annotate extends BaseLlmCommand {
       }
 
       // Get updated coverage
-      const updatedCoverage = db.getAspectCoverage({
+      const updatedCoverage = db.metadata.getAspectCoverage({
         kind: flags.kind as string | undefined,
         filePattern: flags.file as string | undefined,
       });
@@ -710,8 +710,8 @@ export default class Annotate extends BaseLlmCommand {
       let annotatedRels = 0;
       let unannotatedRels = 0;
       try {
-        annotatedRels = db.getRelationshipAnnotationCount();
-        unannotatedRels = db.getUnannotatedRelationshipCount();
+        annotatedRels = db.relationships.getCount();
+        unannotatedRels = db.relationships.getUnannotatedCount();
       } catch {
         // Table doesn't exist - continue with zeros
       }
@@ -723,7 +723,7 @@ export default class Annotate extends BaseLlmCommand {
       };
 
       // Get ready/blocked counts
-      const updatedResult = db.getReadyToUnderstandSymbols(primaryAspect, {
+      const updatedResult = db.dependencies.getReadySymbols(primaryAspect, {
         limit: 1,
         kind: flags.kind as string | undefined,
         filePattern: flags.file as string | undefined,
@@ -774,7 +774,7 @@ export default class Annotate extends BaseLlmCommand {
 
       let retrySuccessCount = 0;
       for (const [fromId, toIds] of byFromId) {
-        const def = db.getDefinitionById(fromId);
+        const def = db.definitions.getById(fromId);
         if (!def) continue;
 
         const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
@@ -792,7 +792,7 @@ ${sourceCode}
 Relationships to annotate:
 ${toIds
   .map((toId) => {
-    const toDef = db.getDefinitionById(toId);
+    const toDef = db.definitions.getById(toId);
     return toDef ? `- ${def.name} → ${toDef.name} (${toDef.kind} in ${toDef.filePath})` : null;
   })
   .filter(Boolean)
@@ -825,7 +825,7 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
               const value = match[3].trim();
 
               if (retryFromId === fromId && toIds.includes(retryToId) && value.length >= 5) {
-                db.setRelationshipAnnotation(retryFromId, retryToId, value);
+                db.relationships.set(retryFromId, retryToId, value);
                 retrySuccessCount++;
                 totalRelationshipAnnotations++;
               }
@@ -842,11 +842,11 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
     }
 
     // Final summary
-    const finalCoverageData = db.getAspectCoverage({
+    const finalCoverageData = db.metadata.getAspectCoverage({
       kind: flags.kind as string | undefined,
       filePattern: flags.file as string | undefined,
     });
-    const totalSymbols = db.getFilteredDefinitionCount({
+    const totalSymbols = db.metadata.getFilteredCount({
       kind: flags.kind as string | undefined,
       filePattern: flags.file as string | undefined,
     });
@@ -856,8 +856,8 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
     let finalAnnotatedRels = 0;
     let finalUnannotatedRels = 0;
     try {
-      finalAnnotatedRels = db.getRelationshipAnnotationCount();
-      finalUnannotatedRels = db.getUnannotatedRelationshipCount();
+      finalAnnotatedRels = db.relationships.getCount();
+      finalUnannotatedRels = db.relationships.getUnannotatedCount();
     } catch {
       // Table doesn't exist - continue with zeros
     }
@@ -961,7 +961,7 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
         let fixed = 0;
         for (const issue of suspectPureIssues) {
           if (issue.definitionId) {
-            db.setDefinitionMetadata(issue.definitionId, 'pure', 'false');
+            db.metadata.set(issue.definitionId, 'pure', 'false');
             fixed++;
           }
         }
@@ -1033,10 +1033,10 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
       const sourceCode = await readSourceAsString(symbol.filePath, symbol.line, symbol.endLine);
 
       // Get dependencies with all their metadata
-      const deps = db.getDependenciesWithMetadata(symbol.id, aspects[0]);
+      const deps = db.dependencies.getWithMetadata(symbol.id, aspects[0]);
       const dependencies: DependencyContextEnhanced[] = deps.map((dep) => {
         // Get all metadata for this dependency
-        const metadata = db.getDefinitionMetadata(dep.id);
+        const metadata = db.metadata.get(dep.id);
 
         let domains: string[] | null = null;
         try {
@@ -1061,10 +1061,10 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
       });
 
       // Get unannotated relationships from this symbol (handle missing table)
-      let unannotatedRels: ReturnType<typeof db.getUnannotatedRelationships> = [];
+      let unannotatedRels: ReturnType<typeof db.relationships.getUnannotated> = [];
       try {
         const limit = relationshipLimit > 0 ? relationshipLimit : undefined;
-        unannotatedRels = db.getUnannotatedRelationships({ fromDefinitionId: symbol.id, limit });
+        unannotatedRels = db.relationships.getUnannotated({ fromDefinitionId: symbol.id, limit });
       } catch {
         // Table doesn't exist - continue with empty relationships
       }
@@ -1078,8 +1078,8 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
       }));
 
       // Get incoming dependencies (who uses this symbol)
-      const incomingDeps = db.getIncomingDependencies(symbol.id, 5);
-      const incomingDependencyCount = db.getIncomingDependencyCount(symbol.id);
+      const incomingDeps = db.dependencies.getIncoming(symbol.id, 5);
+      const incomingDependencyCount = db.dependencies.getIncomingCount(symbol.id);
       const incomingDependencies: IncomingDependencyContext[] = incomingDeps.map((inc) => ({
         id: inc.id,
         name: inc.name,
@@ -1088,7 +1088,7 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
       }));
 
       // Get the definition to check if it's exported
-      const defInfo = db.getDefinitionById(symbol.id);
+      const defInfo = db.definitions.getById(symbol.id);
       const isExported = defInfo?.isExported ?? false;
 
       enhanced.push({

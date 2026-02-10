@@ -29,17 +29,17 @@ export function checkAnnotationCoverage(db: IndexDatabase, aspects: string[]): C
   const issues: VerificationIssue[] = [];
   let missingCount = 0;
 
-  const totalDefinitions = db.getDefinitionCount();
+  const totalDefinitions = db.definitions.getCount();
   let annotatedDefinitions = totalDefinitions;
 
   for (const aspect of aspects) {
-    const missingIds = db.getDefinitionsWithoutMetadata(aspect);
+    const missingIds = db.metadata.getDefinitionsWithout(aspect);
     if (missingIds.length > 0) {
       annotatedDefinitions = Math.min(annotatedDefinitions, totalDefinitions - missingIds.length);
       missingCount += missingIds.length;
       // Report first 50 missing as individual issues
       for (const defId of missingIds.slice(0, 50)) {
-        const def = db.getDefinitionById(defId);
+        const def = db.definitions.getById(defId);
         if (def) {
           issues.push({
             definitionId: defId,
@@ -72,8 +72,8 @@ export function checkAnnotationCoverage(db: IndexDatabase, aspects: string[]): C
   let totalRelationships = 0;
   let annotatedRelationships = 0;
   try {
-    annotatedRelationships = db.getRelationshipAnnotationCount();
-    const unannotated = db.getUnannotatedRelationshipCount();
+    annotatedRelationships = db.relationships.getCount();
+    const unannotated = db.relationships.getUnannotatedCount();
     totalRelationships = annotatedRelationships + unannotated;
   } catch {
     // Table doesn't exist
@@ -101,13 +101,13 @@ function checkPureAnnotations(db: IndexDatabase): VerificationIssue[] {
   const issues: VerificationIssue[] = [];
 
   // Get all definitions that have pure = "true"
-  const pureTrueIds = db.getDefinitionsWithMetadata('pure');
+  const pureTrueIds = db.metadata.getDefinitionsWith('pure');
 
   for (const defId of pureTrueIds) {
-    const pureValue = db.getDefinitionMetadataValue(defId, 'pure');
+    const pureValue = db.metadata.getValue(defId, 'pure');
     if (pureValue !== 'true') continue;
 
-    const def = db.getDefinitionById(defId);
+    const def = db.definitions.getById(defId);
     if (!def) continue;
 
     // Skip types that are inherently pure
@@ -137,9 +137,9 @@ function checkPureAnnotations(db: IndexDatabase): VerificationIssue[] {
     // Gate 2: transitive impurity — check if any dependency has pure:false
     if (issues.every((i) => i.definitionId !== defId || i.category !== 'suspect-pure')) {
       try {
-        const deps = db.getDependenciesWithMetadata(defId, 'pure');
+        const deps = db.dependencies.getWithMetadata(defId, 'pure');
         for (const dep of deps) {
-          const depPure = db.getDefinitionMetadataValue(dep.id, 'pure');
+          const depPure = db.metadata.getValue(dep.id, 'pure');
           if (depPure === 'false') {
             issues.push({
               definitionId: def.id,
@@ -175,8 +175,8 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
   let annotatedRelationships = 0;
   let unannotatedCount = 0;
   try {
-    annotatedRelationships = db.getRelationshipAnnotationCount();
-    unannotatedCount = db.getUnannotatedRelationshipCount();
+    annotatedRelationships = db.relationships.getCount();
+    unannotatedCount = db.relationships.getUnannotatedCount();
   } catch {
     // Table doesn't exist
   }
@@ -192,7 +192,7 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
 
   // Duplicate target detection: extends/implements where same (from_id, type) links to multiple to_ids with same name
   try {
-    const allRels = db.getAllRelationshipAnnotations({ limit: 100000 });
+    const allRels = db.relationships.getAll({ limit: 100000 });
     const byFromAndType = new Map<string, Array<{ toId: number; toName: string }>>();
 
     for (const rel of allRels) {
@@ -239,7 +239,7 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
 
   // Stale file detection
   try {
-    const allFiles = db.getAllFiles();
+    const allFiles = db.files.getAll();
     for (const file of allFiles) {
       try {
         fs.accessSync(file.path);
@@ -261,28 +261,46 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
   // Missing extends: definitions where extends_name is set but no extends relationship exists
   try {
     const BUILTIN_BASE_CLASSES = new Set([
-      'Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError',
-      'URIError', 'EvalError', 'AggregateError',
-      'Array', 'Map', 'Set', 'WeakMap', 'WeakSet',
-      'RegExp', 'Promise', 'Proxy',
-      'Event', 'EventTarget', 'CustomEvent',
-      'HTMLElement', 'HTMLDivElement', 'HTMLInputElement',
-      'ReadableStream', 'WritableStream', 'TransformStream',
+      'Error',
+      'TypeError',
+      'RangeError',
+      'SyntaxError',
+      'ReferenceError',
+      'URIError',
+      'EvalError',
+      'AggregateError',
+      'Array',
+      'Map',
+      'Set',
+      'WeakMap',
+      'WeakSet',
+      'RegExp',
+      'Promise',
+      'Proxy',
+      'Event',
+      'EventTarget',
+      'CustomEvent',
+      'HTMLElement',
+      'HTMLDivElement',
+      'HTMLInputElement',
+      'ReadableStream',
+      'WritableStream',
+      'TransformStream',
       'EventEmitter',
     ]);
 
-    const allDefs = db.getAllDefinitions();
+    const allDefs = db.definitions.getAll();
     for (const def of allDefs) {
       if (!def.extendsName) continue;
 
       // Skip built-in base classes that have no definition in the DB
       if (BUILTIN_BASE_CLASSES.has(def.extendsName)) continue;
 
-      const relsFrom = db.getRelationshipsFrom(def.id);
+      const relsFrom = db.relationships.getFrom(def.id);
       const hasExtendsRel = relsFrom.some((r) => r.relationshipType === 'extends');
 
       if (!hasExtendsRel) {
-        const fullDef = db.getDefinitionById(def.id);
+        const fullDef = db.definitions.getById(def.id);
         issues.push({
           definitionId: def.id,
           definitionName: def.name,
@@ -300,7 +318,7 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
     // Ignore errors
   }
 
-  const totalDefinitions = db.getDefinitionCount();
+  const totalDefinitions = db.definitions.getCount();
   const passed = unannotatedCount === 0 && structuralIssueCount === 0;
 
   return {
@@ -328,11 +346,11 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
 function checkRelationshipTypeMismatches(db: IndexDatabase): VerificationIssue[] {
   const issues: VerificationIssue[] = [];
 
-  const allDefs = db.getAllDefinitions();
+  const allDefs = db.definitions.getAll();
 
   for (const def of allDefs) {
     // Get full definition details (includes implementsNames, extendsInterfaces)
-    const fullDef = db.getDefinitionById(def.id);
+    const fullDef = db.definitions.getById(def.id);
     if (!fullDef) continue;
 
     // Collect all inheritance target names
@@ -357,7 +375,7 @@ function checkRelationshipTypeMismatches(db: IndexDatabase): VerificationIssue[]
     if (extendsNames.size === 0 && implementsNames.size === 0) continue;
 
     // Get all relationships from this definition
-    const relsFrom = db.getRelationshipsFrom(def.id);
+    const relsFrom = db.relationships.getFrom(def.id);
 
     for (const rel of relsFrom) {
       if (rel.relationshipType !== 'uses') continue;
@@ -401,8 +419,8 @@ export function checkFlowQuality(db: IndexDatabase): CoverageCheckResult {
   const issues: VerificationIssue[] = [];
   let structuralIssueCount = 0;
 
-  const allFlows = db.getAllFlows();
-  const allModulesWithMembers = db.getAllModulesWithMembers();
+  const allFlows = db.flows.getAll();
+  const allModulesWithMembers = db.modules.getAllWithMembers();
   const moduleMap = new Map(allModulesWithMembers.map((m) => [m.id, m]));
 
   // Check 1 — orphan-entry-point: Flow references a module with no callable definitions
@@ -426,7 +444,7 @@ export function checkFlowQuality(db: IndexDatabase): CoverageCheckResult {
 
   // Check 2 — empty-flow: Flow has 0 steps
   for (const flow of allFlows) {
-    const steps = db.getFlowSteps(flow.id);
+    const steps = db.flows.getSteps(flow.id);
     if (steps.length === 0) {
       issues.push({
         severity: 'warning',
@@ -440,9 +458,9 @@ export function checkFlowQuality(db: IndexDatabase): CoverageCheckResult {
 
   // Check 3 — dangling-interaction: Flow step references a non-existent interaction
   for (const flow of allFlows) {
-    const steps = db.getFlowSteps(flow.id);
+    const steps = db.flows.getSteps(flow.id);
     for (const step of steps) {
-      const interaction = db.getInteractionById(step.interactionId);
+      const interaction = db.interactions.getById(step.interactionId);
       if (!interaction) {
         issues.push({
           severity: 'error',
@@ -474,12 +492,12 @@ export function checkFlowQuality(db: IndexDatabase): CoverageCheckResult {
   // Check 5 — uncovered-interactions: Interactions not covered by any flow (informational)
   const coveredInteractionIds = new Set<number>();
   for (const flow of allFlows) {
-    const steps = db.getFlowSteps(flow.id);
+    const steps = db.flows.getSteps(flow.id);
     for (const step of steps) {
       coveredInteractionIds.add(step.interactionId);
     }
   }
-  const allInteractions = db.getAllInteractions();
+  const allInteractions = db.interactions.getAll();
   const relevantInteractions = allInteractions.filter((i) => i.pattern !== 'test-internal');
   const uncovered = relevantInteractions.filter((i) => !coveredInteractionIds.has(i.id));
   if (uncovered.length > 0) {
@@ -527,13 +545,13 @@ export function checkModuleAssignments(db: IndexDatabase): CoverageCheckResult {
   const issues: VerificationIssue[] = [];
   let structuralIssueCount = 0;
 
-  const modules = db.getAllModules();
+  const modules = db.modules.getAll();
   if (modules.length === 0) {
     return {
       passed: true,
       issues: [],
       stats: {
-        totalDefinitions: db.getDefinitionCount(),
+        totalDefinitions: db.definitions.getCount(),
         annotatedDefinitions: 0,
         totalRelationships: 0,
         annotatedRelationships: 0,
@@ -543,10 +561,10 @@ export function checkModuleAssignments(db: IndexDatabase): CoverageCheckResult {
     };
   }
 
-  const testModuleIds = db.getTestModuleIds();
+  const testModuleIds = db.modules.getTestModuleIds();
 
   // Check 1: test-in-production — test file symbols assigned to non-test modules
-  const allModulesWithMembers = db.getAllModulesWithMembers();
+  const allModulesWithMembers = db.modules.getAllWithMembers();
   for (const mod of allModulesWithMembers) {
     if (testModuleIds.has(mod.id)) continue; // production module check only
 
@@ -592,7 +610,7 @@ export function checkModuleAssignments(db: IndexDatabase): CoverageCheckResult {
     }
   }
 
-  const totalDefinitions = db.getDefinitionCount();
+  const totalDefinitions = db.definitions.getCount();
   const passed = structuralIssueCount === 0;
 
   return {

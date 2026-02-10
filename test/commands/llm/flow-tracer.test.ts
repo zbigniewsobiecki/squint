@@ -427,9 +427,7 @@ describe('flow-tracer', () => {
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
       // Only one bridge step, not two
-      const bridgeSteps = flows[0].inferredSteps.filter(
-        (s) => s.fromModuleId === 2 && s.toModuleId === 3
-      );
+      const bridgeSteps = flows[0].inferredSteps.filter((s) => s.fromModuleId === 2 && s.toModuleId === 3);
       expect(bridgeSteps).toHaveLength(1);
     });
 

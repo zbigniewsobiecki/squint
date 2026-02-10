@@ -44,7 +44,7 @@ describe('IndexDatabase', () => {
 
   describe('files', () => {
     it('inserts a file and returns ID', () => {
-      const id = db.insertFile({
+      const id = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -55,14 +55,14 @@ describe('IndexDatabase', () => {
     });
 
     it('inserts multiple files with incrementing IDs', () => {
-      const id1 = db.insertFile({
+      const id1 = db.files.insert({
         path: '/project/a.ts',
         language: 'typescript',
         contentHash: computeHash('a'),
         sizeBytes: 10,
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
-      const id2 = db.insertFile({
+      const id2 = db.files.insert({
         path: '/project/b.ts',
         language: 'typescript',
         contentHash: computeHash('b'),
@@ -76,7 +76,7 @@ describe('IndexDatabase', () => {
 
   describe('definitions', () => {
     it('inserts a definition and returns ID', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -93,12 +93,12 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       };
 
-      const defId = db.insertDefinition(fileId, def);
+      const defId = db.files.insertDefinition(fileId, def);
       expect(defId).toBe(1);
     });
 
     it('counts definitions correctly', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -106,7 +106,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -115,7 +115,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'subtract',
         kind: 'function',
         isExported: true,
@@ -124,11 +124,11 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      expect(db.getDefinitionCount()).toBe(2);
+      expect(db.definitions.getCount()).toBe(2);
     });
 
     it('retrieves definition by name', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -136,7 +136,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defId = db.insertDefinition(fileId, {
+      const defId = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -150,7 +150,7 @@ describe('IndexDatabase', () => {
     });
 
     it('returns null for non-existent definition', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -165,7 +165,7 @@ describe('IndexDatabase', () => {
 
   describe('references', () => {
     it('inserts a reference and returns ID', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -187,7 +187,7 @@ describe('IndexDatabase', () => {
     });
 
     it('counts references correctly', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -219,7 +219,7 @@ describe('IndexDatabase', () => {
 
   describe('symbols and usages', () => {
     it('inserts symbols and usages', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -256,7 +256,7 @@ describe('IndexDatabase', () => {
     });
 
     it('counts usages correctly', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -290,7 +290,7 @@ describe('IndexDatabase', () => {
 
   describe('callsite queries', () => {
     it('stores and retrieves callsite metadata', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -326,7 +326,7 @@ describe('IndexDatabase', () => {
 
       db.insertUsage(symbolId, usage);
 
-      const callsites = db.getCallsitesForFile(fileId);
+      const callsites = db.dependencies.getCallsitesForFile(fileId);
       expect(callsites).toHaveLength(1);
       expect(callsites[0].argumentCount).toBe(2);
       expect(callsites[0].isMethodCall).toBe(false);
@@ -335,7 +335,7 @@ describe('IndexDatabase', () => {
     });
 
     it('stores method call with receiver name', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -370,14 +370,14 @@ describe('IndexDatabase', () => {
         },
       });
 
-      const callsites = db.getCallsitesForFile(fileId);
+      const callsites = db.dependencies.getCallsitesForFile(fileId);
       expect(callsites).toHaveLength(1);
       expect(callsites[0].isMethodCall).toBe(true);
       expect(callsites[0].receiverName).toBe('api');
     });
 
     it('stores constructor call', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -411,14 +411,14 @@ describe('IndexDatabase', () => {
         },
       });
 
-      const callsites = db.getCallsitesForFile(fileId);
+      const callsites = db.dependencies.getCallsitesForFile(fileId);
       expect(callsites).toHaveLength(1);
       expect(callsites[0].isConstructorCall).toBe(true);
       expect(callsites[0].argumentCount).toBe(3);
     });
 
     it('getCallsiteCount returns count of callsites only', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -465,7 +465,7 @@ describe('IndexDatabase', () => {
 
     it('getCallsites filters by definition ID', () => {
       // Create two files
-      const utilsFileId = db.insertFile({
+      const utilsFileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('utils'),
@@ -473,7 +473,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const indexFileId = db.insertFile({
+      const indexFileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('index'),
@@ -482,7 +482,7 @@ describe('IndexDatabase', () => {
       });
 
       // Create a definition in utils.ts
-      const defId = db.insertDefinition(utilsFileId, {
+      const defId = db.files.insertDefinition(utilsFileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -520,7 +520,7 @@ describe('IndexDatabase', () => {
         },
       });
 
-      const callsites = db.getCallsites(defId);
+      const callsites = db.dependencies.getCallsites(defId);
       expect(callsites).toHaveLength(1);
       expect(callsites[0].symbolName).toBe('add');
       expect(callsites[0].definitionId).toBe(defId);
@@ -530,7 +530,7 @@ describe('IndexDatabase', () => {
 
   describe('definition metadata', () => {
     it('sets and gets metadata on a definition', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -538,7 +538,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defId = db.insertDefinition(fileId, {
+      const defId = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -547,10 +547,10 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      db.setDefinitionMetadata(defId, 'purpose', 'Adds two numbers');
-      db.setDefinitionMetadata(defId, 'status', 'stable');
+      db.metadata.set(defId, 'purpose', 'Adds two numbers');
+      db.metadata.set(defId, 'status', 'stable');
 
-      const metadata = db.getDefinitionMetadata(defId);
+      const metadata = db.metadata.get(defId);
       expect(metadata).toEqual({
         purpose: 'Adds two numbers',
         status: 'stable',
@@ -558,7 +558,7 @@ describe('IndexDatabase', () => {
     });
 
     it('returns empty object when no metadata exists', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -566,7 +566,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defId = db.insertDefinition(fileId, {
+      const defId = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -575,12 +575,12 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const metadata = db.getDefinitionMetadata(defId);
+      const metadata = db.metadata.get(defId);
       expect(metadata).toEqual({});
     });
 
     it('overwrites existing metadata key', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -588,7 +588,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defId = db.insertDefinition(fileId, {
+      const defId = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -597,15 +597,15 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      db.setDefinitionMetadata(defId, 'status', 'draft');
-      db.setDefinitionMetadata(defId, 'status', 'stable');
+      db.metadata.set(defId, 'status', 'draft');
+      db.metadata.set(defId, 'status', 'stable');
 
-      const metadata = db.getDefinitionMetadata(defId);
+      const metadata = db.metadata.get(defId);
       expect(metadata.status).toBe('stable');
     });
 
     it('removes metadata key', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -613,7 +613,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defId = db.insertDefinition(fileId, {
+      const defId = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -622,18 +622,18 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      db.setDefinitionMetadata(defId, 'purpose', 'Adds numbers');
-      db.setDefinitionMetadata(defId, 'status', 'stable');
+      db.metadata.set(defId, 'purpose', 'Adds numbers');
+      db.metadata.set(defId, 'status', 'stable');
 
-      const removed = db.removeDefinitionMetadata(defId, 'purpose');
+      const removed = db.metadata.remove(defId, 'purpose');
       expect(removed).toBe(true);
 
-      const metadata = db.getDefinitionMetadata(defId);
+      const metadata = db.metadata.get(defId);
       expect(metadata).toEqual({ status: 'stable' });
     });
 
     it('returns false when removing non-existent key', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -641,7 +641,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defId = db.insertDefinition(fileId, {
+      const defId = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -650,12 +650,12 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const removed = db.removeDefinitionMetadata(defId, 'nonexistent');
+      const removed = db.metadata.remove(defId, 'nonexistent');
       expect(removed).toBe(false);
     });
 
     it('gets definitions with a specific metadata key', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -663,7 +663,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const def1 = db.insertDefinition(fileId, {
+      const def1 = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -672,7 +672,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const def2 = db.insertDefinition(fileId, {
+      const def2 = db.files.insertDefinition(fileId, {
         name: 'subtract',
         kind: 'function',
         isExported: true,
@@ -681,7 +681,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const def3 = db.insertDefinition(fileId, {
+      const def3 = db.files.insertDefinition(fileId, {
         name: 'multiply',
         kind: 'function',
         isExported: true,
@@ -690,15 +690,15 @@ describe('IndexDatabase', () => {
         endPosition: { row: 8, column: 1 },
       });
 
-      db.setDefinitionMetadata(def1, 'documented', 'yes');
-      db.setDefinitionMetadata(def3, 'documented', 'yes');
+      db.metadata.set(def1, 'documented', 'yes');
+      db.metadata.set(def3, 'documented', 'yes');
 
-      const withDocumented = db.getDefinitionsWithMetadata('documented');
+      const withDocumented = db.metadata.getDefinitionsWith('documented');
       expect(withDocumented.sort()).toEqual([def1, def3].sort());
     });
 
     it('gets definitions without a specific metadata key', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -706,7 +706,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const def1 = db.insertDefinition(fileId, {
+      const def1 = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -715,7 +715,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const def2 = db.insertDefinition(fileId, {
+      const def2 = db.files.insertDefinition(fileId, {
         name: 'subtract',
         kind: 'function',
         isExported: true,
@@ -724,7 +724,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const def3 = db.insertDefinition(fileId, {
+      const def3 = db.files.insertDefinition(fileId, {
         name: 'multiply',
         kind: 'function',
         isExported: true,
@@ -733,14 +733,14 @@ describe('IndexDatabase', () => {
         endPosition: { row: 8, column: 1 },
       });
 
-      db.setDefinitionMetadata(def1, 'documented', 'yes');
+      db.metadata.set(def1, 'documented', 'yes');
 
-      const withoutDocumented = db.getDefinitionsWithoutMetadata('documented');
+      const withoutDocumented = db.metadata.getDefinitionsWithout('documented');
       expect(withoutDocumented.sort()).toEqual([def2, def3].sort());
     });
 
     it('returns empty array when no definitions have the metadata key', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -748,7 +748,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -757,12 +757,12 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const withKey = db.getDefinitionsWithMetadata('nonexistent');
+      const withKey = db.metadata.getDefinitionsWith('nonexistent');
       expect(withKey).toEqual([]);
     });
 
     it('returns all definitions when none have the metadata key', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -770,7 +770,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const def1 = db.insertDefinition(fileId, {
+      const def1 = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -779,7 +779,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const def2 = db.insertDefinition(fileId, {
+      const def2 = db.files.insertDefinition(fileId, {
         name: 'subtract',
         kind: 'function',
         isExported: true,
@@ -788,12 +788,12 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const withoutKey = db.getDefinitionsWithoutMetadata('nonexistent');
+      const withoutKey = db.metadata.getDefinitionsWithout('nonexistent');
       expect(withoutKey.sort()).toEqual([def1, def2].sort());
     });
 
     it('keeps metadata isolated between definitions', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -801,7 +801,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const def1 = db.insertDefinition(fileId, {
+      const def1 = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -810,7 +810,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const def2 = db.insertDefinition(fileId, {
+      const def2 = db.files.insertDefinition(fileId, {
         name: 'subtract',
         kind: 'function',
         isExported: true,
@@ -819,15 +819,15 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      db.setDefinitionMetadata(def1, 'purpose', 'Add numbers');
-      db.setDefinitionMetadata(def2, 'purpose', 'Subtract numbers');
+      db.metadata.set(def1, 'purpose', 'Add numbers');
+      db.metadata.set(def2, 'purpose', 'Subtract numbers');
 
-      expect(db.getDefinitionMetadata(def1).purpose).toBe('Add numbers');
-      expect(db.getDefinitionMetadata(def2).purpose).toBe('Subtract numbers');
+      expect(db.metadata.get(def1).purpose).toBe('Add numbers');
+      expect(db.metadata.get(def2).purpose).toBe('Subtract numbers');
     });
 
     it('getMetadataKeys returns all unique metadata keys', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -835,7 +835,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const def1 = db.insertDefinition(fileId, {
+      const def1 = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -844,7 +844,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const def2 = db.insertDefinition(fileId, {
+      const def2 = db.files.insertDefinition(fileId, {
         name: 'subtract',
         kind: 'function',
         isExported: true,
@@ -853,17 +853,17 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      db.setDefinitionMetadata(def1, 'purpose', 'Add numbers');
-      db.setDefinitionMetadata(def1, 'owner', 'team-a');
-      db.setDefinitionMetadata(def2, 'purpose', 'Subtract numbers');
-      db.setDefinitionMetadata(def2, 'status', 'stable');
+      db.metadata.set(def1, 'purpose', 'Add numbers');
+      db.metadata.set(def1, 'owner', 'team-a');
+      db.metadata.set(def2, 'purpose', 'Subtract numbers');
+      db.metadata.set(def2, 'status', 'stable');
 
-      const keys = db.getMetadataKeys();
+      const keys = db.metadata.getKeys();
       expect(keys.sort()).toEqual(['owner', 'purpose', 'status']);
     });
 
     it('getMetadataKeys returns empty array when no metadata exists', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -871,7 +871,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -880,12 +880,12 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const keys = db.getMetadataKeys();
+      const keys = db.metadata.getKeys();
       expect(keys).toEqual([]);
     });
 
     it('getAspectCoverage returns coverage stats for all aspects', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -893,7 +893,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const def1 = db.insertDefinition(fileId, {
+      const def1 = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -902,7 +902,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const def2 = db.insertDefinition(fileId, {
+      const def2 = db.files.insertDefinition(fileId, {
         name: 'subtract',
         kind: 'function',
         isExported: true,
@@ -911,7 +911,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const def3 = db.insertDefinition(fileId, {
+      const def3 = db.files.insertDefinition(fileId, {
         name: 'multiply',
         kind: 'function',
         isExported: true,
@@ -921,11 +921,11 @@ describe('IndexDatabase', () => {
       });
 
       // Set metadata: purpose on 2/3, owner on 1/3
-      db.setDefinitionMetadata(def1, 'purpose', 'Add numbers');
-      db.setDefinitionMetadata(def2, 'purpose', 'Subtract numbers');
-      db.setDefinitionMetadata(def1, 'owner', 'team-a');
+      db.metadata.set(def1, 'purpose', 'Add numbers');
+      db.metadata.set(def2, 'purpose', 'Subtract numbers');
+      db.metadata.set(def1, 'owner', 'team-a');
 
-      const coverage = db.getAspectCoverage();
+      const coverage = db.metadata.getAspectCoverage();
       expect(coverage).toHaveLength(2);
 
       const purposeCoverage = coverage.find((c) => c.aspect === 'purpose');
@@ -942,12 +942,12 @@ describe('IndexDatabase', () => {
     });
 
     it('getAspectCoverage returns empty array when no definitions exist', () => {
-      const coverage = db.getAspectCoverage();
+      const coverage = db.metadata.getAspectCoverage();
       expect(coverage).toEqual([]);
     });
 
     it('getAspectCoverage filters by kind', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -955,7 +955,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const func1 = db.insertDefinition(fileId, {
+      const func1 = db.files.insertDefinition(fileId, {
         name: 'add',
         kind: 'function',
         isExported: true,
@@ -964,7 +964,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const class1 = db.insertDefinition(fileId, {
+      const class1 = db.files.insertDefinition(fileId, {
         name: 'Calculator',
         kind: 'class',
         isExported: true,
@@ -973,11 +973,11 @@ describe('IndexDatabase', () => {
         endPosition: { row: 10, column: 1 },
       });
 
-      db.setDefinitionMetadata(func1, 'purpose', 'Add numbers');
-      db.setDefinitionMetadata(class1, 'purpose', 'Calculator class');
+      db.metadata.set(func1, 'purpose', 'Add numbers');
+      db.metadata.set(class1, 'purpose', 'Calculator class');
 
       // Filter to only functions
-      const coverage = db.getAspectCoverage({ kind: 'function' });
+      const coverage = db.metadata.getAspectCoverage({ kind: 'function' });
       expect(coverage).toHaveLength(1);
       expect(coverage[0].covered).toBe(1);
       expect(coverage[0].total).toBe(1);
@@ -985,7 +985,7 @@ describe('IndexDatabase', () => {
     });
 
     it('getAspectCoverage filters by file pattern', () => {
-      const file1 = db.insertFile({
+      const file1 = db.files.insert({
         path: '/project/src/parser/utils.ts',
         language: 'typescript',
         contentHash: computeHash('content1'),
@@ -993,7 +993,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const file2 = db.insertFile({
+      const file2 = db.files.insert({
         path: '/project/src/db/database.ts',
         language: 'typescript',
         contentHash: computeHash('content2'),
@@ -1001,7 +1001,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const def1 = db.insertDefinition(file1, {
+      const def1 = db.files.insertDefinition(file1, {
         name: 'parseFile',
         kind: 'function',
         isExported: true,
@@ -1010,7 +1010,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const def2 = db.insertDefinition(file2, {
+      const def2 = db.files.insertDefinition(file2, {
         name: 'insertRow',
         kind: 'function',
         isExported: true,
@@ -1019,11 +1019,11 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      db.setDefinitionMetadata(def1, 'purpose', 'Parse files');
-      db.setDefinitionMetadata(def2, 'purpose', 'Insert database row');
+      db.metadata.set(def1, 'purpose', 'Parse files');
+      db.metadata.set(def2, 'purpose', 'Insert database row');
 
       // Filter to parser directory
-      const coverage = db.getAspectCoverage({ filePattern: 'parser' });
+      const coverage = db.metadata.getAspectCoverage({ filePattern: 'parser' });
       expect(coverage).toHaveLength(1);
       expect(coverage[0].covered).toBe(1);
       expect(coverage[0].total).toBe(1);
@@ -1034,7 +1034,7 @@ describe('IndexDatabase', () => {
   describe('dependency queries', () => {
     it('getDependenciesWithMetadata returns dependencies with aspect status', () => {
       // Create two files
-      const utilsFileId = db.insertFile({
+      const utilsFileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('utils'),
@@ -1042,7 +1042,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const indexFileId = db.insertFile({
+      const indexFileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('index'),
@@ -1051,7 +1051,7 @@ describe('IndexDatabase', () => {
       });
 
       // Create definitions in utils.ts
-      const helperDefId = db.insertDefinition(utilsFileId, {
+      const helperDefId = db.files.insertDefinition(utilsFileId, {
         name: 'helper',
         kind: 'function',
         isExported: true,
@@ -1060,7 +1060,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const utilDefId = db.insertDefinition(utilsFileId, {
+      const utilDefId = db.files.insertDefinition(utilsFileId, {
         name: 'util',
         kind: 'function',
         isExported: true,
@@ -1070,7 +1070,7 @@ describe('IndexDatabase', () => {
       });
 
       // Create main function in index.ts that uses both
-      const mainDefId = db.insertDefinition(indexFileId, {
+      const mainDefId = db.files.insertDefinition(indexFileId, {
         name: 'main',
         kind: 'function',
         isExported: true,
@@ -1116,10 +1116,10 @@ describe('IndexDatabase', () => {
       });
 
       // Set metadata on one dependency only
-      db.setDefinitionMetadata(helperDefId, 'purpose', 'A helper function');
+      db.metadata.set(helperDefId, 'purpose', 'A helper function');
 
       // Get dependencies with metadata status
-      const deps = db.getDependenciesWithMetadata(mainDefId, 'purpose');
+      const deps = db.dependencies.getWithMetadata(mainDefId, 'purpose');
       expect(deps).toHaveLength(2);
 
       const helperDep = deps.find((d) => d.name === 'helper');
@@ -1134,7 +1134,7 @@ describe('IndexDatabase', () => {
     });
 
     it('getDependenciesWithMetadata returns empty array when no dependencies', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/simple.ts',
         language: 'typescript',
         contentHash: computeHash('simple'),
@@ -1142,7 +1142,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defId = db.insertDefinition(fileId, {
+      const defId = db.files.insertDefinition(fileId, {
         name: 'standalone',
         kind: 'function',
         isExported: true,
@@ -1151,13 +1151,13 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const deps = db.getDependenciesWithMetadata(defId, 'purpose');
+      const deps = db.dependencies.getWithMetadata(defId, 'purpose');
       expect(deps).toEqual([]);
     });
 
     it('getUnmetDependencies returns only dependencies missing the aspect', () => {
       // Setup similar to above
-      const utilsFileId = db.insertFile({
+      const utilsFileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('utils'),
@@ -1165,7 +1165,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const indexFileId = db.insertFile({
+      const indexFileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('index'),
@@ -1173,7 +1173,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const helperDefId = db.insertDefinition(utilsFileId, {
+      const helperDefId = db.files.insertDefinition(utilsFileId, {
         name: 'helper',
         kind: 'function',
         isExported: true,
@@ -1182,7 +1182,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const utilDefId = db.insertDefinition(utilsFileId, {
+      const utilDefId = db.files.insertDefinition(utilsFileId, {
         name: 'util',
         kind: 'function',
         isExported: true,
@@ -1191,7 +1191,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const mainDefId = db.insertDefinition(indexFileId, {
+      const mainDefId = db.files.insertDefinition(indexFileId, {
         name: 'main',
         kind: 'function',
         isExported: true,
@@ -1234,16 +1234,16 @@ describe('IndexDatabase', () => {
       });
 
       // Set aspect on helper only
-      db.setDefinitionMetadata(helperDefId, 'purpose', 'A helper function');
+      db.metadata.set(helperDefId, 'purpose', 'A helper function');
 
       // Get unmet dependencies
-      const unmet = db.getUnmetDependencies(mainDefId, 'purpose');
+      const unmet = db.dependencies.getUnmet(mainDefId, 'purpose');
       expect(unmet).toHaveLength(1);
       expect(unmet[0].name).toBe('util');
     });
 
     it('getUnmetDependencies returns empty array when all deps have aspect', () => {
-      const utilsFileId = db.insertFile({
+      const utilsFileId = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('utils'),
@@ -1251,7 +1251,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const indexFileId = db.insertFile({
+      const indexFileId = db.files.insert({
         path: '/project/index.ts',
         language: 'typescript',
         contentHash: computeHash('index'),
@@ -1259,7 +1259,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const helperDefId = db.insertDefinition(utilsFileId, {
+      const helperDefId = db.files.insertDefinition(utilsFileId, {
         name: 'helper',
         kind: 'function',
         isExported: true,
@@ -1268,7 +1268,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const mainDefId = db.insertDefinition(indexFileId, {
+      const mainDefId = db.files.insertDefinition(indexFileId, {
         name: 'main',
         kind: 'function',
         isExported: true,
@@ -1299,15 +1299,15 @@ describe('IndexDatabase', () => {
       });
 
       // Set aspect on all dependencies
-      db.setDefinitionMetadata(helperDefId, 'purpose', 'A helper function');
+      db.metadata.set(helperDefId, 'purpose', 'A helper function');
 
-      const unmet = db.getUnmetDependencies(mainDefId, 'purpose');
+      const unmet = db.dependencies.getUnmet(mainDefId, 'purpose');
       expect(unmet).toEqual([]);
     });
 
     it('getPrerequisiteChain returns topologically sorted unmet deps', () => {
       // Create a chain: main -> func1 -> func2 -> func3
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/chain.ts',
         language: 'typescript',
         contentHash: computeHash('chain'),
@@ -1315,7 +1315,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const func3Id = db.insertDefinition(fileId, {
+      const func3Id = db.files.insertDefinition(fileId, {
         name: 'func3',
         kind: 'function',
         isExported: true,
@@ -1324,7 +1324,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const func2Id = db.insertDefinition(fileId, {
+      const func2Id = db.files.insertDefinition(fileId, {
         name: 'func2',
         kind: 'function',
         isExported: true,
@@ -1333,7 +1333,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 6, column: 1 },
       });
 
-      const func1Id = db.insertDefinition(fileId, {
+      const func1Id = db.files.insertDefinition(fileId, {
         name: 'func1',
         kind: 'function',
         isExported: true,
@@ -1342,7 +1342,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 10, column: 1 },
       });
 
-      const mainId = db.insertDefinition(fileId, {
+      const mainId = db.files.insertDefinition(fileId, {
         name: 'main',
         kind: 'function',
         isExported: true,
@@ -1407,7 +1407,7 @@ describe('IndexDatabase', () => {
       });
 
       // Get prerequisite chain for main
-      const prereqs = db.getPrerequisiteChain(mainId, 'purpose');
+      const prereqs = db.dependencies.getPrerequisiteChain(mainId, 'purpose', (id) => db.definitions.getById(id));
 
       // Should return func3, func2, func1 in order (leaves first)
       expect(prereqs.length).toBeGreaterThanOrEqual(1);
@@ -1417,7 +1417,7 @@ describe('IndexDatabase', () => {
     });
 
     it('getPrerequisiteChain returns empty when no unmet deps', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/simple.ts',
         language: 'typescript',
         contentHash: computeHash('simple'),
@@ -1425,7 +1425,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defId = db.insertDefinition(fileId, {
+      const defId = db.files.insertDefinition(fileId, {
         name: 'standalone',
         kind: 'function',
         isExported: true,
@@ -1434,13 +1434,13 @@ describe('IndexDatabase', () => {
         endPosition: { row: 2, column: 1 },
       });
 
-      const prereqs = db.getPrerequisiteChain(defId, 'purpose');
+      const prereqs = db.dependencies.getPrerequisiteChain(defId, 'purpose', (id) => db.definitions.getById(id));
       expect(prereqs).toEqual([]);
     });
 
     it('getPrerequisiteChain handles circular dependencies gracefully', () => {
       // Create circular: funcA -> funcB -> funcA
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/circular.ts',
         language: 'typescript',
         contentHash: computeHash('circular'),
@@ -1448,7 +1448,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const funcAId = db.insertDefinition(fileId, {
+      const funcAId = db.files.insertDefinition(fileId, {
         name: 'funcA',
         kind: 'function',
         isExported: true,
@@ -1457,7 +1457,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const funcBId = db.insertDefinition(fileId, {
+      const funcBId = db.files.insertDefinition(fileId, {
         name: 'funcB',
         kind: 'function',
         isExported: true,
@@ -1504,7 +1504,7 @@ describe('IndexDatabase', () => {
       });
 
       // Should not throw or infinite loop
-      const prereqs = db.getPrerequisiteChain(funcAId, 'purpose');
+      const prereqs = db.dependencies.getPrerequisiteChain(funcAId, 'purpose', (id) => db.definitions.getById(id));
       // Should include funcB (and handle the cycle)
       expect(prereqs.length).toBeLessThanOrEqual(2);
     });
@@ -1512,7 +1512,7 @@ describe('IndexDatabase', () => {
 
   describe('inheritance queries', () => {
     it('stores and retrieves class extends relationship', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/animal.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -1520,7 +1520,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'Dog',
         kind: 'class',
         isExported: true,
@@ -1530,14 +1530,14 @@ describe('IndexDatabase', () => {
         extends: 'Animal',
       });
 
-      const subclasses = db.getSubclasses('Animal');
+      const subclasses = db.definitions.getSubclasses('Animal');
       expect(subclasses).toHaveLength(1);
       expect(subclasses[0].name).toBe('Dog');
       expect(subclasses[0].extends).toBe('Animal');
     });
 
     it('stores and retrieves multiple subclasses', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/animals.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -1545,7 +1545,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'Dog',
         kind: 'class',
         isExported: true,
@@ -1555,7 +1555,7 @@ describe('IndexDatabase', () => {
         extends: 'Animal',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'Cat',
         kind: 'class',
         isExported: true,
@@ -1565,7 +1565,7 @@ describe('IndexDatabase', () => {
         extends: 'Animal',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'Bird',
         kind: 'class',
         isExported: true,
@@ -1575,13 +1575,13 @@ describe('IndexDatabase', () => {
         extends: 'Animal',
       });
 
-      const subclasses = db.getSubclasses('Animal');
+      const subclasses = db.definitions.getSubclasses('Animal');
       expect(subclasses).toHaveLength(3);
       expect(subclasses.map((s) => s.name).sort()).toEqual(['Bird', 'Cat', 'Dog']);
     });
 
     it('stores and retrieves implements relationship', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/shapes.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -1589,7 +1589,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'Circle',
         kind: 'class',
         isExported: true,
@@ -1600,18 +1600,18 @@ describe('IndexDatabase', () => {
         implements: ['Drawable', 'Resizable'],
       });
 
-      const drawableImpls = db.getImplementations('Drawable');
+      const drawableImpls = db.definitions.getImplementations('Drawable');
       expect(drawableImpls).toHaveLength(1);
       expect(drawableImpls[0].name).toBe('Circle');
       expect(drawableImpls[0].implements).toEqual(['Drawable', 'Resizable']);
 
-      const resizableImpls = db.getImplementations('Resizable');
+      const resizableImpls = db.definitions.getImplementations('Resizable');
       expect(resizableImpls).toHaveLength(1);
       expect(resizableImpls[0].name).toBe('Circle');
     });
 
     it('stores and retrieves interface extends relationship', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/interfaces.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -1619,7 +1619,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'Combined',
         kind: 'interface',
         isExported: true,
@@ -1630,21 +1630,21 @@ describe('IndexDatabase', () => {
       });
 
       // We can verify the data is stored correctly by checking getDefinitionCount
-      expect(db.getDefinitionCount()).toBe(1);
+      expect(db.definitions.getCount()).toBe(1);
     });
 
     it('returns empty array when no subclasses exist', () => {
-      const subclasses = db.getSubclasses('NonExistentClass');
+      const subclasses = db.definitions.getSubclasses('NonExistentClass');
       expect(subclasses).toHaveLength(0);
     });
 
     it('returns empty array when no implementations exist', () => {
-      const implementations = db.getImplementations('NonExistentInterface');
+      const implementations = db.definitions.getImplementations('NonExistentInterface');
       expect(implementations).toHaveLength(0);
     });
 
     it('correctly stores class with no inheritance', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/simple.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -1652,7 +1652,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'Simple',
         kind: 'class',
         isExported: true,
@@ -1662,12 +1662,12 @@ describe('IndexDatabase', () => {
       });
 
       // Class with no extends should not appear in any subclass query
-      const subclasses = db.getSubclasses('Simple');
+      const subclasses = db.definitions.getSubclasses('Simple');
       expect(subclasses).toHaveLength(0);
     });
 
     it('handles class that both extends and implements', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/complex.ts',
         language: 'typescript',
         contentHash: computeHash('content'),
@@ -1675,7 +1675,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'ComplexClass',
         kind: 'class',
         isExported: true,
@@ -1686,17 +1686,17 @@ describe('IndexDatabase', () => {
         implements: ['InterfaceA', 'InterfaceB'],
       });
 
-      const subclasses = db.getSubclasses('BaseClass');
+      const subclasses = db.definitions.getSubclasses('BaseClass');
       expect(subclasses).toHaveLength(1);
       expect(subclasses[0].name).toBe('ComplexClass');
       expect(subclasses[0].extends).toBe('BaseClass');
       expect(subclasses[0].implements).toEqual(['InterfaceA', 'InterfaceB']);
 
-      const implsA = db.getImplementations('InterfaceA');
+      const implsA = db.definitions.getImplementations('InterfaceA');
       expect(implsA).toHaveLength(1);
       expect(implsA[0].name).toBe('ComplexClass');
 
-      const implsB = db.getImplementations('InterfaceB');
+      const implsB = db.definitions.getImplementations('InterfaceB');
       expect(implsB).toHaveLength(1);
       expect(implsB[0].name).toBe('ComplexClass');
     });
@@ -1704,7 +1704,7 @@ describe('IndexDatabase', () => {
 
   describe('findCycles', () => {
     it('returns empty array when no cycles exist', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/nocycles.ts',
         language: 'typescript',
         contentHash: computeHash('nocycles'),
@@ -1713,7 +1713,7 @@ describe('IndexDatabase', () => {
       });
 
       // Create a linear chain: A -> B -> C (no cycle)
-      const defA = db.insertDefinition(fileId, {
+      const defA = db.files.insertDefinition(fileId, {
         name: 'funcA',
         kind: 'function',
         isExported: true,
@@ -1722,7 +1722,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const defB = db.insertDefinition(fileId, {
+      const defB = db.files.insertDefinition(fileId, {
         name: 'funcB',
         kind: 'function',
         isExported: true,
@@ -1731,7 +1731,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 11, column: 1 },
       });
 
-      const defC = db.insertDefinition(fileId, {
+      const defC = db.files.insertDefinition(fileId, {
         name: 'funcC',
         kind: 'function',
         isExported: true,
@@ -1777,12 +1777,12 @@ describe('IndexDatabase', () => {
         context: 'call_expression',
       });
 
-      const cycles = db.findCycles('purpose');
+      const cycles = db.graph.findCycles('purpose');
       expect(cycles).toEqual([]);
     });
 
     it('detects simple A↔B cycle', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/cycle.ts',
         language: 'typescript',
         contentHash: computeHash('cycle'),
@@ -1790,7 +1790,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defA = db.insertDefinition(fileId, {
+      const defA = db.files.insertDefinition(fileId, {
         name: 'funcA',
         kind: 'function',
         isExported: true,
@@ -1799,7 +1799,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const defB = db.insertDefinition(fileId, {
+      const defB = db.files.insertDefinition(fileId, {
         name: 'funcB',
         kind: 'function',
         isExported: true,
@@ -1845,14 +1845,14 @@ describe('IndexDatabase', () => {
         context: 'call_expression',
       });
 
-      const cycles = db.findCycles('purpose');
+      const cycles = db.graph.findCycles('purpose');
       expect(cycles).toHaveLength(1);
       expect(cycles[0]).toHaveLength(2);
       expect(cycles[0].sort()).toEqual([defA, defB].sort());
     });
 
     it('detects larger cycle A→B→C→A', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/largecycle.ts',
         language: 'typescript',
         contentHash: computeHash('largecycle'),
@@ -1860,7 +1860,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defA = db.insertDefinition(fileId, {
+      const defA = db.files.insertDefinition(fileId, {
         name: 'funcA',
         kind: 'function',
         isExported: true,
@@ -1869,7 +1869,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const defB = db.insertDefinition(fileId, {
+      const defB = db.files.insertDefinition(fileId, {
         name: 'funcB',
         kind: 'function',
         isExported: true,
@@ -1878,7 +1878,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 11, column: 1 },
       });
 
-      const defC = db.insertDefinition(fileId, {
+      const defC = db.files.insertDefinition(fileId, {
         name: 'funcC',
         kind: 'function',
         isExported: true,
@@ -1942,14 +1942,14 @@ describe('IndexDatabase', () => {
         context: 'call_expression',
       });
 
-      const cycles = db.findCycles('purpose');
+      const cycles = db.graph.findCycles('purpose');
       expect(cycles).toHaveLength(1);
       expect(cycles[0]).toHaveLength(3);
       expect(cycles[0].sort()).toEqual([defA, defB, defC].sort());
     });
 
     it('only includes unannotated symbols in cycles', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/partial.ts',
         language: 'typescript',
         contentHash: computeHash('partial'),
@@ -1957,7 +1957,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defA = db.insertDefinition(fileId, {
+      const defA = db.files.insertDefinition(fileId, {
         name: 'funcA',
         kind: 'function',
         isExported: true,
@@ -1966,7 +1966,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const defB = db.insertDefinition(fileId, {
+      const defB = db.files.insertDefinition(fileId, {
         name: 'funcB',
         kind: 'function',
         isExported: true,
@@ -2005,15 +2005,15 @@ describe('IndexDatabase', () => {
       db.insertUsage(symA, { position: { row: 8, column: 10 }, context: 'call_expression' });
 
       // Annotate one symbol
-      db.setDefinitionMetadata(defA, 'purpose', 'Test purpose');
+      db.metadata.set(defA, 'purpose', 'Test purpose');
 
       // Now only defB is unannotated, so no cycle should be detected
-      const cycles = db.findCycles('purpose');
+      const cycles = db.graph.findCycles('purpose');
       expect(cycles).toEqual([]);
     });
 
     it('excludes singleton SCCs (no cycle)', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/singleton.ts',
         language: 'typescript',
         contentHash: computeHash('singleton'),
@@ -2022,7 +2022,7 @@ describe('IndexDatabase', () => {
       });
 
       // Create isolated symbols with no dependencies
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'isolated1',
         kind: 'function',
         isExported: true,
@@ -2031,7 +2031,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'isolated2',
         kind: 'function',
         isExported: true,
@@ -2041,12 +2041,12 @@ describe('IndexDatabase', () => {
       });
 
       // No usages = no dependencies = singletons only
-      const cycles = db.findCycles('purpose');
+      const cycles = db.graph.findCycles('purpose');
       expect(cycles).toEqual([]);
     });
 
     it('returns empty array when all symbols are annotated', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/annotated.ts',
         language: 'typescript',
         contentHash: computeHash('annotated'),
@@ -2054,7 +2054,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defA = db.insertDefinition(fileId, {
+      const defA = db.files.insertDefinition(fileId, {
         name: 'funcA',
         kind: 'function',
         isExported: true,
@@ -2063,7 +2063,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const defB = db.insertDefinition(fileId, {
+      const defB = db.files.insertDefinition(fileId, {
         name: 'funcB',
         kind: 'function',
         isExported: true,
@@ -2073,17 +2073,17 @@ describe('IndexDatabase', () => {
       });
 
       // Annotate both symbols
-      db.setDefinitionMetadata(defA, 'purpose', 'Purpose A');
-      db.setDefinitionMetadata(defB, 'purpose', 'Purpose B');
+      db.metadata.set(defA, 'purpose', 'Purpose A');
+      db.metadata.set(defB, 'purpose', 'Purpose B');
 
-      const cycles = db.findCycles('purpose');
+      const cycles = db.graph.findCycles('purpose');
       expect(cycles).toEqual([]);
     });
   });
 
   describe('getUnassignedSymbols', () => {
     it('returns all symbols when no modules exist', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/types.ts',
         language: 'typescript',
         contentHash: computeHash('types'),
@@ -2091,7 +2091,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'User',
         kind: 'interface',
         isExported: true,
@@ -2100,7 +2100,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'createUser',
         kind: 'function',
         isExported: true,
@@ -2109,12 +2109,12 @@ describe('IndexDatabase', () => {
         endPosition: { row: 10, column: 1 },
       });
 
-      const unassigned = db.getUnassignedSymbols();
+      const unassigned = db.modules.getUnassigned();
       expect(unassigned).toHaveLength(2);
     });
 
     it('returns all unassigned symbols with annotations', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/mixed.ts',
         language: 'typescript',
         contentHash: computeHash('mixed'),
@@ -2122,7 +2122,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'User',
         kind: 'interface',
         isExported: true,
@@ -2131,7 +2131,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'UserType',
         kind: 'type',
         isExported: true,
@@ -2140,7 +2140,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 6, column: 30 },
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'createUser',
         kind: 'function',
         isExported: true,
@@ -2149,13 +2149,13 @@ describe('IndexDatabase', () => {
         endPosition: { row: 10, column: 1 },
       });
 
-      const symbols = db.getUnassignedSymbols();
+      const symbols = db.modules.getUnassigned();
       expect(symbols).toHaveLength(3);
       expect(symbols.map((s) => s.name).sort()).toEqual(['User', 'UserType', 'createUser']);
     });
 
     it('excludes assigned definitions', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/service.ts',
         language: 'typescript',
         contentHash: computeHash('service'),
@@ -2163,7 +2163,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const def1 = db.insertDefinition(fileId, {
+      const def1 = db.files.insertDefinition(fileId, {
         name: 'UserService',
         kind: 'class',
         isExported: true,
@@ -2172,7 +2172,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 20, column: 1 },
       });
 
-      const def2 = db.insertDefinition(fileId, {
+      const def2 = db.files.insertDefinition(fileId, {
         name: 'User',
         kind: 'interface',
         isExported: true,
@@ -2182,11 +2182,11 @@ describe('IndexDatabase', () => {
       });
 
       // Assign def1 to a module
-      const rootId = db.ensureRootModule();
-      const moduleId = db.insertModule(rootId, 'user-module', 'User Module');
-      db.assignSymbolToModule(def1, moduleId);
+      const rootId = db.modules.ensureRoot();
+      const moduleId = db.modules.insert(rootId, 'user-module', 'User Module');
+      db.modules.assignSymbol(def1, moduleId);
 
-      const unassigned = db.getUnassignedSymbols();
+      const unassigned = db.modules.getUnassigned();
       expect(unassigned).toHaveLength(1);
       expect(unassigned[0].name).toBe('User');
     });
@@ -2195,7 +2195,7 @@ describe('IndexDatabase', () => {
   describe('getIncomingEdgesFor', () => {
     it('returns callers of a definition', () => {
       // Setup: Create files and definitions
-      const serviceFile = db.insertFile({
+      const serviceFile = db.files.insert({
         path: '/project/service.ts',
         language: 'typescript',
         contentHash: computeHash('service'),
@@ -2203,7 +2203,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const controllerFile = db.insertFile({
+      const controllerFile = db.files.insert({
         path: '/project/controller.ts',
         language: 'typescript',
         contentHash: computeHash('controller'),
@@ -2212,7 +2212,7 @@ describe('IndexDatabase', () => {
       });
 
       // Create the callee definition
-      const serviceFunc = db.insertDefinition(serviceFile, {
+      const serviceFunc = db.files.insertDefinition(serviceFile, {
         name: 'findUser',
         kind: 'function',
         isExported: true,
@@ -2222,7 +2222,7 @@ describe('IndexDatabase', () => {
       });
 
       // Create the caller definition
-      const controllerFunc = db.insertDefinition(controllerFile, {
+      const controllerFunc = db.files.insertDefinition(controllerFile, {
         name: 'getUser',
         kind: 'function',
         isExported: true,
@@ -2259,7 +2259,7 @@ describe('IndexDatabase', () => {
         },
       });
 
-      const incomingEdges = db.getIncomingEdgesFor(serviceFunc);
+      const incomingEdges = db.modules.getIncomingEdgesFor(serviceFunc);
       expect(incomingEdges).toHaveLength(1);
       expect(incomingEdges[0].callerId).toBe(controllerFunc);
       expect(incomingEdges[0].callerName).toBe('getUser');
@@ -2267,7 +2267,7 @@ describe('IndexDatabase', () => {
     });
 
     it('returns empty array for definitions with no callers', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/isolated.ts',
         language: 'typescript',
         contentHash: computeHash('isolated'),
@@ -2275,7 +2275,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const defId = db.insertDefinition(fileId, {
+      const defId = db.files.insertDefinition(fileId, {
         name: 'isolated',
         kind: 'function',
         isExported: true,
@@ -2284,14 +2284,14 @@ describe('IndexDatabase', () => {
         endPosition: { row: 5, column: 1 },
       });
 
-      const incomingEdges = db.getIncomingEdgesFor(defId);
+      const incomingEdges = db.modules.getIncomingEdgesFor(defId);
       expect(incomingEdges).toEqual([]);
     });
   });
 
   describe('getRootDefinitions', () => {
     it('returns exported definitions not called by anything', () => {
-      const fileId = db.insertFile({
+      const fileId = db.files.insert({
         path: '/project/entry.ts',
         language: 'typescript',
         contentHash: computeHash('entry'),
@@ -2299,7 +2299,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'main',
         kind: 'function',
         isExported: true,
@@ -2308,7 +2308,7 @@ describe('IndexDatabase', () => {
         endPosition: { row: 10, column: 1 },
       });
 
-      db.insertDefinition(fileId, {
+      db.files.insertDefinition(fileId, {
         name: 'internal',
         kind: 'function',
         isExported: false, // Not exported
@@ -2324,7 +2324,7 @@ describe('IndexDatabase', () => {
 
     it('excludes definitions that are called by others', () => {
       // Create two files
-      const utilsFile = db.insertFile({
+      const utilsFile = db.files.insert({
         path: '/project/utils.ts',
         language: 'typescript',
         contentHash: computeHash('utils'),
@@ -2332,7 +2332,7 @@ describe('IndexDatabase', () => {
         modifiedAt: '2024-01-01T00:00:00.000Z',
       });
 
-      const mainFile = db.insertFile({
+      const mainFile = db.files.insert({
         path: '/project/main.ts',
         language: 'typescript',
         contentHash: computeHash('main'),
@@ -2341,7 +2341,7 @@ describe('IndexDatabase', () => {
       });
 
       // Helper function - will be called
-      const helperDef = db.insertDefinition(utilsFile, {
+      const helperDef = db.files.insertDefinition(utilsFile, {
         name: 'helper',
         kind: 'function',
         isExported: true,
@@ -2351,7 +2351,7 @@ describe('IndexDatabase', () => {
       });
 
       // Main function - entry point, not called by anything
-      const mainDef = db.insertDefinition(mainFile, {
+      const mainDef = db.files.insertDefinition(mainFile, {
         name: 'main',
         kind: 'function',
         isExported: true,

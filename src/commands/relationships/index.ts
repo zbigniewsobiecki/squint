@@ -44,14 +44,14 @@ export default class Relationships extends Command {
     await withDatabase(flags.database, this, async (db) => {
       // Handle --count flag
       if (flags.count) {
-        const count = db.getRelationshipAnnotationCount();
+        const count = db.relationships.getCount();
         this.log(`${count} relationship annotation${count !== 1 ? 's' : ''}`);
         return;
       }
 
       // Handle --from flag (name lookup)
       if (flags.from) {
-        const matches = db.getDefinitionsByName(flags.from);
+        const matches = db.definitions.getAllByName(flags.from);
         if (matches.length === 0) {
           this.error(chalk.red(`No symbol found with name "${flags.from}"`));
         }
@@ -64,14 +64,14 @@ export default class Relationships extends Command {
           this.log(chalk.gray('Use --from-id to disambiguate'));
           return;
         }
-        const relationships = db.getRelationshipsFrom(matches[0].id);
+        const relationships = db.relationships.getFrom(matches[0].id);
         this.outputRelationships(relationships, `from ${flags.from}`);
         return;
       }
 
       // Handle --to flag (name lookup)
       if (flags.to) {
-        const matches = db.getDefinitionsByName(flags.to);
+        const matches = db.definitions.getAllByName(flags.to);
         if (matches.length === 0) {
           this.error(chalk.red(`No symbol found with name "${flags.to}"`));
         }
@@ -84,35 +84,35 @@ export default class Relationships extends Command {
           this.log(chalk.gray('Use --to-id to disambiguate'));
           return;
         }
-        const relationships = db.getRelationshipsTo(matches[0].id);
+        const relationships = db.relationships.getTo(matches[0].id);
         this.outputRelationships(relationships, `to ${flags.to}`);
         return;
       }
 
       // Handle --from-id flag
       if (flags['from-id'] !== undefined) {
-        const def = db.getDefinitionById(flags['from-id']);
+        const def = db.definitions.getById(flags['from-id']);
         if (!def) {
           this.error(chalk.red(`No definition found with ID ${flags['from-id']}`));
         }
-        const relationships = db.getRelationshipsFrom(flags['from-id']);
+        const relationships = db.relationships.getFrom(flags['from-id']);
         this.outputRelationships(relationships, `from ${def.name} (ID ${flags['from-id']})`);
         return;
       }
 
       // Handle --to-id flag
       if (flags['to-id'] !== undefined) {
-        const def = db.getDefinitionById(flags['to-id']);
+        const def = db.definitions.getById(flags['to-id']);
         if (!def) {
           this.error(chalk.red(`No definition found with ID ${flags['to-id']}`));
         }
-        const relationships = db.getRelationshipsTo(flags['to-id']);
+        const relationships = db.relationships.getTo(flags['to-id']);
         this.outputRelationships(relationships, `to ${def.name} (ID ${flags['to-id']})`);
         return;
       }
 
       // Default: list all relationships
-      const relationships = db.getAllRelationshipAnnotations({ limit: flags.limit });
+      const relationships = db.relationships.getAll({ limit: flags.limit });
 
       if (flags.json) {
         this.log(JSON.stringify({ relationships, count: relationships.length }, null, 2));
@@ -128,7 +128,7 @@ export default class Relationships extends Command {
           this.log(`  ${rel.semantic}`);
         }
         this.log('');
-        const total = db.getRelationshipAnnotationCount();
+        const total = db.relationships.getCount();
         if (relationships.length < total) {
           this.log(
             chalk.gray(`Showing ${relationships.length} of ${total} relationship(s) (use --limit to show more)`)

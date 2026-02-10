@@ -26,7 +26,7 @@ describe('api-transforms', () => {
   // ============================================================
 
   function insertFile(filePath: string) {
-    return db.insertFile({
+    return db.files.insert({
       path: filePath,
       language: 'typescript',
       contentHash: `hash-${filePath}`,
@@ -41,7 +41,7 @@ describe('api-transforms', () => {
     kind = 'function',
     opts?: { line?: number; endLine?: number; isExported?: boolean; extendsName?: string }
   ) {
-    return db.insertDefinition(fileId, {
+    return db.files.insertDefinition(fileId, {
       name,
       kind,
       isExported: opts?.isExported ?? true,
@@ -53,9 +53,9 @@ describe('api-transforms', () => {
   }
 
   function setupModuleHierarchy() {
-    const rootId = db.ensureRootModule();
-    const modA = db.insertModule(rootId, 'mod-a', 'ModA');
-    const modB = db.insertModule(rootId, 'mod-b', 'ModB');
+    const rootId = db.modules.ensureRoot();
+    const modA = db.modules.insert(rootId, 'mod-a', 'ModA');
+    const modB = db.modules.insert(rootId, 'mod-b', 'ModB');
     return { rootId, modA, modB };
   }
 
@@ -75,8 +75,8 @@ describe('api-transforms', () => {
     it('definitions with metadata (purpose, pure flag)', () => {
       const fileId = insertFile('/src/utils.ts');
       const defId = insertDefinition(fileId, 'helper');
-      db.setDefinitionMetadata(defId, 'purpose', 'Utility helper');
-      db.setDefinitionMetadata(defId, 'pure', 'true');
+      db.metadata.set(defId, 'purpose', 'Utility helper');
+      db.metadata.set(defId, 'pure', 'true');
 
       const result = getSymbolGraph(db);
       expect(result.nodes).toHaveLength(1);
@@ -88,7 +88,7 @@ describe('api-transforms', () => {
     it('domain metadata as JSON array', () => {
       const fileId = insertFile('/src/utils.ts');
       const defId = insertDefinition(fileId, 'helper');
-      db.setDefinitionMetadata(defId, 'domain', '["auth","billing"]');
+      db.metadata.set(defId, 'domain', '["auth","billing"]');
 
       const result = getSymbolGraph(db);
       expect(result.nodes[0].domain).toEqual(['auth', 'billing']);
@@ -97,7 +97,7 @@ describe('api-transforms', () => {
     it('domain metadata as plain string', () => {
       const fileId = insertFile('/src/utils.ts');
       const defId = insertDefinition(fileId, 'helper');
-      db.setDefinitionMetadata(defId, 'domain', 'infrastructure');
+      db.metadata.set(defId, 'domain', 'infrastructure');
 
       const result = getSymbolGraph(db);
       expect(result.nodes[0].domain).toEqual(['infrastructure']);
@@ -107,7 +107,7 @@ describe('api-transforms', () => {
       const fileId = insertFile('/src/a.ts');
       const def1 = insertDefinition(fileId, 'funcA');
       const def2 = insertDefinition(fileId, 'funcB');
-      db.setRelationshipAnnotation(def1, def2, 'delegates to', 'uses');
+      db.relationships.set(def1, def2, 'delegates to', 'uses');
 
       const result = getSymbolGraph(db);
       expect(result.edges).toHaveLength(1);
@@ -124,7 +124,7 @@ describe('api-transforms', () => {
       const { modA } = setupModuleHierarchy();
       const fileId = insertFile('/src/a.ts');
       const defId = insertDefinition(fileId, 'funcA');
-      db.assignSymbolToModule(defId, modA);
+      db.modules.assignSymbol(defId, modA);
 
       const result = getSymbolGraph(db);
       const node = result.nodes.find((n) => n.id === defId);
@@ -154,7 +154,7 @@ describe('api-transforms', () => {
       const { modA } = setupModuleHierarchy();
       const fileId = insertFile('/src/a.ts');
       const defId = insertDefinition(fileId, 'funcA');
-      db.assignSymbolToModule(defId, modA);
+      db.modules.assignSymbol(defId, modA);
 
       const result = getModulesData(db);
       expect(result.modules.length).toBeGreaterThanOrEqual(1);
@@ -165,12 +165,12 @@ describe('api-transforms', () => {
     });
 
     it('module hierarchy with depth and colorIndex', () => {
-      const rootId = db.ensureRootModule();
-      const parent = db.insertModule(rootId, 'parent', 'Parent');
-      const child = db.insertModule(parent, 'child', 'Child');
+      const rootId = db.modules.ensureRoot();
+      const parent = db.modules.insert(rootId, 'parent', 'Parent');
+      const child = db.modules.insert(parent, 'child', 'Child');
       const fileId = insertFile('/src/c.ts');
       const defId = insertDefinition(fileId, 'funcC');
-      db.assignSymbolToModule(defId, child);
+      db.modules.assignSymbol(defId, child);
 
       const result = getModulesData(db);
       const childMod = result.modules.find((m) => m.id === child);
@@ -196,7 +196,7 @@ describe('api-transforms', () => {
 
     it('interactions with stats and relationship coverage', () => {
       const { modA, modB } = setupModuleHierarchy();
-      db.insertInteraction(modA, modB, { direction: 'uni' });
+      db.interactions.insert(modA, modB, { direction: 'uni' });
 
       const result = getInteractionsData(db);
       expect(result.interactions).toHaveLength(1);
@@ -212,9 +212,9 @@ describe('api-transforms', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
-      db.insertInteraction(modA, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
+      db.interactions.insert(modA, modB);
 
       const result = getInteractionsData(db);
       expect(result.processGroups).toBeDefined();
@@ -238,12 +238,12 @@ describe('api-transforms', () => {
 
     it('flow with interaction steps', () => {
       const { modA, modB } = setupModuleHierarchy();
-      const intId = db.insertInteraction(modA, modB);
-      const flowId = db.insertFlow('Login Flow', 'login-flow', {
+      const intId = db.interactions.insert(modA, modB);
+      const flowId = db.flows.insert('Login Flow', 'login-flow', {
         stakeholder: 'user',
         description: 'User login journey',
       });
-      db.addFlowStep(flowId, intId);
+      db.flows.addStep(flowId, intId);
 
       const result = getFlowsData(db);
       expect(result.flows).toHaveLength(1);
@@ -254,9 +254,9 @@ describe('api-transforms', () => {
 
     it('flow stats and coverage', () => {
       const { modA, modB } = setupModuleHierarchy();
-      const intId = db.insertInteraction(modA, modB);
-      const flowId = db.insertFlow('F1', 'f1');
-      db.addFlowStep(flowId, intId);
+      const intId = db.interactions.insert(modA, modB);
+      const flowId = db.flows.insert('F1', 'f1');
+      db.flows.addStep(flowId, intId);
 
       const result = getFlowsData(db);
       expect(result.stats.flowCount).toBe(1);
@@ -264,7 +264,7 @@ describe('api-transforms', () => {
     });
 
     it('flow with no steps', () => {
-      db.insertFlow('Empty Flow', 'empty-flow');
+      db.flows.insert('Empty Flow', 'empty-flow');
 
       const result = getFlowsData(db);
       expect(result.flows).toHaveLength(1);
@@ -295,8 +295,8 @@ describe('api-transforms', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
       // Create a reference from file A to file B to generate call graph edges
       db.insertReference(fileA, fileB, {
@@ -306,7 +306,7 @@ describe('api-transforms', () => {
         isTypeOnly: false,
         position: { row: 0, column: 0 },
       });
-      db.syncInteractionsFromCallGraph();
+      db.callGraph.syncFromCallGraph(db.interactions);
 
       const result = getFlowsDagData(db);
       expect(result.modules.length).toBeGreaterThanOrEqual(2);
@@ -314,9 +314,9 @@ describe('api-transforms', () => {
 
     it('flows falling back to interaction steps', () => {
       const { modA, modB } = setupModuleHierarchy();
-      const intId = db.insertInteraction(modA, modB);
-      const flowId = db.insertFlow('Test Flow', 'test-flow');
-      db.addFlowStep(flowId, intId);
+      const intId = db.interactions.insert(modA, modB);
+      const flowId = db.flows.insert('Test Flow', 'test-flow');
+      db.flows.addStep(flowId, intId);
 
       const result = getFlowsDagData(db);
       expect(result.flows).toHaveLength(1);
@@ -329,11 +329,11 @@ describe('api-transforms', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
-      const flowId = db.insertFlow('Def Step Flow', 'def-step-flow');
-      db.addFlowDefinitionStep(flowId, defA, defB);
+      const flowId = db.flows.insert('Def Step Flow', 'def-step-flow');
+      db.flows.addDefinitionStep(flowId, defA, defB);
 
       const result = getFlowsDagData(db);
       const flow = result.flows.find((f) => f.name === 'Def Step Flow');
@@ -345,12 +345,12 @@ describe('api-transforms', () => {
     });
 
     it('features sub-section', () => {
-      const flowId = db.insertFlow('My Flow', 'my-flow');
-      const featureId = db.insertFeature('My Feature', 'my-feature', { description: 'A feature' });
-      db.addFeatureFlows(featureId, [flowId]);
+      const flowId = db.flows.insert('My Flow', 'my-flow');
+      const featureId = db.features.insert('My Feature', 'my-feature', { description: 'A feature' });
+      db.features.addFlows(featureId, [flowId]);
 
       // Need modules for the outer try to succeed
-      db.ensureRootModule();
+      db.modules.ensureRoot();
 
       const result = getFlowsDagData(db);
       expect(result.features).toHaveLength(1);
@@ -379,8 +379,8 @@ describe('api-transforms', () => {
       const fileB = insertFile('/src/b.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
-      db.assignSymbolToModule(defA, modA);
-      db.assignSymbolToModule(defB, modB);
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
 
       // Connect A and B via import so they share a group
       db.insertReference(fileA, fileB, {

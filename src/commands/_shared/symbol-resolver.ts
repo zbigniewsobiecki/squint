@@ -40,7 +40,7 @@ export class SymbolResolver {
 
     // Direct ID lookup
     if (id !== undefined) {
-      const def = this.db.getDefinitionById(id);
+      const def = this.db.definitions.getById(id);
       if (!def) {
         this.command.error(chalk.red(`No definition found with ID ${id}`));
       }
@@ -52,7 +52,7 @@ export class SymbolResolver {
       this.command.error(chalk.red(nameRequiredMsg));
     }
 
-    let matches = this.db.getDefinitionsByName(name);
+    let matches = this.db.definitions.getAllByName(name);
 
     if (matches.length === 0) {
       this.command.error(chalk.red(`No symbol found with name "${name}"`));
@@ -90,7 +90,7 @@ export class SymbolResolver {
   resolveSilent(name?: string, id?: number, filePath?: string): ResolvedSymbolWithDetails | null {
     // Direct ID lookup
     if (id !== undefined) {
-      const def = this.db.getDefinitionById(id);
+      const def = this.db.definitions.getById(id);
       if (!def) return null;
       return {
         id: def.id,
@@ -106,7 +106,7 @@ export class SymbolResolver {
     // Name lookup
     if (!name) return null;
 
-    let matches = this.db.getDefinitionsByName(name);
+    let matches = this.db.definitions.getAllByName(name);
     if (matches.length === 0) return null;
 
     // Filter by file if specified

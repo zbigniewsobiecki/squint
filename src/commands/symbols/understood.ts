@@ -50,13 +50,13 @@ export default class Understood extends Command {
 
     await withDatabase(flags.database, this, async (db) => {
       // Get coverage data
-      const coverage = db.getAspectCoverage({
+      const coverage = db.metadata.getAspectCoverage({
         kind: flags.kind,
         filePattern: flags.file,
       });
 
       // Get total symbol count (needed even when no aspects are defined)
-      const totalSymbols = db.getFilteredDefinitionCount({
+      const totalSymbols = db.metadata.getFilteredCount({
         kind: flags.kind,
         filePattern: flags.file,
       });
@@ -67,7 +67,7 @@ export default class Understood extends Command {
         filteredCoverage = coverage.filter((c) => c.aspect === flags.aspect);
         if (filteredCoverage.length === 0) {
           // Check if the aspect exists at all
-          const allKeys = db.getMetadataKeys();
+          const allKeys = db.metadata.getKeys();
           if (!allKeys.includes(flags.aspect)) {
             this.error(
               chalk.red(`Aspect "${flags.aspect}" not found. Available aspects: ${allKeys.join(', ') || '(none)'}`)

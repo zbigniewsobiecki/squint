@@ -20,7 +20,7 @@ describe('symbols metadata commands', () => {
     db.initialize();
 
     // Insert test files
-    const utilsFileId = db.insertFile({
+    const utilsFileId = db.files.insert({
       path: path.join(testDir, 'utils.ts'),
       language: 'typescript',
       contentHash: computeHash('content'),
@@ -28,7 +28,7 @@ describe('symbols metadata commands', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    const mainFileId = db.insertFile({
+    const mainFileId = db.files.insert({
       path: path.join(testDir, 'main.ts'),
       language: 'typescript',
       contentHash: computeHash('main'),
@@ -37,7 +37,7 @@ describe('symbols metadata commands', () => {
     });
 
     // Insert test definitions in utils.ts
-    const addId = db.insertDefinition(utilsFileId, {
+    const addId = db.files.insertDefinition(utilsFileId, {
       name: 'add',
       kind: 'function',
       isExported: true,
@@ -46,7 +46,7 @@ describe('symbols metadata commands', () => {
       endPosition: { row: 2, column: 1 },
     });
 
-    const subtractId = db.insertDefinition(utilsFileId, {
+    const subtractId = db.files.insertDefinition(utilsFileId, {
       name: 'subtract',
       kind: 'function',
       isExported: true,
@@ -55,7 +55,7 @@ describe('symbols metadata commands', () => {
       endPosition: { row: 5, column: 1 },
     });
 
-    db.insertDefinition(utilsFileId, {
+    db.files.insertDefinition(utilsFileId, {
       name: 'MyClass',
       kind: 'class',
       isExported: true,
@@ -65,7 +65,7 @@ describe('symbols metadata commands', () => {
     });
 
     // Insert main function that depends on add and subtract
-    const mainId = db.insertDefinition(mainFileId, {
+    const mainId = db.files.insertDefinition(mainFileId, {
       name: 'main',
       kind: 'function',
       isExported: true,
@@ -139,7 +139,7 @@ describe('symbols metadata commands', () => {
 
       // Verify it was saved
       const verifyDb = new IndexDatabase(dbPath);
-      const metadata = verifyDb.getDefinitionMetadata(1);
+      const metadata = verifyDb.metadata.get(1);
       expect(metadata.purpose).toBe('Adds two numbers');
       verifyDb.close();
     });
@@ -150,7 +150,7 @@ describe('symbols metadata commands', () => {
 
       // Verify it was saved
       const verifyDb = new IndexDatabase(dbPath);
-      const metadata = verifyDb.getDefinitionMetadata(2);
+      const metadata = verifyDb.metadata.get(2);
       expect(metadata.status).toBe('stable');
       verifyDb.close();
     });
@@ -160,7 +160,7 @@ describe('symbols metadata commands', () => {
       runCommand(`symbols set status "stable" --name add -d ${dbPath}`);
 
       const verifyDb = new IndexDatabase(dbPath);
-      const metadata = verifyDb.getDefinitionMetadata(1);
+      const metadata = verifyDb.metadata.get(1);
       expect(metadata.status).toBe('stable');
       verifyDb.close();
     });
@@ -185,8 +185,8 @@ describe('symbols metadata commands', () => {
     beforeEach(() => {
       // Set some metadata to remove
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setDefinitionMetadata(1, 'purpose', 'Adds numbers');
-      setupDb.setDefinitionMetadata(1, 'status', 'stable');
+      setupDb.metadata.set(1, 'purpose', 'Adds numbers');
+      setupDb.metadata.set(1, 'status', 'stable');
       setupDb.close();
     });
 
@@ -195,7 +195,7 @@ describe('symbols metadata commands', () => {
       expect(output).toContain('Removed purpose from add');
 
       const verifyDb = new IndexDatabase(dbPath);
-      const metadata = verifyDb.getDefinitionMetadata(1);
+      const metadata = verifyDb.metadata.get(1);
       expect(metadata.purpose).toBeUndefined();
       expect(metadata.status).toBe('stable');
       verifyDb.close();
@@ -206,7 +206,7 @@ describe('symbols metadata commands', () => {
       expect(output).toContain('Removed status from add');
 
       const verifyDb = new IndexDatabase(dbPath);
-      const metadata = verifyDb.getDefinitionMetadata(1);
+      const metadata = verifyDb.metadata.get(1);
       expect(metadata.status).toBeUndefined();
       expect(metadata.purpose).toBe('Adds numbers');
       verifyDb.close();
@@ -227,8 +227,8 @@ describe('symbols metadata commands', () => {
     beforeEach(() => {
       // Set metadata on some definitions
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setDefinitionMetadata(1, 'documented', 'yes');
-      setupDb.setDefinitionMetadata(3, 'documented', 'yes');
+      setupDb.metadata.set(1, 'documented', 'yes');
+      setupDb.metadata.set(3, 'documented', 'yes');
       setupDb.close();
     });
 
@@ -257,7 +257,7 @@ describe('symbols metadata commands', () => {
     beforeEach(() => {
       // Set metadata on one definition
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setDefinitionMetadata(1, 'documented', 'yes');
+      setupDb.metadata.set(1, 'documented', 'yes');
       setupDb.close();
     });
 
@@ -291,8 +291,8 @@ describe('symbols metadata commands', () => {
     it('displays metadata section when metadata exists', () => {
       // Set metadata first
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setDefinitionMetadata(1, 'purpose', 'Adds two numbers');
-      setupDb.setDefinitionMetadata(1, 'status', 'stable');
+      setupDb.metadata.set(1, 'purpose', 'Adds two numbers');
+      setupDb.metadata.set(1, 'status', 'stable');
       setupDb.close();
 
       const output = runCommand(`symbols show --id 1 -d ${dbPath}`);
@@ -311,7 +311,7 @@ describe('symbols metadata commands', () => {
     it('includes metadata in JSON output', () => {
       // Set metadata first
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setDefinitionMetadata(1, 'purpose', 'Adds numbers');
+      setupDb.metadata.set(1, 'purpose', 'Adds numbers');
       setupDb.close();
 
       const output = runCommand(`symbols show --id 1 --json -d ${dbPath}`);
@@ -338,7 +338,7 @@ describe('symbols metadata commands', () => {
     it('shows dependency status with --aspect flag', () => {
       // Set metadata on one dependency
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setDefinitionMetadata(1, 'purpose', 'Adds two numbers');
+      setupDb.metadata.set(1, 'purpose', 'Adds two numbers');
       setupDb.close();
 
       const output = runCommand(`symbols deps main --aspect purpose -d ${dbPath}`);
@@ -383,8 +383,8 @@ describe('symbols metadata commands', () => {
     it('shows no prerequisites when all deps have aspect', () => {
       // Set metadata on all dependencies
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setDefinitionMetadata(1, 'purpose', 'Adds numbers');
-      setupDb.setDefinitionMetadata(2, 'purpose', 'Subtracts numbers');
+      setupDb.metadata.set(1, 'purpose', 'Adds numbers');
+      setupDb.metadata.set(2, 'purpose', 'Subtracts numbers');
       setupDb.close();
 
       const output = runCommand(`symbols prereqs main --aspect purpose -d ${dbPath}`);
@@ -414,8 +414,8 @@ describe('symbols metadata commands', () => {
     it('shows dependency info with --verbose flag', () => {
       // Set metadata on one symbol so another becomes ready
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setDefinitionMetadata(1, 'purpose', 'Adds numbers');
-      setupDb.setDefinitionMetadata(2, 'purpose', 'Subtracts numbers');
+      setupDb.metadata.set(1, 'purpose', 'Adds numbers');
+      setupDb.metadata.set(2, 'purpose', 'Subtracts numbers');
       setupDb.close();
 
       const output = runCommand(`symbols ready --aspect purpose --verbose -d ${dbPath}`);
@@ -426,8 +426,8 @@ describe('symbols metadata commands', () => {
 
     it('includes dependency metadata in JSON output when verbose', () => {
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setDefinitionMetadata(1, 'purpose', 'Adds numbers');
-      setupDb.setDefinitionMetadata(2, 'purpose', 'Subtracts numbers');
+      setupDb.metadata.set(1, 'purpose', 'Adds numbers');
+      setupDb.metadata.set(2, 'purpose', 'Subtracts numbers');
       setupDb.close();
 
       const output = runCommand(`symbols ready --aspect purpose --verbose --json -d ${dbPath}`);
@@ -467,8 +467,8 @@ describe('symbols metadata commands', () => {
 
       // Verify metadata was saved
       const verifyDb = new IndexDatabase(dbPath);
-      expect(verifyDb.getDefinitionMetadata(1).purpose).toBe('Adds two numbers');
-      expect(verifyDb.getDefinitionMetadata(2).purpose).toBe('Subtracts two numbers');
+      expect(verifyDb.metadata.get(1).purpose).toBe('Adds two numbers');
+      expect(verifyDb.metadata.get(2).purpose).toBe('Subtracts two numbers');
       verifyDb.close();
     });
 
@@ -496,7 +496,7 @@ describe('symbols metadata commands', () => {
       expect(output).toContain('Set purpose on 1 symbols');
 
       const verifyDb = new IndexDatabase(dbPath);
-      expect(verifyDb.getDefinitionMetadata(1).purpose).toBe('By ID');
+      expect(verifyDb.metadata.get(1).purpose).toBe('By ID');
       verifyDb.close();
     });
 

@@ -24,7 +24,7 @@ describe('gaps command', () => {
     db = new IndexDatabase(dbPath);
     db.initialize();
 
-    const authFileId = db.insertFile({
+    const authFileId = db.files.insert({
       path: 'src/auth.ts',
       language: 'typescript',
       contentHash: computeHash('auth content'),
@@ -32,7 +32,7 @@ describe('gaps command', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    const userFileId = db.insertFile({
+    const userFileId = db.files.insert({
       path: 'src/user.ts',
       language: 'typescript',
       contentHash: computeHash('user content'),
@@ -40,7 +40,7 @@ describe('gaps command', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    const helperFileId = db.insertFile({
+    const helperFileId = db.files.insert({
       path: 'src/helpers.ts',
       language: 'typescript',
       contentHash: computeHash('helper content'),
@@ -48,7 +48,7 @@ describe('gaps command', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    validateTokenId = db.insertDefinition(authFileId, {
+    validateTokenId = db.files.insertDefinition(authFileId, {
       name: 'validateToken',
       kind: 'function',
       isExported: true,
@@ -57,7 +57,7 @@ describe('gaps command', () => {
       endPosition: { row: 5, column: 1 },
     });
 
-    hashPasswordId = db.insertDefinition(authFileId, {
+    hashPasswordId = db.files.insertDefinition(authFileId, {
       name: 'hashPassword',
       kind: 'function',
       isExported: true,
@@ -66,7 +66,7 @@ describe('gaps command', () => {
       endPosition: { row: 10, column: 1 },
     });
 
-    getUserId = db.insertDefinition(userFileId, {
+    getUserId = db.files.insertDefinition(userFileId, {
       name: 'getUser',
       kind: 'function',
       isExported: true,
@@ -75,7 +75,7 @@ describe('gaps command', () => {
       endPosition: { row: 5, column: 1 },
     });
 
-    createUserId = db.insertDefinition(userFileId, {
+    createUserId = db.files.insertDefinition(userFileId, {
       name: 'UserService',
       kind: 'class',
       isExported: true,
@@ -84,7 +84,7 @@ describe('gaps command', () => {
       endPosition: { row: 15, column: 1 },
     });
 
-    helperFnId = db.insertDefinition(helperFileId, {
+    helperFnId = db.files.insertDefinition(helperFileId, {
       name: 'helperFn',
       kind: 'function',
       isExported: false,
@@ -94,17 +94,17 @@ describe('gaps command', () => {
     });
 
     // Annotate some symbols (leave some unannotated)
-    db.setDefinitionMetadata(validateTokenId, 'purpose', 'Validates JWT tokens');
-    db.setDefinitionMetadata(validateTokenId, 'domain', '["auth"]');
-    db.setDefinitionMetadata(hashPasswordId, 'purpose', 'Hashes passwords');
+    db.metadata.set(validateTokenId, 'purpose', 'Validates JWT tokens');
+    db.metadata.set(validateTokenId, 'domain', '["auth"]');
+    db.metadata.set(hashPasswordId, 'purpose', 'Hashes passwords');
 
     // Create modules — assign only some symbols
-    const rootId = db.ensureRootModule();
-    const authModuleId = db.insertModule(rootId, 'auth', 'Auth', 'Authentication logic');
-    const emptyModuleId = db.insertModule(rootId, 'empty', 'Empty Module', 'No members');
+    const rootId = db.modules.ensureRoot();
+    const authModuleId = db.modules.insert(rootId, 'auth', 'Auth', 'Authentication logic');
+    const emptyModuleId = db.modules.insert(rootId, 'empty', 'Empty Module', 'No members');
 
-    db.assignSymbolToModule(validateTokenId, authModuleId);
-    db.assignSymbolToModule(hashPasswordId, authModuleId);
+    db.modules.assignSymbol(validateTokenId, authModuleId);
+    db.modules.assignSymbol(hashPasswordId, authModuleId);
 
     db.close();
   });
@@ -282,9 +282,9 @@ describe('gaps command', () => {
     it('shows green messages when everything is annotated', () => {
       // Annotate all remaining symbols
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setDefinitionMetadata(getUserId, 'purpose', 'Gets a user');
-      setupDb.setDefinitionMetadata(createUserId, 'purpose', 'User service class');
-      setupDb.setDefinitionMetadata(helperFnId, 'purpose', 'Helper function');
+      setupDb.metadata.set(getUserId, 'purpose', 'Gets a user');
+      setupDb.metadata.set(createUserId, 'purpose', 'User service class');
+      setupDb.metadata.set(helperFnId, 'purpose', 'Helper function');
       setupDb.close();
 
       const output = runCommand(`gaps -d ${dbPath} --type symbols`);

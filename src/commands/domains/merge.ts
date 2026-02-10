@@ -50,17 +50,17 @@ export default class Merge extends Command {
 
     try {
       // Count symbols before merge
-      const symbolsWithFrom = db.getSymbolsByDomain(args.fromName).length;
+      const symbolsWithFrom = db.domains.getSymbolsByDomain(args.fromName).length;
 
       if (symbolsWithFrom === 0) {
-        const domain = db.getDomain(args.fromName);
+        const domain = db.domains.get(args.fromName);
         if (!domain) {
           this.error(chalk.red(`Domain "${args.fromName}" not found (neither in registry nor in use).`));
         }
       }
 
       // Merge the domains
-      const result = db.mergeDomains(args.fromName, args.intoName);
+      const result = db.domains.merge(args.fromName, args.intoName);
 
       this.log(`Merged domain ${chalk.yellow(args.fromName)} -> ${chalk.cyan(args.intoName)}`);
       if (result.symbolsUpdated > 0) {

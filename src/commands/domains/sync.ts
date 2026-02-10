@@ -17,7 +17,7 @@ export default class Sync extends Command {
 
     await withDatabase(flags.database, this, async (db) => {
       // Sync domains from metadata
-      const registered = db.syncDomainsFromMetadata();
+      const registered = db.domains.syncFromMetadata();
 
       if (flags.json) {
         this.log(JSON.stringify({ registered }, null, 2));

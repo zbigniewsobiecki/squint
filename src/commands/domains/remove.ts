@@ -28,7 +28,7 @@ export default class Remove extends Command {
 
     await withDatabase(flags.database, this, async (db) => {
       // Remove the domain
-      const result = db.removeDomain(args.name, flags.force);
+      const result = db.domains.remove(args.name, flags.force);
 
       if (!result.removed && result.symbolsUsingDomain > 0) {
         this.log(

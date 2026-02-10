@@ -26,7 +26,7 @@ export default class Domains extends Command {
     await withDatabase(flags.database, this, async (db) => {
       if (flags.unregistered) {
         // Show unregistered domains
-        const unregistered = db.getUnregisteredDomains();
+        const unregistered = db.domains.getUnregistered();
 
         if (flags.json) {
           this.log(JSON.stringify({ unregistered }, null, 2));
@@ -35,7 +35,7 @@ export default class Domains extends Command {
         } else {
           this.log(chalk.yellow('Unregistered domains in use:'));
           for (const domain of unregistered) {
-            const count = db.getSymbolsByDomain(domain).length;
+            const count = db.domains.getSymbolsByDomain(domain).length;
             this.log(`  ${chalk.cyan(domain)} (${count} symbol${count !== 1 ? 's' : ''})`);
           }
           this.log('');
@@ -45,7 +45,7 @@ export default class Domains extends Command {
       }
 
       // List registered domains with counts
-      const domainsWithCounts = db.getDomainsWithCounts();
+      const domainsWithCounts = db.domains.getAllWithCounts();
 
       if (flags.json) {
         this.log(JSON.stringify({ domains: domainsWithCounts }, null, 2));

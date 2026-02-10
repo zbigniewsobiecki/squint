@@ -43,6 +43,20 @@ export interface FlowStats {
   avgStepsPerFlow: number;
 }
 
+const FLOW_COLS = `
+  id,
+  name,
+  slug,
+  entry_point_module_id as entryPointModuleId,
+  entry_point_id as entryPointId,
+  entry_path as entryPath,
+  stakeholder,
+  description,
+  action_type as actionType,
+  target_entity as targetEntity,
+  tier,
+  created_at as createdAt`;
+
 /**
  * Repository for flow (user journey) operations.
  */
@@ -81,24 +95,7 @@ export class FlowRepository {
    */
   getById(id: number): Flow | null {
     ensureFlowsTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        name,
-        slug,
-        entry_point_module_id as entryPointModuleId,
-        entry_point_id as entryPointId,
-        entry_path as entryPath,
-        stakeholder,
-        description,
-        action_type as actionType,
-        target_entity as targetEntity,
-        tier,
-        created_at as createdAt
-      FROM flows
-      WHERE id = ?
-    `);
-    const row = stmt.get(id) as Flow | undefined;
+    const row = this.db.prepare(`SELECT ${FLOW_COLS} FROM flows WHERE id = ?`).get(id) as Flow | undefined;
     return row ?? null;
   }
 
@@ -107,24 +104,7 @@ export class FlowRepository {
    */
   getBySlug(slug: string): Flow | null {
     ensureFlowsTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        name,
-        slug,
-        entry_point_module_id as entryPointModuleId,
-        entry_point_id as entryPointId,
-        entry_path as entryPath,
-        stakeholder,
-        description,
-        action_type as actionType,
-        target_entity as targetEntity,
-        tier,
-        created_at as createdAt
-      FROM flows
-      WHERE slug = ?
-    `);
-    const row = stmt.get(slug) as Flow | undefined;
+    const row = this.db.prepare(`SELECT ${FLOW_COLS} FROM flows WHERE slug = ?`).get(slug) as Flow | undefined;
     return row ?? null;
   }
 
@@ -133,24 +113,7 @@ export class FlowRepository {
    */
   getAll(): Flow[] {
     ensureFlowsTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        name,
-        slug,
-        entry_point_module_id as entryPointModuleId,
-        entry_point_id as entryPointId,
-        entry_path as entryPath,
-        stakeholder,
-        description,
-        action_type as actionType,
-        target_entity as targetEntity,
-        tier,
-        created_at as createdAt
-      FROM flows
-      ORDER BY name
-    `);
-    return stmt.all() as Flow[];
+    return this.db.prepare(`SELECT ${FLOW_COLS} FROM flows ORDER BY name`).all() as Flow[];
   }
 
   /**
@@ -158,25 +121,9 @@ export class FlowRepository {
    */
   getByStakeholder(stakeholder: FlowStakeholder): Flow[] {
     ensureFlowsTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        name,
-        slug,
-        entry_point_module_id as entryPointModuleId,
-        entry_point_id as entryPointId,
-        entry_path as entryPath,
-        stakeholder,
-        description,
-        action_type as actionType,
-        target_entity as targetEntity,
-        tier,
-        created_at as createdAt
-      FROM flows
-      WHERE stakeholder = ?
-      ORDER BY name
-    `);
-    return stmt.all(stakeholder) as Flow[];
+    return this.db
+      .prepare(`SELECT ${FLOW_COLS} FROM flows WHERE stakeholder = ? ORDER BY name`)
+      .all(stakeholder) as Flow[];
   }
 
   /**
@@ -184,25 +131,9 @@ export class FlowRepository {
    */
   getByEntryPoint(entryPointId: number): Flow[] {
     ensureFlowsTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        name,
-        slug,
-        entry_point_module_id as entryPointModuleId,
-        entry_point_id as entryPointId,
-        entry_path as entryPath,
-        stakeholder,
-        description,
-        action_type as actionType,
-        target_entity as targetEntity,
-        tier,
-        created_at as createdAt
-      FROM flows
-      WHERE entry_point_id = ?
-      ORDER BY name
-    `);
-    return stmt.all(entryPointId) as Flow[];
+    return this.db
+      .prepare(`SELECT ${FLOW_COLS} FROM flows WHERE entry_point_id = ? ORDER BY name`)
+      .all(entryPointId) as Flow[];
   }
 
   /**
@@ -210,25 +141,9 @@ export class FlowRepository {
    */
   getByEntryPointModule(entryPointModuleId: number): Flow[] {
     ensureFlowsTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        name,
-        slug,
-        entry_point_module_id as entryPointModuleId,
-        entry_point_id as entryPointId,
-        entry_path as entryPath,
-        stakeholder,
-        description,
-        action_type as actionType,
-        target_entity as targetEntity,
-        tier,
-        created_at as createdAt
-      FROM flows
-      WHERE entry_point_module_id = ?
-      ORDER BY name
-    `);
-    return stmt.all(entryPointModuleId) as Flow[];
+    return this.db
+      .prepare(`SELECT ${FLOW_COLS} FROM flows WHERE entry_point_module_id = ? ORDER BY name`)
+      .all(entryPointModuleId) as Flow[];
   }
 
   /**
@@ -651,25 +566,7 @@ export class FlowRepository {
    */
   getByTier(tier: number): Flow[] {
     ensureFlowsTables(this.db);
-    const stmt = this.db.prepare(`
-      SELECT
-        id,
-        name,
-        slug,
-        entry_point_module_id as entryPointModuleId,
-        entry_point_id as entryPointId,
-        entry_path as entryPath,
-        stakeholder,
-        description,
-        action_type as actionType,
-        target_entity as targetEntity,
-        tier,
-        created_at as createdAt
-      FROM flows
-      WHERE tier = ?
-      ORDER BY name
-    `);
-    return stmt.all(tier) as Flow[];
+    return this.db.prepare(`SELECT ${FLOW_COLS} FROM flows WHERE tier = ? ORDER BY name`).all(tier) as Flow[];
   }
 
   // ============================================================
@@ -778,27 +675,24 @@ export class FlowRepository {
    */
   getFlowsWithInteraction(interactionId: number): Flow[] {
     ensureFlowsTables(this.db);
-
-    const stmt = this.db.prepare(`
-      SELECT DISTINCT
-        f.id,
-        f.name,
-        f.slug,
-        f.entry_point_module_id as entryPointModuleId,
-        f.entry_point_id as entryPointId,
-        f.entry_path as entryPath,
-        f.stakeholder,
-        f.description,
-        f.action_type as actionType,
-        f.target_entity as targetEntity,
-        f.created_at as createdAt
-      FROM flows f
-      JOIN flow_steps fs ON f.id = fs.flow_id
-      WHERE fs.interaction_id = ?
-      ORDER BY f.name
-    `);
-
-    return stmt.all(interactionId) as Flow[];
+    return this.db
+      .prepare(
+        `SELECT DISTINCT
+          f.id, f.name, f.slug,
+          f.entry_point_module_id as entryPointModuleId,
+          f.entry_point_id as entryPointId,
+          f.entry_path as entryPath,
+          f.stakeholder, f.description,
+          f.action_type as actionType,
+          f.target_entity as targetEntity,
+          f.tier,
+          f.created_at as createdAt
+        FROM flows f
+        JOIN flow_steps fs ON f.id = fs.flow_id
+        WHERE fs.interaction_id = ?
+        ORDER BY f.name`
+      )
+      .all(interactionId) as Flow[];
   }
 
   /**

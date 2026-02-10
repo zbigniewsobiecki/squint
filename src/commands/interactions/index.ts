@@ -35,7 +35,7 @@ export default class Interactions extends Command {
     const isJson = flags.json;
 
     try {
-      let interactions = db.getAllInteractions();
+      let interactions = db.interactions.getAll();
 
       // Apply filters
       if (flags.pattern) {
@@ -65,7 +65,7 @@ export default class Interactions extends Command {
       }
 
       if (isJson) {
-        const stats = db.getInteractionStats();
+        const stats = db.interactions.getStats();
         this.log(JSON.stringify({ interactions, stats }, null, 2));
         return;
       }
@@ -103,7 +103,7 @@ export default class Interactions extends Command {
       }
 
       // Stats
-      const stats = db.getInteractionStats();
+      const stats = db.interactions.getStats();
       this.log(chalk.bold('Statistics'));
       this.log(`Total: ${stats.totalCount}`);
       this.log(`Business: ${stats.businessCount}`);
@@ -131,8 +131,7 @@ export default class Interactions extends Command {
         : interaction.pattern === 'utility'
           ? chalk.yellow('[utility]')
           : '';
-    const sourceLabel =
-      interaction.source === 'llm-inferred' ? chalk.magenta('[inferred]') : chalk.gray('[ast]');
+    const sourceLabel = interaction.source === 'llm-inferred' ? chalk.magenta('[inferred]') : chalk.gray('[ast]');
 
     const fromShort = interaction.fromModulePath.split('.').slice(-2).join('.');
     const toShort = interaction.toModulePath.split('.').slice(-2).join('.');

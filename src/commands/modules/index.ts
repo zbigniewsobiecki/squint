@@ -25,8 +25,8 @@ export default class Modules extends Command {
     const { flags } = await this.parse(Modules);
 
     await withDatabase(flags.database, this, async (db) => {
-      const allModules = db.getAllModulesWithMembers();
-      const stats = db.getModuleStats();
+      const allModules = db.modules.getAllWithMembers();
+      const stats = db.modules.getStats();
 
       const jsonData = {
         modules: allModules.map((m) => ({
@@ -59,7 +59,7 @@ export default class Modules extends Command {
 
         if (flags.tree) {
           // Tree display
-          const tree = db.getModuleTree();
+          const tree = db.modules.getTree();
           if (tree) {
             this.printTree(tree, '', true);
           }

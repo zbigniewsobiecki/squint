@@ -27,12 +27,12 @@ export default class ImportedBy extends Command {
     const filePath = path.resolve(args.file);
 
     await withDatabase(flags.database, this, async (db) => {
-      const fileId = db.getFileId(filePath);
+      const fileId = db.files.getIdByPath(filePath);
       if (fileId === null) {
         this.error(chalk.red(`File "${filePath}" not found in the index.`));
       }
 
-      const importers = db.getFilesImportedBy(fileId);
+      const importers = db.files.getImportedBy(fileId);
 
       if (importers.length === 0) {
         this.log(chalk.gray('No files import this file.'));

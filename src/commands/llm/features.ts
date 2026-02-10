@@ -36,13 +36,13 @@ export default class Features extends BaseLlmCommand {
     const { db, isJson, dryRun, verbose, model, llmOptions } = ctx;
 
     // Check if features already exist
-    const existingCount = db.getFeatureCount();
+    const existingCount = db.features.getCount();
     if (
       !this.checkExistingAndClear(ctx, {
         entityName: 'Features',
         existingCount,
         force: flags.force as boolean,
-        clearFn: () => db.clearFeatures(),
+        clearFn: () => db.features.clear(),
         forceHint: 'Use --force to re-group',
       })
     ) {
@@ -54,7 +54,7 @@ export default class Features extends BaseLlmCommand {
     // Step 1: Read all persisted flows from DB
     logStep(this, 1, 'Reading Flows from Database', isJson);
 
-    const flows = db.getAllFlows();
+    const flows = db.flows.getAll();
     if (flows.length === 0) {
       if (isJson) {
         this.log(JSON.stringify({ error: 'No flows found', hint: 'Run llm flows first' }));
@@ -70,7 +70,7 @@ export default class Features extends BaseLlmCommand {
     // Step 2: Read module tree from DB for architectural context
     logStep(this, 2, 'Reading Module Tree for Context', isJson);
 
-    const modules = db.getAllModules();
+    const modules = db.modules.getAll();
     logVerbose(this, `Found ${modules.length} modules`, verbose, isJson);
 
     // Step 3: Group flows into features using LLM
@@ -103,7 +103,7 @@ export default class Features extends BaseLlmCommand {
 
     for (const feature of featureSuggestions) {
       try {
-        const featureId = db.insertFeature(feature.name, feature.slug, {
+        const featureId = db.features.insert(feature.name, feature.slug, {
           description: feature.description,
         });
 
@@ -112,7 +112,7 @@ export default class Features extends BaseLlmCommand {
           .filter((id): id is number => id !== undefined);
 
         if (flowIds.length > 0) {
-          db.addFeatureFlows(featureId, flowIds);
+          db.features.addFlows(featureId, flowIds);
         }
 
         logVerbose(this, `  ${feature.name}: ${flowIds.length} flows`, verbose, isJson);

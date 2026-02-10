@@ -50,7 +50,7 @@ export default class Browse extends Command {
 
     // Ensure module color indices are assigned (idempotent, runs migration if needed)
     try {
-      db.assignColorIndices();
+      db.modules.assignColorIndices();
     } catch {
       // Modules table may not exist yet — safe to ignore
     }

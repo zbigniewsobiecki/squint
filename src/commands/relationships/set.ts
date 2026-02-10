@@ -63,10 +63,10 @@ export default class Set extends Command {
       if (!toDef) return;
 
       // Set the relationship annotation
-      db.setRelationshipAnnotation(fromDef.id, toDef.id, args.semantic);
+      db.relationships.set(fromDef.id, toDef.id, args.semantic);
 
-      const fromDetails = db.getDefinitionById(fromDef.id);
-      const toDetails = db.getDefinitionById(toDef.id);
+      const fromDetails = db.definitions.getById(fromDef.id);
+      const toDetails = db.definitions.getById(toDef.id);
 
       this.log(
         `Set relationship: ${chalk.yellow(fromDetails?.name ?? String(fromDef.id))} ${chalk.gray('->')} ${chalk.cyan(toDetails?.name ?? String(toDef.id))}`

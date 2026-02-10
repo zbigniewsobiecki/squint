@@ -20,7 +20,7 @@ describe('modules commands', () => {
     db.initialize();
 
     // Insert test files and definitions
-    const authFileId = db.insertFile({
+    const authFileId = db.files.insert({
       path: path.join(testDir, 'auth.ts'),
       language: 'typescript',
       contentHash: computeHash('auth content'),
@@ -28,7 +28,7 @@ describe('modules commands', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    const userFileId = db.insertFile({
+    const userFileId = db.files.insert({
       path: path.join(testDir, 'user.ts'),
       language: 'typescript',
       contentHash: computeHash('user content'),
@@ -37,7 +37,7 @@ describe('modules commands', () => {
     });
 
     // Auth module definitions
-    const validateTokenId = db.insertDefinition(authFileId, {
+    const validateTokenId = db.files.insertDefinition(authFileId, {
       name: 'validateToken',
       kind: 'function',
       isExported: true,
@@ -46,7 +46,7 @@ describe('modules commands', () => {
       endPosition: { row: 5, column: 1 },
     });
 
-    const hashPasswordId = db.insertDefinition(authFileId, {
+    const hashPasswordId = db.files.insertDefinition(authFileId, {
       name: 'hashPassword',
       kind: 'function',
       isExported: true,
@@ -55,7 +55,7 @@ describe('modules commands', () => {
       endPosition: { row: 10, column: 1 },
     });
 
-    const authServiceId = db.insertDefinition(authFileId, {
+    const authServiceId = db.files.insertDefinition(authFileId, {
       name: 'AuthService',
       kind: 'class',
       isExported: true,
@@ -65,7 +65,7 @@ describe('modules commands', () => {
     });
 
     // User module definitions
-    const getUserId = db.insertDefinition(userFileId, {
+    const getUserId = db.files.insertDefinition(userFileId, {
       name: 'getUser',
       kind: 'function',
       isExported: true,
@@ -74,7 +74,7 @@ describe('modules commands', () => {
       endPosition: { row: 5, column: 1 },
     });
 
-    const createUserId = db.insertDefinition(userFileId, {
+    const createUserId = db.files.insertDefinition(userFileId, {
       name: 'createUser',
       kind: 'function',
       isExported: true,
@@ -84,18 +84,18 @@ describe('modules commands', () => {
     });
 
     // Create module tree
-    const rootId = db.ensureRootModule();
+    const rootId = db.modules.ensureRoot();
 
-    const authModuleId = db.insertModule(rootId, 'auth', 'Auth', 'Authentication and authorization logic');
+    const authModuleId = db.modules.insert(rootId, 'auth', 'Auth', 'Authentication and authorization logic');
 
-    const userModuleId = db.insertModule(rootId, 'user-api', 'User API', 'User management endpoints');
+    const userModuleId = db.modules.insert(rootId, 'user-api', 'User API', 'User management endpoints');
 
     // Assign symbols to modules
-    db.assignSymbolToModule(validateTokenId, authModuleId);
-    db.assignSymbolToModule(hashPasswordId, authModuleId);
-    db.assignSymbolToModule(authServiceId, authModuleId);
-    db.assignSymbolToModule(getUserId, userModuleId);
-    db.assignSymbolToModule(createUserId, userModuleId);
+    db.modules.assignSymbol(validateTokenId, authModuleId);
+    db.modules.assignSymbol(hashPasswordId, authModuleId);
+    db.modules.assignSymbol(authServiceId, authModuleId);
+    db.modules.assignSymbol(getUserId, userModuleId);
+    db.modules.assignSymbol(createUserId, userModuleId);
 
     db.close();
   });
@@ -205,8 +205,8 @@ describe('modules commands', () => {
     it('shows disambiguation for multiple matches', () => {
       // Add another module with 'user' in the name
       const setupDb = new IndexDatabase(dbPath);
-      const rootId = setupDb.ensureRootModule();
-      setupDb.insertModule(rootId, 'user-service', 'User Service');
+      const rootId = setupDb.modules.ensureRoot();
+      setupDb.modules.insert(rootId, 'user-service', 'User Service');
       setupDb.close();
 
       const output = runCommand(`modules show user -d ${dbPath}`);

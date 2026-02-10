@@ -32,9 +32,9 @@ export default class Flows extends Command {
       let flows: Flow[];
 
       if (flags.stakeholder) {
-        flows = db.getFlowsByStakeholder(flags.stakeholder as FlowStakeholder);
+        flows = db.flows.getByStakeholder(flags.stakeholder as FlowStakeholder);
       } else {
-        flows = db.getAllFlows();
+        flows = db.flows.getAll();
       }
 
       if (flows.length === 0) {
@@ -48,8 +48,8 @@ export default class Flows extends Command {
       }
 
       if (isJson) {
-        const stats = db.getFlowStats();
-        const coverage = db.getFlowCoverage();
+        const stats = db.flows.getStats();
+        const coverage = db.flows.getCoverage();
         this.log(JSON.stringify({ flows, stats, coverage }, null, 2));
         return;
       }
@@ -96,8 +96,8 @@ export default class Flows extends Command {
       }
 
       // Stats
-      const stats = db.getFlowStats();
-      const coverage = db.getFlowCoverage();
+      const stats = db.flows.getStats();
+      const coverage = db.flows.getCoverage();
 
       this.log(chalk.bold('Statistics'));
       this.log(`Total flows: ${stats.flowCount}`);

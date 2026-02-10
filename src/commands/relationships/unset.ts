@@ -54,11 +54,11 @@ export default class Unset extends Command {
       const toDef = resolver.resolve(flags.to, flags['to-id'], flags['to-file'], 'to');
       if (!toDef) return;
 
-      const fromDetails = db.getDefinitionById(fromDef.id);
-      const toDetails = db.getDefinitionById(toDef.id);
+      const fromDetails = db.definitions.getById(fromDef.id);
+      const toDetails = db.definitions.getById(toDef.id);
 
       // Remove the relationship annotation
-      const removed = db.removeRelationshipAnnotation(fromDef.id, toDef.id);
+      const removed = db.relationships.remove(fromDef.id, toDef.id);
 
       if (removed) {
         this.log(

@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { ensureRelationshipTypeColumn } from '../schema-manager.js';
 import type { AnnotatedEdgeInfo, AnnotatedSymbolInfo, CallGraphEdge } from '../schema.js';
+import { queryCallGraphEdges } from './_shared/call-graph-query.js';
 import { DefinitionRepository } from './definition-repository.js';
 import { DependencyRepository } from './dependency-repository.js';
 import { MetadataRepository } from './metadata-repository.js';
@@ -504,61 +505,6 @@ export class GraphRepository {
 
   // Private helper to get call graph
   private getCallGraph(): CallGraphEdge[] {
-    const stmt = this.db.prepare(`
-      SELECT
-        caller.id as from_id,
-        s.definition_id as to_id,
-        COUNT(*) as weight,
-        MIN(u.line) as min_usage_line
-      FROM definitions caller
-      JOIN files f ON caller.file_id = f.id
-      JOIN symbols s ON s.file_id = f.id AND s.definition_id IS NOT NULL
-      JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression')
-        AND caller.line <= u.line AND u.line <= caller.end_line
-        AND s.definition_id != caller.id
-      GROUP BY caller.id, s.definition_id
-      UNION ALL
-      SELECT
-        caller.id as from_id,
-        s.definition_id as to_id,
-        COUNT(*) as weight,
-        MIN(u.line) as min_usage_line
-      FROM definitions caller
-      JOIN files f ON caller.file_id = f.id
-      JOIN imports i ON i.from_file_id = f.id
-      JOIN symbols s ON s.reference_id = i.id AND s.definition_id IS NOT NULL
-      JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression')
-        AND caller.line <= u.line AND u.line <= caller.end_line
-        AND s.definition_id != caller.id
-      GROUP BY caller.id, s.definition_id
-    `);
-
-    const rows = stmt.all() as Array<{
-      from_id: number;
-      to_id: number;
-      weight: number;
-      min_usage_line: number;
-    }>;
-
-    const edgeMap = new Map<string, CallGraphEdge>();
-    for (const row of rows) {
-      const key = `${row.from_id}-${row.to_id}`;
-      const existing = edgeMap.get(key);
-      if (existing) {
-        existing.weight += row.weight;
-        existing.minUsageLine = Math.min(existing.minUsageLine, row.min_usage_line);
-      } else {
-        edgeMap.set(key, {
-          fromId: row.from_id,
-          toId: row.to_id,
-          weight: row.weight,
-          minUsageLine: row.min_usage_line,
-        });
-      }
-    }
-
-    return Array.from(edgeMap.values());
+    return queryCallGraphEdges(this.db);
   }
 }

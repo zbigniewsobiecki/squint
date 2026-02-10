@@ -64,7 +64,7 @@ export class FlowValidator {
 
     // 1. Check if entry point module is valid
     if (flow.entryPointModuleId !== null) {
-      const entryPointModule = this.db.getModuleById(flow.entryPointModuleId);
+      const entryPointModule = this.db.modules.getById(flow.entryPointModuleId);
       if (!entryPointModule) {
         errors.push({
           type: 'invalid_entry_point_module',
@@ -77,7 +77,7 @@ export class FlowValidator {
 
     // 2. Check if entry point definition is valid (if set)
     if (flow.entryPointId !== null) {
-      const entryPoint = this.db.getDefinitionById(flow.entryPointId);
+      const entryPoint = this.db.definitions.getById(flow.entryPointId);
       if (!entryPoint) {
         errors.push({
           type: 'invalid_entry_point',
@@ -89,7 +89,7 @@ export class FlowValidator {
     }
 
     // 3. Check steps
-    const steps = this.db.getFlowSteps(flow.id);
+    const steps = this.db.flows.getSteps(flow.id);
 
     if (steps.length === 0) {
       warnings.push({
@@ -110,7 +110,7 @@ export class FlowValidator {
 
     // 4. Validate each step's interaction exists
     for (const step of steps) {
-      const interaction = this.db.getInteractionById(step.interactionId);
+      const interaction = this.db.interactions.getById(step.interactionId);
       if (!interaction) {
         errors.push({
           type: 'invalid_interaction_id',
@@ -141,7 +141,7 @@ export class FlowValidator {
    * Validate all flows in the database.
    */
   validateAllFlows(): Map<number, FlowValidationResult> {
-    const flows = this.db.getAllFlows();
+    const flows = this.db.flows.getAll();
     const results = new Map<number, FlowValidationResult>();
 
     for (const flow of flows) {
@@ -155,7 +155,7 @@ export class FlowValidator {
    * Find duplicate slugs.
    */
   findDuplicateSlugs(): Array<{ slug: string; flows: Flow[] }> {
-    const flows = this.db.getAllFlows();
+    const flows = this.db.flows.getAll();
     const bySlug = new Map<string, Flow[]>();
 
     for (const flow of flows) {
@@ -188,7 +188,7 @@ export interface InteractionValidationError {
 export function validateInteraction(db: IndexDatabase, interaction: Interaction): InteractionValidationError[] {
   const errors: InteractionValidationError[] = [];
 
-  const fromModule = db.getModuleById(interaction.fromModuleId);
+  const fromModule = db.modules.getById(interaction.fromModuleId);
   if (!fromModule) {
     errors.push({
       type: 'invalid_module_id',
@@ -197,7 +197,7 @@ export function validateInteraction(db: IndexDatabase, interaction: Interaction)
     });
   }
 
-  const toModule = db.getModuleById(interaction.toModuleId);
+  const toModule = db.modules.getById(interaction.toModuleId);
   if (!toModule) {
     errors.push({
       type: 'invalid_module_id',
@@ -225,15 +225,15 @@ export interface CoverageGap {
  * Find interactions not covered by any flow.
  */
 export function findUncoveredInteractions(db: IndexDatabase): InteractionWithPaths[] {
-  return db.getUncoveredInteractions();
+  return db.flows.getUncoveredInteractions();
 }
 
 /**
  * Find module edges that don't have interactions.
  */
 export function findMissingInteractions(db: IndexDatabase): CoverageGap[] {
-  const moduleEdges = db.getModuleCallGraph();
-  const interactions = db.getAllInteractions();
+  const moduleEdges = db.callGraph.getModuleCallGraph();
+  const interactions = db.interactions.getAll();
 
   // Build set of interaction edges
   const interactionEdges = new Set<string>();

@@ -1,9 +1,11 @@
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 
+import path from 'node:path';
+
+import type { Module } from '../../db/database.js';
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
-import { checkModuleAssignments } from './_shared/verify/coverage-checker.js';
 import {
   type LlmLogOptions,
   completeWithLogging,
@@ -27,8 +29,10 @@ import {
   buildRebalanceUserPrompt,
   buildTreeSystemPrompt,
   buildTreeUserPrompt,
+  isTestFile,
   toSymbolForAssignment,
 } from './_shared/module-prompts.js';
+import { checkModuleAssignments } from './_shared/verify/coverage-checker.js';
 
 export default class Modules extends BaseLlmCommand {
   static override description = 'Create module tree structure and assign symbols using LLM';
@@ -104,7 +108,7 @@ export default class Modules extends BaseLlmCommand {
     }
 
     // Check existing modules
-    const existingModuleCount = db.getModuleCount();
+    const existingModuleCount = db.modules.getCount();
 
     if (!incremental) {
       if (
@@ -112,7 +116,7 @@ export default class Modules extends BaseLlmCommand {
           entityName: 'Modules',
           existingCount: existingModuleCount,
           force: flags.force as boolean,
-          clearFn: () => db.clearModules(),
+          clearFn: () => db.modules.clear(),
           forceHint: 'Use --force to recreate or --incremental to assign unassigned symbols',
         })
       ) {
@@ -138,9 +142,20 @@ export default class Modules extends BaseLlmCommand {
         await this.runAssignmentCoverageGate(db, flags, maxUnassignedPct, maxGateRetries, isJson, verbose);
       }
 
+      // Deterministic fallback for symbols LLM couldn't assign
+      if (!dryRun) {
+        const remaining = db.modules.getUnassigned();
+        if (remaining.length > 0) {
+          const fallbackCount = this.assignByFileCohortFallback(db, isJson, verbose);
+          if (fallbackCount > 0 && !isJson) {
+            this.log(chalk.green(`  Deterministic fallback: assigned ${fallbackCount} remaining symbols`));
+          }
+        }
+      }
+
       // Prune empty leaf modules after assignment
       if (!dryRun) {
-        const pruned = db.pruneEmptyLeafModules();
+        const pruned = db.modules.pruneEmptyLeaves();
         if (pruned > 0 && !isJson) {
           this.log(chalk.green(`  Pruned ${pruned} empty leaf modules`));
         }
@@ -153,7 +168,7 @@ export default class Modules extends BaseLlmCommand {
 
         // Prune any modules emptied by reassignment during deepening
         if (!dryRun) {
-          const pruned = db.pruneEmptyLeafModules();
+          const pruned = db.modules.pruneEmptyLeaves();
           if (pruned > 0 && !isJson) {
             this.log(chalk.green(`  Pruned ${pruned} empty leaf modules after deepening`));
           }
@@ -163,12 +178,12 @@ export default class Modules extends BaseLlmCommand {
 
     // Assign color indices for consistent cross-view coloring
     if (!dryRun) {
-      db.assignColorIndices();
+      db.modules.assignColorIndices();
     }
 
     // Final stats
     if (!dryRun) {
-      const stats = db.getModuleStats();
+      const stats = db.modules.getStats();
       if (isJson) {
         this.log(JSON.stringify(stats));
       } else {
@@ -199,7 +214,7 @@ export default class Modules extends BaseLlmCommand {
 
     // Ensure root module exists
     if (!dryRun) {
-      db.ensureRootModule();
+      db.modules.ensureRoot();
     }
 
     // Gather context for the LLM
@@ -300,14 +315,14 @@ export default class Modules extends BaseLlmCommand {
 
     let insertedCount = 0;
     for (const mod of sortedModules) {
-      if (maxModules > 0 && db.getModuleCount() >= maxModules) {
+      if (maxModules > 0 && db.modules.getCount() >= maxModules) {
         if (!isJson) {
           this.log(chalk.yellow(`  Reached max-modules limit (${maxModules}), stopping module creation`));
         }
         break;
       }
 
-      const parent = db.getModuleByPath(mod.parentPath);
+      const parent = db.modules.getByPath(mod.parentPath);
       if (!parent) {
         if (verbose && !isJson) {
           this.log(chalk.yellow(`  Skipping ${mod.slug}: parent ${mod.parentPath} not found`));
@@ -316,7 +331,7 @@ export default class Modules extends BaseLlmCommand {
       }
 
       try {
-        db.insertModule(parent.id, mod.slug, mod.name, mod.description, mod.isTest);
+        db.modules.insert(parent.id, mod.slug, mod.name, mod.description, mod.isTest);
         insertedCount++;
       } catch (error) {
         if (verbose && !isJson) {
@@ -348,7 +363,7 @@ export default class Modules extends BaseLlmCommand {
     }
 
     // Get all modules
-    const modules = db.getAllModules();
+    const modules = db.modules.getAll();
     if (modules.length === 0) {
       if (isJson) {
         this.log(JSON.stringify({ error: 'No modules found. Run tree phase first.' }));
@@ -362,7 +377,7 @@ export default class Modules extends BaseLlmCommand {
     const moduleByPath = new Map(modules.map((m) => [m.fullPath, m]));
 
     // Get unassigned symbols
-    const unassignedSymbols = db.getUnassignedSymbols();
+    const unassignedSymbols = db.modules.getUnassigned();
     if (unassignedSymbols.length === 0) {
       if (isJson) {
         this.log(JSON.stringify({ message: 'All symbols already assigned' }));
@@ -381,13 +396,24 @@ export default class Modules extends BaseLlmCommand {
     const maxIterations = flags['max-iterations'] as number;
     const systemPrompt = buildAssignmentSystemPrompt();
 
+    // Auto-adjust max iterations to ensure every symbol gets at least one LLM attempt
+    const neededIterations = Math.ceil(unassignedSymbols.length / batchSize);
+    const effectiveMaxIterations = Math.max(maxIterations, neededIterations);
+    if (effectiveMaxIterations > maxIterations && !isJson) {
+      this.log(
+        chalk.gray(
+          `  Auto-adjusted max iterations: ${maxIterations} → ${effectiveMaxIterations} (to cover all ${unassignedSymbols.length} symbols)`
+        )
+      );
+    }
+
     let totalAssigned = 0;
     let iteration = 0;
     const allAssignments: Array<{ symbolId: number; modulePath: string }> = [];
     let directoryHints: Map<number, string[]> | undefined;
 
     // Process in batches
-    for (let i = 0; i < unassignedSymbols.length && iteration < maxIterations; i += batchSize) {
+    for (let i = 0; i < unassignedSymbols.length && iteration < effectiveMaxIterations; i += batchSize) {
       iteration++;
       const batch = unassignedSymbols.slice(i, i + batchSize);
       const symbolsForAssignment = batch.map(toSymbolForAssignment);
@@ -413,7 +439,7 @@ export default class Modules extends BaseLlmCommand {
           temperature: 0,
           command: this,
           isJson,
-          iteration: { current: iteration, max: maxIterations },
+          iteration: { current: iteration, max: effectiveMaxIterations },
         });
 
         logLlmResponse(this, `runAssignmentPhase-batch${iteration}`, response, llmLogOptions);
@@ -424,41 +450,47 @@ export default class Modules extends BaseLlmCommand {
           this.log(chalk.yellow(`    Parse warnings: ${errors.length}`));
         }
 
-        // Validate and collect assignments
-        let batchFuzzy = 0;
-        let batchInvalidPath = 0;
-        let batchNotFound = 0;
+        // Validate and apply assignments
+        const result = this.applyParsedAssignments(assignments, moduleByPath, db, dryRun, allAssignments);
+        totalAssigned += result.assigned;
 
-        for (const assignment of assignments) {
-          if (!isValidModulePath(assignment.modulePath)) {
-            batchInvalidPath++;
-            continue;
-          }
-
-          let targetModule = moduleByPath.get(assignment.modulePath);
-          if (!targetModule) {
-            targetModule = this.resolveModulePath(assignment.modulePath, moduleByPath);
-            if (targetModule) {
-              batchFuzzy++;
-            } else {
-              batchNotFound++;
-              continue;
-            }
-          }
-
-          if (!dryRun) {
-            db.assignSymbolToModule(assignment.symbolId, targetModule.id);
-          }
-          allAssignments.push({ symbolId: assignment.symbolId, modulePath: targetModule.fullPath });
-          totalAssigned++;
+        if (!isJson && (result.invalidPath > 0 || result.notFound > 0 || result.fuzzy > 0)) {
+          const parts: string[] = [];
+          if (result.fuzzy > 0) parts.push(`${result.fuzzy} fuzzy-resolved`);
+          if (result.invalidPath > 0) parts.push(`${result.invalidPath} invalid-path`);
+          if (result.notFound > 0) parts.push(`${result.notFound} not-found`);
+          this.log(chalk.yellow(`    Batch ${iteration}: ${parts.join(', ')}`));
         }
 
-        if (!isJson && (batchInvalidPath > 0 || batchNotFound > 0 || batchFuzzy > 0)) {
-          const parts: string[] = [];
-          if (batchFuzzy > 0) parts.push(`${batchFuzzy} fuzzy-resolved`);
-          if (batchInvalidPath > 0) parts.push(`${batchInvalidPath} invalid-path`);
-          if (batchNotFound > 0) parts.push(`${batchNotFound} not-found`);
-          this.log(chalk.yellow(`    Batch ${iteration}: ${parts.join(', ')}`));
+        // Detect omitted symbols and retry once
+        const returnedIds = new Set(assignments.map((a) => a.symbolId));
+        const omittedSymbols = batch.filter((s) => !returnedIds.has(s.id));
+
+        if (omittedSymbols.length > 0 && omittedSymbols.length <= batchSize / 2) {
+          const retrySymbols = omittedSymbols.map(toSymbolForAssignment);
+          const retryUserPrompt = buildAssignmentUserPrompt(modules, retrySymbols, directoryHints);
+
+          try {
+            const retryResponse = await completeWithLogging({
+              model: flags.model as string,
+              systemPrompt,
+              userPrompt: retryUserPrompt,
+              temperature: 0,
+              command: this,
+              isJson,
+              iteration: { current: iteration, max: effectiveMaxIterations },
+            });
+
+            const { assignments: retryAssignments } = parseAssignmentCsv(retryResponse);
+            const retryResult = this.applyParsedAssignments(retryAssignments, moduleByPath, db, dryRun, allAssignments);
+            totalAssigned += retryResult.assigned;
+
+            if (verbose && !isJson) {
+              this.log(chalk.gray(`    Retry: ${omittedSymbols.length} omitted → ${retryResult.assigned} assigned`));
+            }
+          } catch {
+            // Retry failed — will be caught by coverage gate or fallback
+          }
         }
 
         if (!isJson && !verbose) {
@@ -512,7 +544,7 @@ export default class Modules extends BaseLlmCommand {
     isJson: boolean,
     _verbose: boolean
   ): Promise<void> {
-    const stats = db.getModuleStats();
+    const stats = db.modules.getStats();
     const total = stats.assigned + stats.unassigned;
     if (total === 0) return;
 
@@ -529,7 +561,7 @@ export default class Modules extends BaseLlmCommand {
       );
     }
 
-    const modules = db.getAllModules();
+    const modules = db.modules.getAll();
     const moduleByPath = new Map(modules.map((m) => [m.fullPath, m]));
     const batchSize = flags['batch-size'] as number;
 
@@ -552,10 +584,11 @@ assignment,42,project.frontend.screens.login
 - Every symbol must be assigned to exactly one module
 - Module paths must match existing modules in the tree
 - Prefer more specific modules, but if unsure use the closest parent
-- Consider the file path as a strong hint`;
+- Consider the file path as a strong hint
+- CRITICAL: Output exactly one assignment row for every symbol listed. Do not skip any.`;
 
     for (let retry = 0; retry < maxGateRetries; retry++) {
-      const unassigned = db.getUnassignedSymbols();
+      const unassigned = db.modules.getUnassigned();
       if (unassigned.length === 0) break;
 
       const currentPct = (unassigned.length / total) * 100;
@@ -605,7 +638,7 @@ assignment,42,project.frontend.screens.login
               }
             }
 
-            db.assignSymbolToModule(assignment.symbolId, targetModule.id);
+            db.modules.assignSymbol(assignment.symbolId, targetModule.id);
             passAssigned++;
           }
         } catch (error) {
@@ -635,7 +668,7 @@ assignment,42,project.frontend.screens.login
       }
 
       // Re-check
-      const updatedStats = db.getModuleStats();
+      const updatedStats = db.modules.getStats();
       unassignedPct = (updatedStats.unassigned / total) * 100;
       if (unassignedPct <= maxUnassignedPct) {
         if (!isJson) {
@@ -646,7 +679,7 @@ assignment,42,project.frontend.screens.login
     }
 
     if (!isJson) {
-      const finalStats = db.getModuleStats();
+      const finalStats = db.modules.getStats();
       const finalPct = (finalStats.unassigned / total) * 100;
       this.log(
         chalk.yellow(`  Coverage gate: ${finalPct.toFixed(1)}% still unassigned after ${maxGateRetries} retries`)
@@ -680,7 +713,7 @@ assignment,42,project.frontend.screens.login
 
     // Step 1: Rebalance branch modules (no new modules, no budget spent)
     if (!dryRun) {
-      const branchModules = db.getBranchModulesWithDirectMembers(threshold);
+      const branchModules = db.modules.getBranchModulesWithDirectMembers(threshold);
       if (branchModules.length > 0 && !isJson) {
         this.log(chalk.gray(`  Rebalancing ${branchModules.length} branch modules with direct members`));
       }
@@ -690,7 +723,7 @@ assignment,42,project.frontend.screens.login
         }
 
         // Get existing children paths
-        const children = db.getModuleChildren(mod.id);
+        const children = db.modules.getChildren(mod.id);
         const childPaths = children.map((c) => c.fullPath);
 
         if (childPaths.length === 0) continue;
@@ -725,8 +758,8 @@ assignment,42,project.frontend.screens.login
 
       // Query leaf modules exceeding threshold (largest first)
       const largeLeaves = dryRun
-        ? db.getModulesExceedingThreshold(threshold)
-        : db.getLeafModulesExceedingThreshold(threshold);
+        ? db.modules.getModulesExceedingThreshold(threshold)
+        : db.modules.getLeafModulesExceedingThreshold(threshold);
 
       if (largeLeaves.length === 0) {
         if (verbose && !isJson) {
@@ -809,7 +842,7 @@ assignment,42,project.frontend.screens.login
           // Create sub-modules
           const createdSubModulePaths: string[] = [];
           for (const subMod of newModules) {
-            if (maxModules > 0 && db.getModuleCount() >= maxModules) {
+            if (maxModules > 0 && db.modules.getCount() >= maxModules) {
               if (!isJson) {
                 this.log(chalk.yellow(`  Reached max-modules limit (${maxModules}), stopping module creation`));
               }
@@ -817,7 +850,7 @@ assignment,42,project.frontend.screens.login
               break;
             }
 
-            const parent = db.getModuleByPath(subMod.parentPath);
+            const parent = db.modules.getByPath(subMod.parentPath);
             if (!parent) {
               if (verbose && !isJson) {
                 this.log(chalk.yellow(`      Parent not found: ${subMod.parentPath}`));
@@ -827,7 +860,7 @@ assignment,42,project.frontend.screens.login
 
             try {
               // isTest is inherited from parent in ModuleRepository.insert()
-              db.insertModule(parent.id, subMod.slug, subMod.name, subMod.description);
+              db.modules.insert(parent.id, subMod.slug, subMod.name, subMod.description);
               totalNewModules++;
               createdSubModulePaths.push(`${subMod.parentPath}.${subMod.slug}`);
             } catch (error) {
@@ -840,7 +873,7 @@ assignment,42,project.frontend.screens.login
 
           // Reassign symbols to new sub-modules
           for (const reassignment of reassignments) {
-            const targetModule = db.getModuleByPath(reassignment.targetModulePath);
+            const targetModule = db.modules.getByPath(reassignment.targetModulePath);
             if (!targetModule) {
               if (verbose && !isJson) {
                 this.log(chalk.yellow(`      Target module not found: ${reassignment.targetModulePath}`));
@@ -848,7 +881,7 @@ assignment,42,project.frontend.screens.login
               continue;
             }
 
-            db.assignSymbolToModule(reassignment.definitionId, targetModule.id);
+            db.modules.assignSymbol(reassignment.definitionId, targetModule.id);
             totalReassignments++;
           }
 
@@ -930,9 +963,9 @@ assignment,42,project.frontend.screens.login
     // Collect symbols from each ancestor
     const ancestorSymbols: AncestorSymbolGroup[] = [];
     for (const path of ancestorPaths) {
-      const mod = db.getModuleByPath(path);
+      const mod = db.modules.getByPath(path);
       if (!mod) continue;
-      const symbols = db.getModuleSymbols(mod.id);
+      const symbols = db.modules.getSymbols(mod.id);
       if (symbols.length === 0) continue;
       ancestorSymbols.push({ moduleId: mod.id, modulePath: path, symbols });
     }
@@ -949,7 +982,7 @@ assignment,42,project.frontend.screens.login
     // Build info about new sub-modules
     const newSubModules: NewSubModuleInfo[] = [];
     for (const subPath of newSubModulePaths) {
-      const mod = db.getModuleByPath(subPath);
+      const mod = db.modules.getByPath(subPath);
       if (!mod) continue;
       newSubModules.push({ path: mod.fullPath, name: mod.name, description: mod.description });
     }
@@ -984,7 +1017,7 @@ assignment,42,project.frontend.screens.login
       const validSubPaths = new Set(newSubModulePaths);
       const subModuleByPath = new Map<string, { id: number; fullPath: string }>();
       for (const p of newSubModulePaths) {
-        const mod = db.getModuleByPath(p);
+        const mod = db.modules.getByPath(p);
         if (mod) subModuleByPath.set(p, { id: mod.id, fullPath: mod.fullPath });
       }
       let rebalanced = 0;
@@ -1006,7 +1039,7 @@ assignment,42,project.frontend.screens.login
           continue;
         }
 
-        db.assignSymbolToModule(assignment.symbolId, targetModule.id);
+        db.modules.assignSymbol(assignment.symbolId, targetModule.id);
         rebalanced++;
       }
 
@@ -1022,6 +1055,49 @@ assignment,42,project.frontend.screens.login
       }
       return 0;
     }
+  }
+
+  /**
+   * Validate and apply parsed assignment rows.
+   * Returns counts of assigned, fuzzy-resolved, invalid-path, and not-found assignments.
+   */
+  private applyParsedAssignments(
+    assignments: Array<{ symbolId: number; modulePath: string }>,
+    moduleByPath: Map<string, Module>,
+    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never,
+    dryRun: boolean,
+    allAssignments: Array<{ symbolId: number; modulePath: string }>
+  ): { assigned: number; fuzzy: number; invalidPath: number; notFound: number } {
+    let assigned = 0;
+    let fuzzy = 0;
+    let invalidPath = 0;
+    let notFound = 0;
+
+    for (const assignment of assignments) {
+      if (!isValidModulePath(assignment.modulePath)) {
+        invalidPath++;
+        continue;
+      }
+
+      let targetModule = moduleByPath.get(assignment.modulePath);
+      if (!targetModule) {
+        targetModule = this.resolveModulePath(assignment.modulePath, moduleByPath);
+        if (targetModule) {
+          fuzzy++;
+        } else {
+          notFound++;
+          continue;
+        }
+      }
+
+      if (!dryRun) {
+        db.modules.assignSymbol(assignment.symbolId, targetModule.id);
+      }
+      allAssignments.push({ symbolId: assignment.symbolId, modulePath: targetModule.fullPath });
+      assigned++;
+    }
+
+    return { assigned, fuzzy, invalidPath, notFound };
   }
 
   /**
@@ -1066,7 +1142,7 @@ assignment,42,project.frontend.screens.login
     db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never
   ): Map<number, string[]> {
     const hints = new Map<number, string[]>();
-    for (const mod of db.getAllModulesWithMembers()) {
+    for (const mod of db.modules.getAllWithMembers()) {
       if (mod.members.length === 0) continue;
       const dirCounts = new Map<string, number>();
       for (const m of mod.members) {
@@ -1082,6 +1158,134 @@ assignment,42,project.frontend.screens.login
       );
     }
     return hints;
+  }
+
+  /**
+   * Deterministic fallback: assign remaining unassigned symbols using file/directory cohort majority.
+   * Tier 1: If other symbols in the same file are assigned to a module, assign there.
+   * Tier 2: If other symbols in the same directory are assigned to a module, assign there.
+   *         Walks up parent directories if no match at the immediate level.
+   * Test-file guard: test file symbols only assigned to test modules.
+   */
+  private assignByFileCohortFallback(
+    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never,
+    isJson: boolean,
+    verbose: boolean
+  ): number {
+    const allModulesWithMembers = db.modules.getAllWithMembers();
+    const allModules = db.modules.getAll();
+    const moduleById = new Map(allModules.map((m) => [m.id, m]));
+
+    // Build per-file and per-directory module counts from assigned symbols
+    const fileModuleCounts = new Map<string, Map<number, number>>();
+    const dirModuleCounts = new Map<string, Map<number, number>>();
+
+    for (const mod of allModulesWithMembers) {
+      for (const member of mod.members) {
+        // Per-file counts
+        let fileCounts = fileModuleCounts.get(member.filePath);
+        if (!fileCounts) {
+          fileCounts = new Map();
+          fileModuleCounts.set(member.filePath, fileCounts);
+        }
+        fileCounts.set(mod.id, (fileCounts.get(mod.id) ?? 0) + 1);
+
+        // Per-directory counts
+        const dir = path.dirname(member.filePath);
+        if (dir) {
+          let dirCounts = dirModuleCounts.get(dir);
+          if (!dirCounts) {
+            dirCounts = new Map();
+            dirModuleCounts.set(dir, dirCounts);
+          }
+          dirCounts.set(mod.id, (dirCounts.get(mod.id) ?? 0) + 1);
+        }
+      }
+    }
+
+    // Resolve majority module per file
+    const fileMajority = new Map<string, { moduleId: number; count: number }>();
+    for (const [filePath, moduleCounts] of fileModuleCounts) {
+      let bestModuleId = -1;
+      let bestCount = 0;
+      for (const [moduleId, count] of moduleCounts) {
+        if (count > bestCount) {
+          bestModuleId = moduleId;
+          bestCount = count;
+        }
+      }
+      if (bestModuleId >= 0) {
+        fileMajority.set(filePath, { moduleId: bestModuleId, count: bestCount });
+      }
+    }
+
+    // Resolve majority module per directory
+    const dirMajority = new Map<string, { moduleId: number; count: number }>();
+    for (const [dir, moduleCounts] of dirModuleCounts) {
+      let bestModuleId = -1;
+      let bestCount = 0;
+      for (const [moduleId, count] of moduleCounts) {
+        if (count > bestCount) {
+          bestModuleId = moduleId;
+          bestCount = count;
+        }
+      }
+      if (bestModuleId >= 0) {
+        dirMajority.set(dir, { moduleId: bestModuleId, count: bestCount });
+      }
+    }
+
+    const unassigned = db.modules.getUnassigned();
+    let tier1Count = 0;
+    let tier2Count = 0;
+    const stillUnassigned: typeof unassigned = [];
+
+    for (const sym of unassigned) {
+      const symIsTest = isTestFile(sym.filePath);
+
+      // Tier 1: Same-file majority
+      const fileMaj = fileMajority.get(sym.filePath);
+      if (fileMaj) {
+        const mod = moduleById.get(fileMaj.moduleId);
+        if (mod && (!symIsTest || mod.isTest)) {
+          db.modules.assignSymbol(sym.id, fileMaj.moduleId);
+          tier1Count++;
+          continue;
+        }
+      }
+
+      // Tier 2: Same-directory majority, walking up parent dirs
+      let dir = path.dirname(sym.filePath);
+      let assigned = false;
+      while (dir && dir !== '.' && dir !== '/') {
+        const dirMaj = dirMajority.get(dir);
+        if (dirMaj) {
+          const mod = moduleById.get(dirMaj.moduleId);
+          if (mod && (!symIsTest || mod.isTest)) {
+            db.modules.assignSymbol(sym.id, dirMaj.moduleId);
+            tier2Count++;
+            assigned = true;
+            break;
+          }
+        }
+        dir = path.dirname(dir);
+      }
+
+      if (!assigned) {
+        stillUnassigned.push(sym);
+      }
+    }
+
+    if (verbose && !isJson) {
+      this.log(chalk.gray('  Deterministic fallback:'));
+      this.log(chalk.gray(`    Tier 1 (file cohort): ${tier1Count} assigned`));
+      this.log(chalk.gray(`    Tier 2 (directory cohort): ${tier2Count} assigned`));
+      if (stillUnassigned.length > 0) {
+        this.log(chalk.gray(`    Still unassigned: ${stillUnassigned.length}`));
+      }
+    }
+
+    return tier1Count + tier2Count;
   }
 
   /**
@@ -1136,7 +1340,7 @@ assignment,42,project.frontend.screens.login
       const testInProdIssues = result.issues.filter((i) => i.fixData?.action === 'move-to-test-module');
       if (testInProdIssues.length > 0) {
         // Find a test module to move symbols to
-        const modules = db.getAllModules();
+        const modules = db.modules.getAll();
         const testModules = modules.filter((m) => m.isTest);
 
         if (testModules.length === 0) {
@@ -1149,7 +1353,7 @@ assignment,42,project.frontend.screens.login
           let fixed = 0;
           for (const issue of testInProdIssues) {
             if (issue.definitionId) {
-              db.assignSymbolToModule(issue.definitionId, targetModule.id);
+              db.modules.assignSymbol(issue.definitionId, targetModule.id);
               fixed++;
             }
           }
@@ -1173,7 +1377,7 @@ assignment,42,project.frontend.screens.login
     maxModules?: number
   ): TreeGenerationContext {
     // Get all annotated symbols
-    const allSymbols = db.getUnassignedSymbols();
+    const allSymbols = db.modules.getUnassigned();
 
     // Aggregate by domain
     const domainMap = new Map<

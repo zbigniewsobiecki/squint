@@ -29,7 +29,7 @@ describe('hierarchy command', () => {
     db.initialize();
 
     // Insert test files
-    const controllersFileId = db.insertFile({
+    const controllersFileId = db.files.insert({
       path: path.join(testDir, 'controllers.ts'),
       language: 'typescript',
       contentHash: computeHash('controllers content'),
@@ -37,7 +37,7 @@ describe('hierarchy command', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    const servicesFileId = db.insertFile({
+    const servicesFileId = db.files.insert({
       path: path.join(testDir, 'services.ts'),
       language: 'typescript',
       contentHash: computeHash('services content'),
@@ -45,7 +45,7 @@ describe('hierarchy command', () => {
       modifiedAt: '2024-01-01T00:00:00.000Z',
     });
 
-    mainFileId = db.insertFile({
+    mainFileId = db.files.insert({
       path: path.join(testDir, 'main.ts'),
       language: 'typescript',
       contentHash: computeHash('main content'),
@@ -56,7 +56,7 @@ describe('hierarchy command', () => {
     // Create class hierarchy for extends
     // BaseController <- UserController <- AdminController
     // BaseController <- AuthController
-    baseControllerId = db.insertDefinition(controllersFileId, {
+    baseControllerId = db.files.insertDefinition(controllersFileId, {
       name: 'BaseController',
       kind: 'class',
       isExported: true,
@@ -65,7 +65,7 @@ describe('hierarchy command', () => {
       endPosition: { row: 20, column: 1 },
     });
 
-    userControllerId = db.insertDefinition(controllersFileId, {
+    userControllerId = db.files.insertDefinition(controllersFileId, {
       name: 'UserController',
       kind: 'class',
       isExported: true,
@@ -75,7 +75,7 @@ describe('hierarchy command', () => {
       endPosition: { row: 45, column: 1 },
     });
 
-    adminControllerId = db.insertDefinition(controllersFileId, {
+    adminControllerId = db.files.insertDefinition(controllersFileId, {
       name: 'AdminController',
       kind: 'class',
       isExported: true,
@@ -85,7 +85,7 @@ describe('hierarchy command', () => {
       endPosition: { row: 70, column: 1 },
     });
 
-    authControllerId = db.insertDefinition(controllersFileId, {
+    authControllerId = db.files.insertDefinition(controllersFileId, {
       name: 'AuthController',
       kind: 'class',
       isExported: true,
@@ -96,7 +96,7 @@ describe('hierarchy command', () => {
     });
 
     // Create interface for implements
-    serializableId = db.insertDefinition(servicesFileId, {
+    serializableId = db.files.insertDefinition(servicesFileId, {
       name: 'Serializable',
       kind: 'interface',
       isExported: true,
@@ -105,7 +105,7 @@ describe('hierarchy command', () => {
       endPosition: { row: 5, column: 1 },
     });
 
-    userServiceId = db.insertDefinition(servicesFileId, {
+    userServiceId = db.files.insertDefinition(servicesFileId, {
       name: 'UserService',
       kind: 'class',
       isExported: true,
@@ -116,7 +116,7 @@ describe('hierarchy command', () => {
     });
 
     // Create functions for call hierarchy
-    mainFunctionId = db.insertDefinition(mainFileId, {
+    mainFunctionId = db.files.insertDefinition(mainFileId, {
       name: 'main',
       kind: 'function',
       isExported: true,
@@ -125,7 +125,7 @@ describe('hierarchy command', () => {
       endPosition: { row: 20, column: 1 },
     });
 
-    helperFunctionId = db.insertDefinition(mainFileId, {
+    helperFunctionId = db.files.insertDefinition(mainFileId, {
       name: 'helper',
       kind: 'function',
       isExported: true,
@@ -135,7 +135,7 @@ describe('hierarchy command', () => {
     });
 
     // Create inheritance relationships in relationship_annotations
-    db.createInheritanceRelationships();
+    db.graph.createInheritanceRelationships();
 
     db.close();
   });
@@ -293,7 +293,7 @@ describe('hierarchy command', () => {
     beforeEach(() => {
       // Add some relationship annotations
       const setupDb = new IndexDatabase(dbPath);
-      setupDb.setRelationshipAnnotation(userControllerId, userServiceId, 'uses for user operations', 'uses');
+      setupDb.relationships.set(userControllerId, userServiceId, 'uses for user operations', 'uses');
       setupDb.close();
     });
 

@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CallGraphService } from '../../../src/db/repositories/call-graph-service.js';
 import { FileRepository } from '../../../src/db/repositories/file-repository.js';
+import { InteractionAnalysis } from '../../../src/db/repositories/interaction-analysis.js';
 import { InteractionRepository } from '../../../src/db/repositories/interaction-repository.js';
 import { ModuleRepository } from '../../../src/db/repositories/module-repository.js';
 import { RelationshipRepository } from '../../../src/db/repositories/relationship-repository.js';
@@ -12,6 +14,8 @@ describe('InteractionRepository', () => {
   let moduleRepo: ModuleRepository;
   let fileRepo: FileRepository;
   let relationshipRepo: RelationshipRepository;
+  let callGraphService: CallGraphService;
+  let interactionAnalysis: InteractionAnalysis;
   let moduleId1: number;
   let moduleId2: number;
   let moduleId3: number;
@@ -26,6 +30,8 @@ describe('InteractionRepository', () => {
     moduleRepo = new ModuleRepository(db);
     fileRepo = new FileRepository(db);
     relationshipRepo = new RelationshipRepository(db);
+    callGraphService = new CallGraphService(db);
+    interactionAnalysis = new InteractionAnalysis(db);
 
     // Set up test modules
     const rootId = moduleRepo.ensureRoot();
@@ -362,7 +368,7 @@ describe('InteractionRepository', () => {
       // Add interaction that covers one relationship
       repo.insert(moduleId1, moduleId2);
 
-      const coverage = repo.getRelationshipCoverage();
+      const coverage = interactionAnalysis.getRelationshipCoverage();
 
       expect(coverage.totalRelationships).toBe(2);
       expect(coverage.crossModuleRelationships).toBe(2);
@@ -391,7 +397,7 @@ describe('InteractionRepository', () => {
       // Add same-module relationship (note: set(from, to, semantic, type))
       relationshipRepo.set(defId1, defId4, 'Internal use', 'uses');
 
-      const coverage = repo.getRelationshipCoverage();
+      const coverage = interactionAnalysis.getRelationshipCoverage();
 
       expect(coverage.sameModuleCount).toBe(1);
     });
@@ -399,7 +405,7 @@ describe('InteractionRepository', () => {
 
   describe('getRelationshipCoverageBreakdown', () => {
     it('returns detailed breakdown structure', () => {
-      const breakdown = repo.getRelationshipCoverageBreakdown();
+      const breakdown = interactionAnalysis.getRelationshipCoverageBreakdown();
 
       expect(breakdown).toHaveProperty('covered');
       expect(breakdown).toHaveProperty('sameModule');
@@ -416,7 +422,7 @@ describe('InteractionRepository', () => {
       relationshipRepo.set(defId1, defId2, 'Auth uses API', 'uses');
       relationshipRepo.set(defId2, defId3, 'API uses Core', 'uses');
 
-      const breakdown = repo.getRelationshipCoverageBreakdown();
+      const breakdown = interactionAnalysis.getRelationshipCoverageBreakdown();
 
       // Both symbols have module assignments, so they should be counted
       expect(breakdown.byType.uses).toBe(2);
@@ -426,7 +432,7 @@ describe('InteractionRepository', () => {
   describe('syncInheritanceInteractions', () => {
     it('returns created count', () => {
       // Without inheritance relationships, should return 0
-      const result = repo.syncInheritanceInteractions();
+      const result = interactionAnalysis.syncInheritanceInteractions();
       expect(result).toHaveProperty('created');
       expect(typeof result.created).toBe('number');
     });
@@ -435,7 +441,7 @@ describe('InteractionRepository', () => {
       // Add extends relationship (note: set(from, to, semantic, type))
       relationshipRepo.set(defId1, defId2, 'Auth extends Api', 'extends');
 
-      const result = repo.syncInheritanceInteractions();
+      const result = interactionAnalysis.syncInheritanceInteractions();
 
       // Should create an interaction since defId1 (auth) and defId2 (api) are in different modules
       expect(result.created).toBe(1);
@@ -445,8 +451,8 @@ describe('InteractionRepository', () => {
       relationshipRepo.set(defId1, defId2, 'Auth extends Api', 'extends');
 
       // Run twice
-      repo.syncInheritanceInteractions();
-      const result2 = repo.syncInheritanceInteractions();
+      interactionAnalysis.syncInheritanceInteractions();
+      const result2 = interactionAnalysis.syncInheritanceInteractions();
 
       // Second run should not create any new interactions
       expect(result2.created).toBe(0);
@@ -455,21 +461,21 @@ describe('InteractionRepository', () => {
 
   describe('getModuleCallGraph', () => {
     it('returns empty array when no calls exist', () => {
-      const edges = repo.getModuleCallGraph();
+      const edges = callGraphService.getModuleCallGraph();
       expect(edges).toHaveLength(0);
     });
   });
 
   describe('getEnrichedModuleCallGraph', () => {
     it('returns empty array when no calls exist', () => {
-      const edges = repo.getEnrichedModuleCallGraph();
+      const edges = callGraphService.getEnrichedModuleCallGraph();
       expect(edges).toHaveLength(0);
     });
   });
 
   describe('syncFromCallGraph', () => {
     it('returns zero changes when call graph is empty', () => {
-      const result = repo.syncFromCallGraph();
+      const result = callGraphService.syncFromCallGraph(repo);
       expect(result.created).toBe(0);
       expect(result.updated).toBe(0);
     });
@@ -512,9 +518,7 @@ describe('InteractionRepository', () => {
     });
 
     it('returns only non-type-only imports', () => {
-      const fileId1 = db
-        .prepare("SELECT id FROM files WHERE path = '/test/file.ts'")
-        .get() as { id: number };
+      const fileId1 = db.prepare("SELECT id FROM files WHERE path = '/test/file.ts'").get() as { id: number };
 
       // Runtime import
       db.prepare(
@@ -533,9 +537,7 @@ describe('InteractionRepository', () => {
     });
 
     it('excludes imports where to_file_id is NULL (external)', () => {
-      const fileId1 = db
-        .prepare("SELECT id FROM files WHERE path = '/test/file.ts'")
-        .get() as { id: number };
+      const fileId1 = db.prepare("SELECT id FROM files WHERE path = '/test/file.ts'").get() as { id: number };
 
       // External import (to_file_id = NULL)
       db.prepare(
@@ -553,9 +555,7 @@ describe('InteractionRepository', () => {
     });
 
     it('returns distinct edges', () => {
-      const fileId1 = db
-        .prepare("SELECT id FROM files WHERE path = '/test/file.ts'")
-        .get() as { id: number };
+      const fileId1 = db.prepare("SELECT id FROM files WHERE path = '/test/file.ts'").get() as { id: number };
 
       // Two imports between same files
       db.prepare(
@@ -580,9 +580,7 @@ describe('InteractionRepository', () => {
 
     it('maps file IDs to module IDs correctly', () => {
       const map = repo.getFileToModuleMap();
-      const fileId1 = db
-        .prepare("SELECT id FROM files WHERE path = '/test/file.ts'")
-        .get() as { id: number };
+      const fileId1 = db.prepare("SELECT id FROM files WHERE path = '/test/file.ts'").get() as { id: number };
 
       expect(map.has(fileId1.id)).toBe(true);
     });
@@ -631,7 +629,7 @@ describe('InteractionRepository', () => {
       // LLM-inferred interaction: moduleId1 → moduleId2 (reverse)
       repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
 
-      const issues = repo.validateInferredInteractions();
+      const issues = interactionAnalysis.validateInferredInteractions(repo);
       expect(issues).toHaveLength(1);
       expect(issues[0].issue).toContain('REVERSED');
     });
@@ -641,7 +639,7 @@ describe('InteractionRepository', () => {
       repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
 
       const isSameProcess = () => false; // All pairs are separate-process
-      const issues = repo.validateInferredInteractions(isSameProcess);
+      const issues = interactionAnalysis.validateInferredInteractions(repo, isSameProcess);
 
       // Should skip import checks for separate-process
       const importIssues = issues.filter(
@@ -655,7 +653,7 @@ describe('InteractionRepository', () => {
       repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
 
       const isSameProcess = () => true; // All pairs are same-process
-      const issues = repo.validateInferredInteractions(isSameProcess);
+      const issues = interactionAnalysis.validateInferredInteractions(repo, isSameProcess);
 
       // Should report NO_IMPORTS since no import path exists
       expect(issues.some((i) => i.issue.includes('NO_IMPORTS'))).toBe(true);
@@ -665,7 +663,7 @@ describe('InteractionRepository', () => {
       // LLM-inferred interaction with no import path
       repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
 
-      const issues = repo.validateInferredInteractions();
+      const issues = interactionAnalysis.validateInferredInteractions(repo);
 
       // Should apply import checks (same-process assumption)
       expect(issues.some((i) => i.issue.includes('NO_IMPORTS'))).toBe(true);
@@ -675,15 +673,13 @@ describe('InteractionRepository', () => {
       repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
 
       const isSameProcess = () => false;
-      const issues = repo.validateInferredInteractions(isSameProcess);
+      const issues = interactionAnalysis.validateInferredInteractions(repo, isSameProcess);
 
       expect(issues).toHaveLength(0);
     });
 
     it('same-process pair with reverse imports: DIRECTION_CONFUSED reported', () => {
-      const fileId1 = db
-        .prepare("SELECT id FROM files WHERE path = '/test/file.ts'")
-        .get() as { id: number };
+      const fileId1 = db.prepare("SELECT id FROM files WHERE path = '/test/file.ts'").get() as { id: number };
 
       // Put moduleId2's definition in file2 so module→file mapping is distinct
       const defId4 = fileRepo.insertDefinition(fileId2, {
@@ -705,7 +701,7 @@ describe('InteractionRepository', () => {
       repo.insert(moduleId1, moduleId2, { source: 'llm-inferred' });
 
       const isSameProcess = () => true;
-      const issues = repo.validateInferredInteractions(isSameProcess);
+      const issues = interactionAnalysis.validateInferredInteractions(repo, isSameProcess);
 
       expect(issues.some((i) => i.issue.includes('DIRECTION_CONFUSED'))).toBe(true);
     });

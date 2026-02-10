@@ -21,11 +21,11 @@ describe('flow-validation', () => {
 
   // Helper: set up modules, interactions, and a flow
   function setupBasicData() {
-    const rootId = db.ensureRootModule();
-    const mod1 = db.insertModule(rootId, 'frontend', 'Frontend');
-    const mod2 = db.insertModule(rootId, 'backend', 'Backend');
+    const rootId = db.modules.ensureRoot();
+    const mod1 = db.modules.insert(rootId, 'frontend', 'Frontend');
+    const mod2 = db.modules.insert(rootId, 'backend', 'Backend');
 
-    const fileId = db.insertFile({
+    const fileId = db.files.insert({
       path: '/src/test.ts',
       language: 'typescript',
       contentHash: 'abc123',
@@ -33,7 +33,7 @@ describe('flow-validation', () => {
       modifiedAt: '2024-01-01',
     });
 
-    const def1 = db.insertDefinition(fileId, {
+    const def1 = db.files.insertDefinition(fileId, {
       name: 'handleCreate',
       kind: 'function',
       isExported: true,
@@ -42,14 +42,14 @@ describe('flow-validation', () => {
       endPosition: { row: 9, column: 1 },
     });
 
-    const interactionId = db.insertInteraction(mod1, mod2);
+    const interactionId = db.interactions.insert(mod1, mod2);
 
     return { rootId, mod1, mod2, fileId, def1, interactionId };
   }
 
   // Helper to create additional modules for unique interaction pairs
   function createExtraModule(rootId: number, slug: string) {
-    return db.insertModule(rootId, slug, slug);
+    return db.modules.insert(rootId, slug, slug);
   }
 
   // ============================================
@@ -59,15 +59,15 @@ describe('flow-validation', () => {
     it('validates a well-formed flow as valid', () => {
       const { mod1, def1, interactionId } = setupBasicData();
 
-      const flowId = db.insertFlow('TestFlow', 'test-flow', {
+      const flowId = db.flows.insert('TestFlow', 'test-flow', {
         entryPointModuleId: mod1,
         entryPointId: def1,
         description: 'A test flow',
       });
-      db.addFlowStep(flowId, interactionId);
+      db.flows.addStep(flowId, interactionId);
 
       const validator = new FlowValidator(db);
-      const result = validator.validateFlow(db.getFlowById(flowId)!);
+      const result = validator.validateFlow(db.flows.getById(flowId)!);
       expect(result.valid).toBe(true);
       expect(result.errors).toEqual([]);
     });
@@ -75,13 +75,13 @@ describe('flow-validation', () => {
     it('warns on flow with no steps', () => {
       const { mod1, def1 } = setupBasicData();
 
-      const flowId = db.insertFlow('EmptyFlow', 'empty-flow', {
+      const flowId = db.flows.insert('EmptyFlow', 'empty-flow', {
         entryPointModuleId: mod1,
         entryPointId: def1,
       });
 
       const validator = new FlowValidator(db);
-      const result = validator.validateFlow(db.getFlowById(flowId)!);
+      const result = validator.validateFlow(db.flows.getById(flowId)!);
       expect(result.valid).toBe(true);
       expect(result.warnings.some((w) => w.type === 'no_steps')).toBe(true);
     });
@@ -89,13 +89,13 @@ describe('flow-validation', () => {
     it('warns on flow with no description', () => {
       const { mod1, def1 } = setupBasicData();
 
-      const flowId = db.insertFlow('NoDescFlow', 'no-desc-flow', {
+      const flowId = db.flows.insert('NoDescFlow', 'no-desc-flow', {
         entryPointModuleId: mod1,
         entryPointId: def1,
       });
 
       const validator = new FlowValidator(db);
-      const result = validator.validateFlow(db.getFlowById(flowId)!);
+      const result = validator.validateFlow(db.flows.getById(flowId)!);
       expect(result.warnings.some((w) => w.type === 'missing_description')).toBe(true);
     });
 
@@ -105,13 +105,13 @@ describe('flow-validation', () => {
       // Disable FK constraints to insert invalid reference
       const conn = (db as any).conn;
       conn.pragma('foreign_keys = OFF');
-      const flowId = db.insertFlow('BadModule', 'bad-module', {
+      const flowId = db.flows.insert('BadModule', 'bad-module', {
         entryPointModuleId: 9999,
       });
       conn.pragma('foreign_keys = ON');
 
       const validator = new FlowValidator(db);
-      const result = validator.validateFlow(db.getFlowById(flowId)!);
+      const result = validator.validateFlow(db.flows.getById(flowId)!);
       expect(result.valid).toBe(false);
       expect(result.errors.some((e) => e.type === 'invalid_entry_point_module')).toBe(true);
     });
@@ -121,14 +121,14 @@ describe('flow-validation', () => {
 
       const conn = (db as any).conn;
       conn.pragma('foreign_keys = OFF');
-      const flowId = db.insertFlow('BadDef', 'bad-def', {
+      const flowId = db.flows.insert('BadDef', 'bad-def', {
         entryPointModuleId: mod1,
         entryPointId: 9999,
       });
       conn.pragma('foreign_keys = ON');
 
       const validator = new FlowValidator(db);
-      const result = validator.validateFlow(db.getFlowById(flowId)!);
+      const result = validator.validateFlow(db.flows.getById(flowId)!);
       expect(result.valid).toBe(false);
       expect(result.errors.some((e) => e.type === 'invalid_entry_point')).toBe(true);
     });
@@ -136,7 +136,7 @@ describe('flow-validation', () => {
     it('errors when steps exceed maxSteps', () => {
       const { rootId, mod1, def1 } = setupBasicData();
 
-      const flowId = db.insertFlow('BigFlow', 'big-flow', {
+      const flowId = db.flows.insert('BigFlow', 'big-flow', {
         entryPointModuleId: mod1,
         entryPointId: def1,
       });
@@ -144,12 +144,12 @@ describe('flow-validation', () => {
       // Create many unique module pairs to avoid unique constraint
       for (let i = 0; i < 25; i++) {
         const extraMod = createExtraModule(rootId, `extra-${i}`);
-        const intId = db.insertInteraction(mod1, extraMod);
-        db.addFlowStep(flowId, intId);
+        const intId = db.interactions.insert(mod1, extraMod);
+        db.flows.addStep(flowId, intId);
       }
 
       const validator = new FlowValidator(db, { maxSteps: 20 });
-      const result = validator.validateFlow(db.getFlowById(flowId)!);
+      const result = validator.validateFlow(db.flows.getById(flowId)!);
       expect(result.valid).toBe(false);
       expect(result.errors.some((e) => e.type === 'max_steps_exceeded')).toBe(true);
     });
@@ -157,7 +157,7 @@ describe('flow-validation', () => {
     it('errors on invalid interaction id in steps', () => {
       const { mod1, def1 } = setupBasicData();
 
-      const flowId = db.insertFlow('BadStep', 'bad-step', {
+      const flowId = db.flows.insert('BadStep', 'bad-step', {
         entryPointModuleId: mod1,
         entryPointId: def1,
       });
@@ -171,16 +171,16 @@ describe('flow-validation', () => {
       conn.pragma('foreign_keys = ON');
 
       const validator = new FlowValidator(db);
-      const result = validator.validateFlow(db.getFlowById(flowId)!);
+      const result = validator.validateFlow(db.flows.getById(flowId)!);
       expect(result.valid).toBe(false);
       expect(result.errors.some((e) => e.type === 'invalid_interaction_id')).toBe(true);
     });
 
     it('allows null entry point module and definition', () => {
-      const flowId = db.insertFlow('NullEntry', 'null-entry');
+      const flowId = db.flows.insert('NullEntry', 'null-entry');
 
       const validator = new FlowValidator(db);
-      const result = validator.validateFlow(db.getFlowById(flowId)!);
+      const result = validator.validateFlow(db.flows.getById(flowId)!);
       expect(result.errors.filter((e) => e.type === 'invalid_entry_point_module')).toEqual([]);
       expect(result.errors.filter((e) => e.type === 'invalid_entry_point')).toEqual([]);
     });
@@ -193,14 +193,14 @@ describe('flow-validation', () => {
     it('validates all flows in database', () => {
       const { mod1, def1, interactionId } = setupBasicData();
 
-      const flow1 = db.insertFlow('Flow1', 'flow-1', {
+      const flow1 = db.flows.insert('Flow1', 'flow-1', {
         entryPointModuleId: mod1,
         entryPointId: def1,
         description: 'Flow 1',
       });
-      db.addFlowStep(flow1, interactionId);
+      db.flows.addStep(flow1, interactionId);
 
-      db.insertFlow('Flow2', 'flow-2', { description: 'Flow 2' });
+      db.flows.insert('Flow2', 'flow-2', { description: 'Flow 2' });
 
       const validator = new FlowValidator(db);
       const results = validator.validateAllFlows();
@@ -214,8 +214,8 @@ describe('flow-validation', () => {
   describe('FlowValidator.findDuplicateSlugs', () => {
     it('returns empty for unique slugs', () => {
       setupBasicData();
-      db.insertFlow('Flow1', 'flow-1');
-      db.insertFlow('Flow2', 'flow-2');
+      db.flows.insert('Flow1', 'flow-1');
+      db.flows.insert('Flow2', 'flow-2');
 
       const validator = new FlowValidator(db);
       expect(validator.findDuplicateSlugs()).toEqual([]);
@@ -225,8 +225,8 @@ describe('flow-validation', () => {
       // The DB has a UNIQUE constraint on slug, so test with the data as-is
       // We test that no duplicates are found for non-duplicate data
       setupBasicData();
-      db.insertFlow('Flow A', 'slug-a');
-      db.insertFlow('Flow B', 'slug-b');
+      db.flows.insert('Flow A', 'slug-a');
+      db.flows.insert('Flow B', 'slug-b');
 
       const validator = new FlowValidator(db);
       const dupes = validator.findDuplicateSlugs();
@@ -240,7 +240,7 @@ describe('flow-validation', () => {
   describe('validateInteraction', () => {
     it('returns no errors for valid interaction', () => {
       const { interactionId } = setupBasicData();
-      const interaction = db.getInteractionById(interactionId)!;
+      const interaction = db.interactions.getById(interactionId)!;
       const errors = validateInteraction(db, interaction);
       expect(errors).toEqual([]);
     });
@@ -312,8 +312,8 @@ describe('flow-validation', () => {
 
     it('returns empty when all interactions are covered', () => {
       const { interactionId } = setupBasicData();
-      const flowId = db.insertFlow('Cover', 'cover');
-      db.addFlowStep(flowId, interactionId);
+      const flowId = db.flows.insert('Cover', 'cover');
+      db.flows.addStep(flowId, interactionId);
 
       const uncovered = findUncoveredInteractions(db);
       expect(uncovered).toEqual([]);

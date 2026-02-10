@@ -55,13 +55,17 @@ export default class Next extends Command {
       }
 
       // Get unannotated relationships with enhanced context
-      const relationships = db.getNextRelationshipToAnnotate({
-        limit: flags.count,
-        fromDefinitionId,
-      });
+      const relationships = db.relationships.getNextToAnnotate(
+        {
+          limit: flags.count,
+          fromDefinitionId,
+        },
+        (id) => db.metadata.get(id),
+        (id) => db.dependencies.getForDefinition(id)
+      );
 
       // Get total count for display
-      const totalRemaining = db.getUnannotatedRelationshipCount(fromDefinitionId);
+      const totalRemaining = db.relationships.getUnannotatedCount(fromDefinitionId);
 
       if (relationships.length === 0) {
         if (fromDefinitionId !== undefined) {

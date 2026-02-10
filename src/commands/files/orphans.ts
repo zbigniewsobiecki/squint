@@ -28,7 +28,7 @@ export default class Orphans extends Command {
     const { flags } = await this.parse(Orphans);
 
     await withDatabase(flags.database, this, async (db) => {
-      const orphans = db.getOrphanFiles({
+      const orphans = db.files.getOrphans({
         includeIndex: flags['include-index'],
         includeTests: flags['include-tests'],
       });
