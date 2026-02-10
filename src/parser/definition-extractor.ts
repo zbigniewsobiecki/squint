@@ -150,6 +150,17 @@ function extractClassInheritance(classNode: SyntaxNode): { extends?: string; imp
               }
               break;
             }
+            if (typeNode?.type === 'call_expression') {
+              // For call expressions like extends Gadget({...}), get the function name
+              const fnNode = typeNode.childForFieldName('function');
+              if (fnNode?.type === 'identifier') {
+                result.extends = fnNode.text;
+              } else if (fnNode?.type === 'member_expression') {
+                const property = fnNode.childForFieldName('property');
+                if (property) result.extends = property.text;
+              }
+              break;
+            }
           }
         } else if (clause?.type === 'implements_clause') {
           // Get all type identifiers from implements clause
@@ -202,6 +213,38 @@ function extractInterfaceExtends(interfaceNode: SyntaxNode): string[] {
   }
 
   return result;
+}
+
+/**
+ * Check if a module-level variable has later member expression usages
+ * (e.g., `app.use(...)`, `router.get(...)`) that follow the declaration.
+ * If so, we need to extend endPosition to EOF to capture those usages.
+ */
+function hasLaterMemberUsages(name: string, afterRow: number, rootNode: SyntaxNode): boolean {
+  function check(node: SyntaxNode): boolean {
+    if (node.startPosition.row <= afterRow) return false;
+
+    if (node.type === 'member_expression') {
+      const object = node.childForFieldName('object');
+      if (object?.type === 'identifier' && object.text === name) {
+        return true;
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child && check(child)) return true;
+    }
+    return false;
+  }
+
+  for (let i = 0; i < rootNode.childCount; i++) {
+    const child = rootNode.child(i);
+    if (child && child.startPosition.row > afterRow && check(child)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -262,16 +305,19 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
             const name = getVariableName(child);
             if (name) {
               const exportInfo = exportedNames.get(name);
-              // For module-level variables (const/let/var), extend endPosition to end of file
-              // This captures usages that occur after the declaration in entry-point files
-              // (e.g., `const app = express(); ... app.use(...)`)
+              // For module-level variables, only extend endPosition to EOF if there are
+              // later member expression usages (e.g., `app.use(...)`, `router.get(...)`).
+              // Otherwise, use the declaration's own endPosition.
+              const extendToEof = hasLaterMemberUsages(name, node.endPosition.row, rootNode);
               definitions.push({
                 name,
                 kind,
                 isExported: directlyExported || !!exportInfo,
                 isDefault: directDefault || (exportInfo?.isDefault ?? false),
                 position: { row: node.startPosition.row, column: node.startPosition.column },
-                endPosition: { row: rootNode.endPosition.row, column: rootNode.endPosition.column },
+                endPosition: extendToEof
+                  ? { row: rootNode.endPosition.row, column: rootNode.endPosition.column }
+                  : { row: node.endPosition.row, column: node.endPosition.column },
               });
             }
           }

@@ -19,6 +19,9 @@ import {
   buildRelationshipSystemPrompt,
   buildRelationshipUserPrompt,
 } from './_shared/prompts.js';
+import { verifyRelationshipContent } from './_shared/verify/content-verifier.js';
+import { checkRelationshipCoverage } from './_shared/verify/coverage-checker.js';
+import type { VerifyReport } from './_shared/verify/verify-types.js';
 
 interface JsonIterationOutput {
   iteration: number;
@@ -51,6 +54,14 @@ export default class Relationships extends BaseLlmCommand {
     database: SharedFlags.database,
     json: SharedFlags.json,
     ...LlmFlags,
+    verify: Flags.boolean({
+      description: 'Verify existing relationship annotations instead of creating new ones',
+      default: false,
+    }),
+    fix: Flags.boolean({
+      description: 'Auto-fix structural issues found during verification (e.g., stale files)',
+      default: false,
+    }),
     'batch-size': Flags.integer({
       char: 'b',
       description: 'Number of source symbols per LLM call',
@@ -64,6 +75,12 @@ export default class Relationships extends BaseLlmCommand {
 
   protected async execute(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
     const { db, isJson, dryRun, model } = ctx;
+
+    // Verify mode: run verification instead of annotation
+    if (flags.verify) {
+      await this.runVerify(ctx, flags);
+      return;
+    }
 
     const batchSize = flags['batch-size'] as number;
     const maxIterations = flags['max-iterations'] as number;
@@ -307,6 +324,120 @@ export default class Relationships extends BaseLlmCommand {
       this.log(
         `Coverage: ${finalCoverage.annotated}/${finalCoverage.total} (${pctColor(`${finalCoverage.percentage.toFixed(1)}%`)})`
       );
+    }
+  }
+
+  /**
+   * Run verification mode: Phase 1 (coverage + structural) then optional Phase 2 (LLM content).
+   */
+  private async runVerify(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
+    const { db, isJson, dryRun } = ctx;
+    const batchSize = (flags['batch-size'] as number) || 10;
+    const maxIterations = (flags['max-iterations'] as number) || 0;
+    const shouldFix = flags.fix as boolean;
+
+    if (!isJson) {
+      this.log(chalk.bold('Relationship Verification'));
+      this.log('');
+    }
+
+    // Phase 1: Coverage + structural checks
+    if (!isJson) {
+      this.log(chalk.bold('Phase 1: Coverage & Structural Check'));
+    }
+
+    const phase1 = checkRelationshipCoverage(db);
+    const report: VerifyReport = { phase1 };
+
+    if (!isJson) {
+      this.log(`  Relationships: ${phase1.stats.annotatedRelationships}/${phase1.stats.totalRelationships} annotated`);
+
+      // Show structural issues
+      const errorIssues = phase1.issues.filter((i) => i.severity === 'error');
+      const warningIssues = phase1.issues.filter((i) => i.severity === 'warning');
+
+      if (errorIssues.length > 0) {
+        this.log('');
+        this.log(chalk.red(`  Errors (${errorIssues.length}):`));
+        for (const issue of errorIssues.slice(0, 20)) {
+          this.log(`    ${chalk.red('ERR')} [${issue.category}] ${issue.message}`);
+          if (issue.suggestion) {
+            this.log(`      ${chalk.gray(issue.suggestion)}`);
+          }
+        }
+        if (errorIssues.length > 20) {
+          this.log(chalk.gray(`    ... and ${errorIssues.length - 20} more`));
+        }
+      }
+
+      if (warningIssues.length > 0) {
+        this.log('');
+        this.log(chalk.yellow(`  Warnings (${warningIssues.length}):`));
+        for (const issue of warningIssues.slice(0, 20)) {
+          this.log(`    ${chalk.yellow('WARN')} [${issue.category}] ${issue.message}`);
+        }
+        if (warningIssues.length > 20) {
+          this.log(chalk.gray(`    ... and ${warningIssues.length - 20} more`));
+        }
+      }
+
+      if (phase1.passed) {
+        this.log(chalk.green('  ✓ All structural checks passed'));
+      } else {
+        this.log(chalk.red(`  ✗ ${phase1.stats.structuralIssueCount} structural issues found`));
+      }
+      this.log('');
+    }
+
+    // Auto-fix: clean stale files if --fix
+    if (shouldFix && !dryRun) {
+      const staleIssues = phase1.issues.filter((i) => i.category === 'stale-file');
+      if (staleIssues.length > 0) {
+        const result = db.cleanStaleFiles();
+        if (!isJson) {
+          this.log(chalk.green(`  Fixed: removed ${result.removed} stale file entries`));
+          this.log('');
+        }
+      }
+    }
+
+    // If dry-run, stop here
+    if (dryRun) {
+      if (isJson) {
+        this.log(JSON.stringify(report, null, 2));
+      } else {
+        this.log(chalk.yellow('Dry run — skipping Phase 2 (LLM content verification)'));
+      }
+      return;
+    }
+
+    // Phase 2: LLM content verification
+    if (!isJson) {
+      this.log(chalk.bold('Phase 2: Content Verification (LLM)'));
+    }
+
+    const phase2 = await verifyRelationshipContent(db, ctx, this, {
+      'batch-size': batchSize,
+      'max-iterations': maxIterations,
+    });
+    report.phase2 = phase2;
+
+    if (!isJson) {
+      this.log(`  Checked: ${phase2.stats.checked} relationships in ${phase2.stats.batchesProcessed} batches`);
+
+      if (phase2.issues.length === 0) {
+        this.log(chalk.green('  ✓ All relationships passed content verification'));
+      } else {
+        this.log(chalk.yellow(`  Found ${phase2.issues.length} issues:`));
+        for (const issue of phase2.issues) {
+          const severity = issue.severity === 'error' ? chalk.red('ERR') : chalk.yellow('WARN');
+          this.log(`  ${severity} ${issue.message}`);
+        }
+      }
+    }
+
+    if (isJson) {
+      this.log(JSON.stringify(report, null, 2));
     }
   }
 

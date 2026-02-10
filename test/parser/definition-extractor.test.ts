@@ -306,7 +306,7 @@ app.listen(3000);
     expect(appDef?.endPosition.row).toBe(6);
   });
 
-  it('extends let endPosition to end of file', () => {
+  it('uses declaration endPosition for variables without member usages', () => {
     const content = `let counter = 0;
 
 counter++;
@@ -322,8 +322,9 @@ counter++;
     expect(counterDef).toBeDefined();
     expect(counterDef?.kind).toBe('variable');
     expect(counterDef?.position.row).toBe(0);
-    // Should extend to end of file (includes trailing newline)
-    expect(counterDef?.endPosition.row).toBe(4);
+    // No member expression usages (counter++ is an update expression, not member access)
+    // so endPosition stays at declaration end
+    expect(counterDef?.endPosition.row).toBe(0);
   });
 
   it('extends exported const endPosition to end of file', () => {
@@ -346,7 +347,7 @@ console.log(config.port);
     expect(configDef?.endPosition.row).toBe(5);
   });
 
-  it('handles multiple module-level variables', () => {
+  it('handles multiple module-level variables without member usages', () => {
     const content = `const a = 1;
 const b = 2;
 
@@ -363,9 +364,10 @@ console.log(a + b);
     const aDef = result.definitions.find((d) => d.name === 'a');
     const bDef = result.definitions.find((d) => d.name === 'b');
 
-    // Both should extend to end of file (includes trailing newline)
-    expect(aDef?.endPosition.row).toBe(4);
-    expect(bDef?.endPosition.row).toBe(4);
+    // No member expression usages (a + b are plain identifier references)
+    // so endPosition stays at declaration end
+    expect(aDef?.endPosition.row).toBe(0);
+    expect(bDef?.endPosition.row).toBe(1);
   });
 
   it('does not affect function definition ranges', () => {

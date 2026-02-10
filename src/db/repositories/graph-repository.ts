@@ -280,6 +280,48 @@ export class GraphRepository {
   }
 
   /**
+   * Resolve which definition ID a given target name refers to,
+   * using import paths to disambiguate when multiple definitions share the same name.
+   */
+  private resolveInheritanceTarget(defId: number, targetName: string, nameToIds: Map<string, number[]>): number | null {
+    const candidateIds = nameToIds.get(targetName);
+    if (!candidateIds || candidateIds.length === 0) return null;
+    if (candidateIds.length === 1) return candidateIds[0];
+
+    // Get the file_id of the source definition
+    const defRow = this.db.prepare('SELECT file_id FROM definitions WHERE id = ?').get(defId) as
+      | { file_id: number }
+      | undefined;
+    if (!defRow) return candidateIds[0];
+
+    // Get all file_ids reachable via imports from the source file
+    const importRows = this.db
+      .prepare('SELECT to_file_id FROM imports WHERE from_file_id = ? AND to_file_id IS NOT NULL')
+      .all(defRow.file_id) as Array<{ to_file_id: number }>;
+    const reachableFileIds = new Set<number>(importRows.map((r) => r.to_file_id));
+    reachableFileIds.add(defRow.file_id); // same-file reference
+
+    // Get file_ids for each candidate
+    const candidateFileIds = new Map<number, number>();
+    for (const cId of candidateIds) {
+      const cRow = this.db.prepare('SELECT file_id FROM definitions WHERE id = ?').get(cId) as
+        | { file_id: number }
+        | undefined;
+      if (cRow) candidateFileIds.set(cId, cRow.file_id);
+    }
+
+    // Filter candidates to those whose file_id is reachable
+    const filtered = candidateIds.filter((cId) => {
+      const fid = candidateFileIds.get(cId);
+      return fid !== undefined && reachableFileIds.has(fid);
+    });
+
+    if (filtered.length === 1) return filtered[0];
+    if (filtered.length > 1) return filtered[0]; // still ambiguous, pick first
+    return candidateIds[0]; // no import match, fall back to first
+  }
+
+  /**
    * Create relationship annotations for inheritance edges.
    */
   createInheritanceRelationships(): { created: number } {
@@ -318,34 +360,29 @@ export class GraphRepository {
     let created = 0;
 
     for (const row of rows) {
-      // Handle extends
+      // Handle extends — resolve to single target using imports
       if (row.extendsName) {
-        const parentIds = nameToIds.get(row.extendsName);
-        if (parentIds) {
-          for (const parentId of parentIds) {
-            // Check if relationship already exists
-            const existing = this.relationships.get(row.id, parentId);
-            if (!existing) {
-              this.relationships.set(row.id, parentId, 'PENDING_LLM_ANNOTATION', 'extends');
-              created++;
-            }
+        const parentId = this.resolveInheritanceTarget(row.id, row.extendsName, nameToIds);
+        if (parentId !== null) {
+          const existing = this.relationships.get(row.id, parentId);
+          if (!existing) {
+            this.relationships.set(row.id, parentId, 'PENDING_LLM_ANNOTATION', 'extends');
+            created++;
           }
         }
       }
 
-      // Handle implements
+      // Handle implements — resolve each interface to single target
       if (row.implementsNames) {
         try {
           const interfaces = JSON.parse(row.implementsNames) as string[];
           for (const iface of interfaces) {
-            const ifaceIds = nameToIds.get(iface);
-            if (ifaceIds) {
-              for (const ifaceId of ifaceIds) {
-                const existing = this.relationships.get(row.id, ifaceId);
-                if (!existing) {
-                  this.relationships.set(row.id, ifaceId, 'PENDING_LLM_ANNOTATION', 'implements');
-                  created++;
-                }
+            const ifaceId = this.resolveInheritanceTarget(row.id, iface, nameToIds);
+            if (ifaceId !== null) {
+              const existing = this.relationships.get(row.id, ifaceId);
+              if (!existing) {
+                this.relationships.set(row.id, ifaceId, 'PENDING_LLM_ANNOTATION', 'implements');
+                created++;
               }
             }
           }

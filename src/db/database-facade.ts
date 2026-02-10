@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import Database from 'better-sqlite3';
 import type { Definition } from '../parser/definition-extractor.js';
 import type { FileReference, ImportedSymbol, SymbolUsage } from '../parser/reference-extractor.js';
@@ -1023,5 +1024,40 @@ export class IndexDatabase implements IIndexWriter {
 
     // Filter to only those not called
     return allDefs.filter((def) => !calledIds.has(def.id));
+  }
+
+  /**
+   * Remove stale file entries (files that no longer exist on disk).
+   * Deletes definitions first, which cascades to definition_metadata and relationship_annotations.
+   */
+  cleanStaleFiles(): { removed: number; paths: string[] } {
+    const allFiles = this.files.getAll();
+    const stalePaths: string[] = [];
+
+    for (const file of allFiles) {
+      try {
+        fs.accessSync(file.path);
+      } catch {
+        stalePaths.push(file.path);
+      }
+    }
+
+    if (stalePaths.length === 0) return { removed: 0, paths: [] };
+
+    const deleteDefinitions = this.conn.prepare('DELETE FROM definitions WHERE file_id = ?');
+    const deleteFile = this.conn.prepare('DELETE FROM files WHERE id = ?');
+
+    const cleanup = this.conn.transaction(() => {
+      for (const path of stalePaths) {
+        const fileId = this.files.getIdByPath(path);
+        if (fileId !== null) {
+          deleteDefinitions.run(fileId);
+          deleteFile.run(fileId);
+        }
+      }
+    });
+
+    cleanup();
+    return { removed: stalePaths.length, paths: stalePaths };
   }
 }

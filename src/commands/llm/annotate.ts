@@ -23,6 +23,9 @@ import {
   buildSystemPrompt,
   buildUserPromptEnhanced,
 } from './_shared/prompts.js';
+import { verifyAnnotationContent } from './_shared/verify/content-verifier.js';
+import { checkAnnotationCoverage } from './_shared/verify/coverage-checker.js';
+import type { VerifyReport } from './_shared/verify/verify-types.js';
 
 interface EnhancedSymbol extends ReadySymbolInfo {
   sourceCode: string;
@@ -109,6 +112,14 @@ export default class Annotate extends BaseLlmCommand {
     database: SharedFlags.database,
     json: SharedFlags.json,
     ...LlmFlags,
+    verify: Flags.boolean({
+      description: 'Verify existing annotations instead of creating new ones',
+      default: false,
+    }),
+    fix: Flags.boolean({
+      description: 'Auto-fix structural issues found during verification',
+      default: false,
+    }),
     force: Flags.boolean({
       description: 'Annotate symbols even if dependencies are not annotated',
       default: false,
@@ -150,6 +161,13 @@ export default class Annotate extends BaseLlmCommand {
     const { db, isJson, dryRun, model } = ctx;
 
     const aspects = flags.aspect as string[];
+
+    // Verify mode: run verification instead of annotation
+    if (flags.verify) {
+      await this.runVerify(ctx, flags, aspects);
+      return;
+    }
+
     const primaryAspect = aspects[0]; // Use first aspect for readiness check
     const batchSize = flags['batch-size'] as number;
     const maxIterations = flags['max-iterations'] as number;
@@ -839,6 +857,101 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
       )) {
         this.log(line);
       }
+    }
+  }
+
+  /**
+   * Run verification mode: Phase 1 (coverage) then optional Phase 2 (LLM content).
+   */
+  private async runVerify(ctx: LlmContext, flags: Record<string, unknown>, aspects: string[]): Promise<void> {
+    const { db, isJson, dryRun } = ctx;
+    const batchSize = (flags['batch-size'] as number) || 10;
+    const maxIterations = (flags['max-iterations'] as number) || 0;
+
+    if (!isJson) {
+      this.log(chalk.bold('Annotation Verification'));
+      this.log(chalk.gray(`Aspects: ${aspects.join(', ')}`));
+      this.log('');
+    }
+
+    // Phase 1: Coverage check
+    if (!isJson) {
+      this.log(chalk.bold('Phase 1: Coverage Check'));
+    }
+
+    const phase1 = checkAnnotationCoverage(db, aspects);
+    const report: VerifyReport = { phase1 };
+
+    if (!isJson) {
+      this.log(`  Definitions: ${phase1.stats.annotatedDefinitions}/${phase1.stats.totalDefinitions} annotated`);
+      if (phase1.stats.missingCount > 0) {
+        this.log(chalk.red(`  Missing: ${phase1.stats.missingCount} annotations`));
+      }
+
+      const errorIssues = phase1.issues.filter((i) => i.severity === 'error');
+      if (errorIssues.length > 0) {
+        this.log('');
+        for (const issue of errorIssues.slice(0, 20)) {
+          this.log(
+            `  ${chalk.red('ERR')} ${issue.definitionName || '?'} (${issue.filePath}:${issue.line}): ${issue.message}`
+          );
+        }
+        if (errorIssues.length > 20) {
+          this.log(chalk.gray(`  ... and ${errorIssues.length - 20} more`));
+        }
+      }
+
+      if (phase1.passed) {
+        this.log(chalk.green('  ✓ All definitions have all aspects annotated'));
+      } else {
+        this.log(chalk.red('  ✗ Coverage check failed'));
+      }
+      this.log('');
+    }
+
+    // If dry-run or Phase 1 failed, stop here
+    if (dryRun || !phase1.passed) {
+      if (isJson) {
+        this.log(JSON.stringify(report, null, 2));
+      } else if (dryRun) {
+        this.log(chalk.yellow('Dry run — skipping Phase 2 (LLM content verification)'));
+      }
+      return;
+    }
+
+    // Phase 2: LLM content verification
+    if (!isJson) {
+      this.log(chalk.bold('Phase 2: Content Verification (LLM)'));
+    }
+
+    const phase2 = await verifyAnnotationContent(
+      db,
+      ctx,
+      this,
+      {
+        'batch-size': batchSize,
+        'max-iterations': maxIterations,
+      },
+      aspects
+    );
+    report.phase2 = phase2;
+
+    if (!isJson) {
+      this.log(`  Checked: ${phase2.stats.checked} definitions in ${phase2.stats.batchesProcessed} batches`);
+
+      if (phase2.issues.length === 0) {
+        this.log(chalk.green('  ✓ All annotations passed content verification'));
+      } else {
+        this.log(chalk.yellow(`  Found ${phase2.issues.length} issues:`));
+        for (const issue of phase2.issues) {
+          const severity = issue.severity === 'error' ? chalk.red('ERR') : chalk.yellow('WARN');
+          this.log(`  ${severity} ${issue.definitionName || '?'}: ${issue.message}`);
+        }
+      }
+    }
+
+    if (isJson) {
+      this.log(JSON.stringify(report, null, 2));
     }
   }
 
