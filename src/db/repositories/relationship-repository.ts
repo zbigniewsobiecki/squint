@@ -51,8 +51,17 @@ export class RelationshipRepository {
   ): void {
     ensureRelationshipTypeColumn(this.db);
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO relationship_annotations (from_definition_id, to_definition_id, relationship_type, semantic, created_at)
+      INSERT INTO relationship_annotations (from_definition_id, to_definition_id, relationship_type, semantic, created_at)
       VALUES (?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(from_definition_id, to_definition_id) DO UPDATE SET
+        semantic = excluded.semantic,
+        relationship_type = CASE
+          WHEN relationship_annotations.relationship_type IN ('extends', 'implements')
+            AND excluded.relationship_type = 'uses'
+          THEN relationship_annotations.relationship_type
+          ELSE excluded.relationship_type
+        END,
+        created_at = excluded.created_at
     `);
     stmt.run(fromDefinitionId, toDefinitionId, relationshipType, semantic);
   }

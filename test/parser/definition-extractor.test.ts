@@ -163,7 +163,7 @@ interface Combined extends A, B, C {
       expect(combinedDef.extendsAll).toEqual(['A', 'B', 'C']);
     });
 
-    it('extracts extended generic interfaces', () => {
+    it('extracts extended generic interfaces with type args', () => {
       const content = `
 interface Sortable<T> extends Comparable<T>, Iterable<T> {
   sort(): T[];
@@ -179,7 +179,28 @@ interface Sortable<T> extends Comparable<T>, Iterable<T> {
       const sortableDef = result.definitions[0];
       expect(sortableDef.name).toBe('Sortable');
       expect(sortableDef.kind).toBe('interface');
-      expect(sortableDef.extendsAll).toEqual(['Comparable', 'Iterable']);
+      // Now also extracts first type argument from generics
+      expect(sortableDef.extendsAll).toEqual(['Comparable', 'T', 'Iterable', 'T']);
+    });
+
+    it('extracts concrete type arg from wrapper generic (e.g. Partial<Dto>)', () => {
+      const content = `
+interface UpdateVehicleDto extends Partial<CreateVehicleDto> {
+  id: string;
+}
+`;
+      const filePath = '/project/update-dto.ts';
+      const knownFiles = new Set<string>();
+      const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+      const result = parseContent(content, filePath, knownFiles, metadata);
+
+      expect(result.definitions).toHaveLength(1);
+      const dtoDef = result.definitions[0];
+      expect(dtoDef.name).toBe('UpdateVehicleDto');
+      expect(dtoDef.kind).toBe('interface');
+      // Should extract both wrapper name and first type argument
+      expect(dtoDef.extendsAll).toEqual(['Partial', 'CreateVehicleDto']);
     });
   });
 

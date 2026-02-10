@@ -23,6 +23,7 @@ import {
   buildSystemPrompt,
   buildUserPromptEnhanced,
 } from './_shared/prompts.js';
+import { detectImpurePatterns } from './_shared/pure-check.js';
 import { verifyAnnotationContent } from './_shared/verify/content-verifier.js';
 import { checkAnnotationCoverage } from './_shared/verify/coverage-checker.js';
 import type { VerifyReport } from './_shared/verify/verify-types.js';
@@ -377,19 +378,28 @@ export default class Annotate extends BaseLlmCommand {
             let cycleAnnotations = 0;
             let cycleRelAnnotations = 0;
 
+            // Build source code map for cycle symbols
+            const cycleSourceCodeById = new Map(symbolContexts.map((s) => [s.id, s.sourceCode]));
+
             // Process symbol annotations
             for (const row of parseResult.symbols) {
               if (!validSymbolIds.has(row.symbolId)) continue;
               if (!aspects.includes(row.aspect)) continue;
 
-              const validationError = this.validateValue(row.aspect, row.value);
-              if (validationError) {
+              let value = row.value;
+              const validationError = this.validateValue(row.aspect, value, cycleSourceCodeById.get(row.symbolId));
+              if (validationError?.startsWith('overridden')) {
+                if (!isJson && ctx.verbose) {
+                  this.log(chalk.yellow(`  Pure override for #${row.symbolId}: ${validationError}`));
+                }
+                value = 'false';
+              } else if (validationError) {
                 totalErrors++;
                 continue;
               }
 
               if (!dryRun) {
-                db.setDefinitionMetadata(row.symbolId, row.aspect, row.value);
+                db.setDefinitionMetadata(row.symbolId, row.aspect, value);
               }
               cycleAnnotations++;
               totalAnnotations++;
@@ -518,6 +528,9 @@ export default class Annotate extends BaseLlmCommand {
       const validSymbolIds = new Set(enhancedSymbols.map((s) => s.id));
       const symbolNameById = new Map(enhancedSymbols.map((s) => [s.id, s.name]));
 
+      // Build source code map for pure validation
+      const sourceCodeById = new Map(symbolContexts.map((s) => [s.id, s.sourceCode]));
+
       // Build valid relationship map (from_id -> Set of valid to_ids)
       const validRelationships = new Map<number, Map<number, string>>();
       for (const s of enhancedSymbols) {
@@ -569,13 +582,20 @@ export default class Annotate extends BaseLlmCommand {
         }
 
         // Validate value (aspect-specific)
-        const validationError = this.validateValue(row.aspect, row.value);
-        if (validationError) {
+        let value = row.value;
+        const validationError = this.validateValue(row.aspect, value, sourceCodeById.get(symbolId));
+        if (validationError?.startsWith('overridden')) {
+          // Pure gate triggered — override value to false and log
+          if (!isJson && ctx.verbose) {
+            this.log(chalk.yellow(`  Pure override for #${symbolId}: ${validationError}`));
+          }
+          value = 'false';
+        } else if (validationError) {
           iterationResults.push({
             symbolId,
             symbolName: symbolNameById.get(symbolId) || String(symbolId),
             aspect: row.aspect,
-            value: row.value,
+            value,
             success: false,
             error: validationError,
           });
@@ -585,14 +605,14 @@ export default class Annotate extends BaseLlmCommand {
 
         // Persist (unless dry-run)
         if (!dryRun) {
-          db.setDefinitionMetadata(symbolId, row.aspect, row.value);
+          db.setDefinitionMetadata(symbolId, row.aspect, value);
         }
 
         iterationResults.push({
           symbolId,
           symbolName: symbolNameById.get(symbolId) || String(symbolId),
           aspect: row.aspect,
-          value: row.value,
+          value,
           success: true,
         });
         totalAnnotations++;
@@ -1045,7 +1065,7 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
   /**
    * Validate a value for a specific aspect.
    */
-  private validateValue(aspect: string, value: string): string | null {
+  private validateValue(aspect: string, value: string, sourceCode?: string): string | null {
     switch (aspect) {
       case 'domain':
         try {
@@ -1064,6 +1084,13 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
       case 'pure':
         if (value !== 'true' && value !== 'false') {
           return 'pure must be "true" or "false"';
+        }
+        // Gate: override LLM's "true" if source code contains impure patterns
+        if (value === 'true' && sourceCode) {
+          const impureReasons = detectImpurePatterns(sourceCode);
+          if (impureReasons.length > 0) {
+            return `overridden to false: ${impureReasons[0]}`;
+          }
         }
         break;
 

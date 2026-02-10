@@ -4,7 +4,21 @@
 
 import fs from 'node:fs';
 import type { IndexDatabase } from '../../../../db/database.js';
+import { detectImpurePatterns } from '../pure-check.js';
 import type { CoverageCheckResult, VerificationIssue } from './verify-types.js';
+
+/**
+ * Read source lines from a file synchronously (for use in non-async verification).
+ */
+function readSourceSync(filePath: string, startLine: number, endLine: number): string {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const lines = content.split('\n');
+    return lines.slice(startLine - 1, endLine).join('\n');
+  } catch {
+    return '';
+  }
+}
 
 /**
  * Check annotation coverage for the given aspects.
@@ -47,6 +61,12 @@ export function checkAnnotationCoverage(db: IndexDatabase, aspects: string[]): C
     }
   }
 
+  // Check for suspicious pure:true annotations
+  if (aspects.includes('pure')) {
+    const pureIssues = checkPureAnnotations(db);
+    issues.push(...pureIssues);
+  }
+
   // Get relationship counts
   let totalRelationships = 0;
   let annotatedRelationships = 0;
@@ -71,6 +91,49 @@ export function checkAnnotationCoverage(db: IndexDatabase, aspects: string[]): C
       structuralIssueCount: 0,
     },
   };
+}
+
+/**
+ * Check for suspicious pure:true annotations using deterministic pattern detection.
+ */
+function checkPureAnnotations(db: IndexDatabase): VerificationIssue[] {
+  const issues: VerificationIssue[] = [];
+
+  // Get all definitions that have pure = "true"
+  const pureTrueIds = db.getDefinitionsWithMetadata('pure');
+
+  for (const defId of pureTrueIds) {
+    const pureValue = db.getDefinitionMetadataValue(defId, 'pure');
+    if (pureValue !== 'true') continue;
+
+    const def = db.getDefinitionById(defId);
+    if (!def) continue;
+
+    // Skip types that are inherently pure
+    if (def.kind === 'interface' || def.kind === 'type' || def.kind === 'enum') continue;
+
+    try {
+      const source = readSourceSync(def.filePath, def.line, def.endLine);
+      if (!source) continue;
+      const impureReasons = detectImpurePatterns(source);
+      if (impureReasons.length > 0) {
+        issues.push({
+          definitionId: def.id,
+          definitionName: def.name,
+          filePath: def.filePath,
+          line: def.line,
+          severity: 'warning',
+          category: 'suspect-pure',
+          message: `'${def.name}' marked pure but source contains: ${impureReasons[0]}`,
+          suggestion: 'Consider changing pure to "false"',
+        });
+      }
+    } catch {
+      // File not readable — skip
+    }
+  }
+
+  return issues;
 }
 
 /**
@@ -137,6 +200,15 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
     // Table doesn't exist
   }
 
+  // Relationship type mismatch detection
+  try {
+    const typeMismatchIssues = checkRelationshipTypeMismatches(db);
+    issues.push(...typeMismatchIssues);
+    structuralIssueCount += typeMismatchIssues.length;
+  } catch {
+    // Ignore errors
+  }
+
   // Stale file detection
   try {
     const allFiles = db.getAllFiles();
@@ -201,4 +273,76 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
       structuralIssueCount,
     },
   };
+}
+
+/**
+ * Detect relationship type mismatches: relationships marked as 'uses' that should be 'extends' or 'implements'.
+ *
+ * Tier 1 — Column-based: checks definitions with extends_name/implements_names/extends_interfaces
+ *   against relationship_annotations marked as 'uses' targeting those same definitions.
+ * Tier 2 — Source-code regex: for definitions with inheritance columns, checks source code
+ *   for extends/implements keywords targeting relationship targets.
+ */
+function checkRelationshipTypeMismatches(db: IndexDatabase): VerificationIssue[] {
+  const issues: VerificationIssue[] = [];
+
+  const allDefs = db.getAllDefinitions();
+
+  for (const def of allDefs) {
+    // Get full definition details (includes implementsNames, extendsInterfaces)
+    const fullDef = db.getDefinitionById(def.id);
+    if (!fullDef) continue;
+
+    // Collect all inheritance target names
+    const extendsNames = new Set<string>();
+    const implementsNames = new Set<string>();
+
+    if (fullDef.extendsName) {
+      extendsNames.add(fullDef.extendsName);
+    }
+    if (fullDef.extendsInterfaces) {
+      for (const name of fullDef.extendsInterfaces) {
+        extendsNames.add(name);
+      }
+    }
+    if (fullDef.implementsNames) {
+      for (const name of fullDef.implementsNames) {
+        implementsNames.add(name);
+      }
+    }
+
+    // Skip if no inheritance
+    if (extendsNames.size === 0 && implementsNames.size === 0) continue;
+
+    // Get all relationships from this definition
+    const relsFrom = db.getRelationshipsFrom(def.id);
+
+    for (const rel of relsFrom) {
+      if (rel.relationshipType !== 'uses') continue;
+
+      // Tier 1: check if target name matches a known inheritance target
+      let expectedType: 'extends' | 'implements' | null = null;
+
+      if (extendsNames.has(rel.toName)) {
+        expectedType = 'extends';
+      } else if (implementsNames.has(rel.toName)) {
+        expectedType = 'implements';
+      }
+
+      if (expectedType) {
+        issues.push({
+          definitionId: def.id,
+          definitionName: def.name,
+          filePath: fullDef.filePath,
+          line: def.line,
+          severity: 'warning',
+          category: 'wrong-relationship-type',
+          message: `'${def.name}' → '${rel.toName}' is type 'uses' but should be '${expectedType}' (based on definition columns)`,
+          suggestion: `Use --fix to change relationship type to '${expectedType}'`,
+        });
+      }
+    }
+  }
+
+  return issues;
 }

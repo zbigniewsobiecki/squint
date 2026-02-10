@@ -112,6 +112,15 @@ The description depends on the relationship type:
   - Functions that create objects with internal state: false
   - Type definitions, interfaces, enums: true
   - Simple data transformations without mutation: true
+  - Common pure:false patterns — DO NOT mark these as pure:
+    - \`new Date()\` anywhere in the function body → non-deterministic
+    - \`vi.fn()\` or \`jest.fn()\` → creates stateful mock
+    - \`process.env.*\` or \`import.meta.env.*\` → reads external state
+    - \`await anything\` → I/O side effect
+    - \`localStorage.*\` or \`sessionStorage.*\` → browser storage I/O
+    - \`useXxx()\` hooks → React stateful hooks
+    - \`Math.random()\` → non-deterministic
+    - Functions that return objects containing \`new Date()\` fields
 - For domain: pick 1-3 relevant domain tags that describe the problem area
 - For role: identify the architectural pattern the symbol represents
 - If unsure, make your best informed judgment based on the code`;

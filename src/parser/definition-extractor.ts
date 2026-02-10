@@ -206,6 +206,18 @@ function extractInterfaceExtends(interfaceNode: SyntaxNode): string[] {
           const nameNode = typeNode.childForFieldName('name');
           if (nameNode) {
             result.push(nameNode.text);
+            // Also extract first type argument for extends resolution
+            // e.g. Partial<CreateVehicleDto> → ["Partial", "CreateVehicleDto"]
+            const typeArgs = typeNode.childForFieldName('type_arguments');
+            if (typeArgs) {
+              for (let k = 0; k < typeArgs.childCount; k++) {
+                const argNode = typeArgs.child(k);
+                if (argNode?.type === 'type_identifier') {
+                  result.push(argNode.text);
+                  break;
+                }
+              }
+            }
           }
         }
       }
