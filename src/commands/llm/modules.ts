@@ -12,13 +12,17 @@ import {
 } from './_shared/llm-utils.js';
 import { isValidModulePath, parseAssignmentCsv, parseDeepenCsv, parseTreeCsv } from './_shared/module-csv.js';
 import {
+  type AncestorSymbolGroup,
   type DomainSummary,
   type ModuleForDeepening,
+  type NewSubModuleInfo,
   type TreeGenerationContext,
   buildAssignmentSystemPrompt,
   buildAssignmentUserPrompt,
   buildDeepenSystemPrompt,
   buildDeepenUserPrompt,
+  buildRebalanceSystemPrompt,
+  buildRebalanceUserPrompt,
   buildTreeSystemPrompt,
   buildTreeUserPrompt,
   toSymbolForAssignment,
@@ -67,6 +71,10 @@ export default class Modules extends BaseLlmCommand {
       default: 5,
       description: 'Maximum % of symbols allowed to remain unassigned',
     }),
+    'max-modules': Flags.integer({
+      default: 0,
+      description: 'Maximum total modules allowed (0 = unlimited)',
+    }),
   };
 
   protected async execute(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
@@ -96,9 +104,11 @@ export default class Modules extends BaseLlmCommand {
       }
     }
 
+    const maxModules = flags['max-modules'] as number;
+
     // Phase 1: Tree Structure Generation
     if ((phase === 'all' || phase === 'tree') && !incremental) {
-      await this.runTreePhase(db, flags, dryRun, isJson, verbose, llmLogOptions);
+      await this.runTreePhase(db, flags, dryRun, isJson, verbose, llmLogOptions, maxModules);
     }
 
     // Phase 2: Symbol Assignment
@@ -115,7 +125,7 @@ export default class Modules extends BaseLlmCommand {
       // Phase 3: Deepening (automatic after assignment, unless disabled)
       const deepenThreshold = flags['deepen-threshold'] as number;
       if (deepenThreshold > 0) {
-        await this.runDeepenPhase(db, flags, deepenThreshold, dryRun, isJson, verbose, llmLogOptions);
+        await this.runDeepenPhase(db, flags, deepenThreshold, dryRun, isJson, verbose, llmLogOptions, maxModules);
       }
     }
 
@@ -148,7 +158,8 @@ export default class Modules extends BaseLlmCommand {
     dryRun: boolean,
     isJson: boolean,
     verbose: boolean,
-    llmLogOptions: LlmLogOptions
+    llmLogOptions: LlmLogOptions,
+    maxModules: number
   ): Promise<void> {
     if (!isJson) {
       this.log(chalk.bold('Phase 1: Tree Structure Generation'));
@@ -257,6 +268,13 @@ export default class Modules extends BaseLlmCommand {
 
     let insertedCount = 0;
     for (const mod of sortedModules) {
+      if (maxModules > 0 && db.getModuleCount() >= maxModules) {
+        if (!isJson) {
+          this.log(chalk.yellow(`  Reached max-modules limit (${maxModules}), stopping module creation`));
+        }
+        break;
+      }
+
       const parent = db.getModuleByPath(mod.parentPath);
       if (!parent) {
         if (verbose && !isJson) {
@@ -554,7 +572,8 @@ assignment,42,project.frontend.screens.login
     dryRun: boolean,
     isJson: boolean,
     verbose: boolean,
-    llmLogOptions: LlmLogOptions
+    llmLogOptions: LlmLogOptions,
+    maxModules: number
   ): Promise<void> {
     if (!isJson) {
       this.log('');
@@ -565,8 +584,10 @@ assignment,42,project.frontend.screens.login
     let iteration = 0;
     let totalNewModules = 0;
     let totalReassignments = 0;
+    let totalRebalanced = 0;
+    let hitModuleLimit = false;
 
-    while (iteration < maxIterations) {
+    while (iteration < maxIterations && !hitModuleLimit) {
       iteration++;
 
       // Query modules exceeding threshold
@@ -585,6 +606,8 @@ assignment,42,project.frontend.screens.login
 
       // Process each large module
       for (const mod of largeModules) {
+        if (hitModuleLimit) break;
+
         if (verbose && !isJson) {
           this.log(chalk.gray(`    Splitting ${mod.fullPath} (${mod.members.length} members)...`));
         }
@@ -648,7 +671,16 @@ assignment,42,project.frontend.screens.login
           }
 
           // Create sub-modules
+          const createdSubModulePaths: string[] = [];
           for (const subMod of newModules) {
+            if (maxModules > 0 && db.getModuleCount() >= maxModules) {
+              if (!isJson) {
+                this.log(chalk.yellow(`  Reached max-modules limit (${maxModules}), stopping module creation`));
+              }
+              hitModuleLimit = true;
+              break;
+            }
+
             const parent = db.getModuleByPath(subMod.parentPath);
             if (!parent) {
               if (verbose && !isJson) {
@@ -661,6 +693,7 @@ assignment,42,project.frontend.screens.login
               // isTest is inherited from parent in ModuleRepository.insert()
               db.insertModule(parent.id, subMod.slug, subMod.name, subMod.description);
               totalNewModules++;
+              createdSubModulePaths.push(`${subMod.parentPath}.${subMod.slug}`);
             } catch (error) {
               if (verbose && !isJson) {
                 const message = getErrorMessage(error);
@@ -681,6 +714,20 @@ assignment,42,project.frontend.screens.login
 
             db.assignSymbolToModule(reassignment.definitionId, targetModule.id);
             totalReassignments++;
+          }
+
+          // Rebalance ancestor symbols into new sub-modules
+          if (createdSubModulePaths.length > 0 && !hitModuleLimit) {
+            const rebalanced = await this.rebalanceAncestorSymbols(
+              db,
+              mod.fullPath,
+              createdSubModulePaths,
+              flags,
+              isJson,
+              verbose,
+              llmLogOptions
+            );
+            totalRebalanced += rebalanced;
           }
         } catch (error) {
           const message = getErrorMessage(error);
@@ -712,6 +759,121 @@ assignment,42,project.frontend.screens.login
     } else if (!isJson) {
       this.log(chalk.green(`  Created ${totalNewModules} sub-modules`));
       this.log(chalk.green(`  Reassigned ${totalReassignments} symbols`));
+      if (totalRebalanced > 0) {
+        this.log(chalk.green(`  Rebalanced ${totalRebalanced} symbols from ancestors`));
+      }
+    }
+  }
+
+  /**
+   * Rebalance symbols from ancestor modules into newly created sub-modules.
+   * Walks up from the deepened module collecting symbols from ancestors,
+   * then asks the LLM if any should be moved into the new sub-structure.
+   * Returns the number of symbols rebalanced.
+   */
+  private async rebalanceAncestorSymbols(
+    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never,
+    deepenedModulePath: string,
+    newSubModulePaths: string[],
+    flags: Record<string, unknown>,
+    isJson: boolean,
+    verbose: boolean,
+    llmLogOptions: LlmLogOptions
+  ): Promise<number> {
+    // Walk up from the deepened module to collect ancestor paths (excluding root "project")
+    const segments = deepenedModulePath.split('.');
+    const ancestorPaths: string[] = [];
+    for (let i = segments.length - 1; i >= 1; i--) {
+      const ancestorPath = segments.slice(0, i).join('.');
+      if (ancestorPath === 'project') break; // don't rebalance from root
+      ancestorPaths.push(ancestorPath);
+    }
+
+    if (ancestorPaths.length === 0) return 0;
+
+    // Collect symbols from each ancestor
+    const ancestorSymbols: AncestorSymbolGroup[] = [];
+    for (const path of ancestorPaths) {
+      const mod = db.getModuleByPath(path);
+      if (!mod) continue;
+      const symbols = db.getModuleSymbols(mod.id);
+      if (symbols.length === 0) continue;
+      ancestorSymbols.push({ moduleId: mod.id, modulePath: path, symbols });
+    }
+
+    if (ancestorSymbols.length === 0) return 0;
+
+    const totalSymbols = ancestorSymbols.reduce((sum, g) => sum + g.symbols.length, 0);
+    if (verbose && !isJson) {
+      this.log(
+        chalk.gray(`      Rebalancing: ${totalSymbols} ancestor symbols across ${ancestorSymbols.length} modules`)
+      );
+    }
+
+    // Build info about new sub-modules
+    const newSubModules: NewSubModuleInfo[] = [];
+    for (const subPath of newSubModulePaths) {
+      const mod = db.getModuleByPath(subPath);
+      if (!mod) continue;
+      newSubModules.push({ path: mod.fullPath, name: mod.name, description: mod.description });
+    }
+
+    if (newSubModules.length === 0) return 0;
+
+    // Call LLM for rebalancing
+    const systemPrompt = buildRebalanceSystemPrompt();
+    const userPrompt = buildRebalanceUserPrompt(ancestorSymbols, newSubModules);
+
+    logLlmRequest(this, `rebalance-${deepenedModulePath}`, systemPrompt, userPrompt, llmLogOptions);
+
+    try {
+      const response = await completeWithLogging({
+        model: flags.model as string,
+        systemPrompt,
+        userPrompt,
+        temperature: 0,
+        command: this,
+        isJson,
+      });
+
+      logLlmResponse(this, `rebalance-${deepenedModulePath}`, response, llmLogOptions);
+
+      const { assignments, errors } = parseAssignmentCsv(response);
+
+      if (errors.length > 0 && verbose && !isJson) {
+        this.log(chalk.yellow(`      Rebalance parse warnings: ${errors.length}`));
+      }
+
+      // Apply reassignments — only allow moves into the new sub-structure
+      const validSubPaths = new Set(newSubModulePaths);
+      let rebalanced = 0;
+
+      for (const assignment of assignments) {
+        if (!validSubPaths.has(assignment.modulePath)) {
+          if (verbose && !isJson) {
+            this.log(chalk.yellow(`      Rebalance: skipping move to ${assignment.modulePath} (not a new sub-module)`));
+          }
+          continue;
+        }
+
+        const targetModule = db.getModuleByPath(assignment.modulePath);
+        if (!targetModule) continue;
+
+        db.assignSymbolToModule(assignment.symbolId, targetModule.id);
+        rebalanced++;
+      }
+
+      if (rebalanced > 0 && verbose && !isJson) {
+        this.log(chalk.gray(`      Rebalanced ${rebalanced} symbols from ancestors`));
+      }
+
+      return rebalanced;
+    } catch (error) {
+      const message = getErrorMessage(error);
+      if (verbose && !isJson) {
+        this.log(chalk.yellow(`      Rebalance failed: ${message}`));
+      }
+      return 0;
     }
   }
 

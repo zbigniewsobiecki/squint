@@ -3,6 +3,7 @@
  */
 
 import type { AnnotatedSymbolInfo, Module } from '../../../db/database.js';
+import type { ModuleSymbol } from '../../../db/repositories/module-repository.js';
 
 // ============================================================
 // Phase 1: Tree Structure Generation
@@ -337,6 +338,83 @@ export function buildDeepenUserPrompt(module: ModuleForDeepening): string {
   parts.push('');
 
   parts.push('Propose sub-modules and reassign all members to them.');
+
+  return parts.join('\n');
+}
+
+// ============================================================
+// Ancestor Rebalancing
+// ============================================================
+
+export interface AncestorSymbolGroup {
+  moduleId: number;
+  modulePath: string;
+  symbols: ModuleSymbol[];
+}
+
+export interface NewSubModuleInfo {
+  path: string;
+  name: string;
+  description: string | null;
+}
+
+/**
+ * Build the system prompt for ancestor rebalancing.
+ */
+export function buildRebalanceSystemPrompt(): string {
+  return `You are a software architect reviewing symbol assignments after a module was split into sub-modules.
+
+## Your Task
+Symbols are currently assigned to ancestor (parent/grandparent) modules. New sub-modules have been created below.
+Review each symbol and decide if it now fits better in one of the new sub-modules.
+Only reassign symbols that clearly belong in a new sub-module — leave ambiguous ones where they are.
+
+## Output Format
+Respond with **only** a CSV table. Only include rows for symbols you want to MOVE.
+Symbols not mentioned will stay in their current module.
+
+\`\`\`csv
+type,symbol_id,module_path
+assignment,42,project.frontend.hooks.customers
+assignment,87,project.frontend.hooks.sales
+\`\`\`
+
+## Guidelines
+- Only move a symbol if the new sub-module is a clearly better fit
+- Consider the symbol's name, kind, file path, and the sub-module descriptions
+- When in doubt, leave the symbol where it is
+- Module paths must match one of the new sub-modules listed below
+- If no symbols should be moved, respond with just the CSV header`;
+}
+
+/**
+ * Build the user prompt for ancestor rebalancing.
+ */
+export function buildRebalanceUserPrompt(
+  ancestorSymbols: AncestorSymbolGroup[],
+  newSubModules: NewSubModuleInfo[]
+): string {
+  const parts: string[] = [];
+
+  parts.push('## New Sub-Modules');
+  parts.push('');
+  for (const sub of newSubModules) {
+    const desc = sub.description ? ` - ${sub.description}` : '';
+    parts.push(`- ${sub.path}: ${sub.name}${desc}`);
+  }
+  parts.push('');
+
+  parts.push('## Symbols Currently in Ancestor Modules');
+  parts.push('');
+  for (const group of ancestorSymbols) {
+    parts.push(`### ${group.modulePath} (${group.symbols.length} symbols)`);
+    for (const sym of group.symbols) {
+      parts.push(`- #${sym.id}: ${sym.name} (${sym.kind}) from ${sym.filePath}`);
+    }
+    parts.push('');
+  }
+
+  parts.push('Reassign any symbols that now fit better in the new sub-modules.');
 
   return parts.join('\n');
 }

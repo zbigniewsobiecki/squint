@@ -318,6 +318,137 @@ export interface SymbolContextEnhanced {
 }
 
 // ============================================================
+// Relationship Annotation Prompts
+// ============================================================
+
+export interface RelationshipTarget {
+  toId: number;
+  toName: string;
+  toKind: string;
+  toFilePath: string;
+  toLine: number;
+  usageLine: number;
+  relationshipType: string;
+  toPurpose: string | null;
+  toDomains: string[] | null;
+  toRole: string | null;
+}
+
+export interface RelationshipSourceGroup {
+  id: number;
+  name: string;
+  kind: string;
+  filePath: string;
+  line: number;
+  endLine: number;
+  sourceCode: string;
+  purpose: string | null;
+  domains: string[] | null;
+  role: string | null;
+  relationships: RelationshipTarget[];
+}
+
+/**
+ * Build the system prompt for relationship-only annotation.
+ */
+export function buildRelationshipSystemPrompt(): string {
+  return `You are a code analyst annotating relationships between TypeScript/JavaScript symbols.
+
+## Your Task
+For each source symbol, describe WHY it uses each listed dependency.
+
+## Output Format
+Respond with **only** a CSV table with this exact format:
+
+\`\`\`csv
+type,id,field,value
+relationship,42,55,"validates JWT token before authorizing request"
+relationship,42,60,"fetches RSA signing key for token verification"
+relationship,88,42,"delegates token validation to dedicated utility"
+\`\`\`
+
+## CSV Columns
+- **type**: always "relationship"
+- **id**: from_id (the source symbol's numeric ID)
+- **field**: to_id (the target symbol's numeric ID, shown as #N in the dependency list)
+- **value**: semantic description of WHY the source uses the target (min 5 chars)
+
+## Relationship Description Guidelines
+
+**For 'uses' relationships (most common):**
+- Explain WHY the source symbol uses the target (1-2 sentences)
+- Focus on the semantic purpose, not just "calls" or "uses"
+- Example: "validates user credentials before generating session token"
+
+**For 'extends' relationships (class/interface inheritance):**
+- Explain WHY this class inherits from the parent
+- What behavior is extended or specialized?
+- Example: "specializes base logger with JSON formatting for production monitoring"
+
+**For 'implements' relationships (interface implementation):**
+- Explain WHAT contract this class fulfills by implementing the interface
+- Example: "provides database-backed storage conforming to the Repository pattern"
+
+## CSV Rules
+- Header row must be exactly: type,id,field,value
+- Values containing commas, quotes, or newlines must be double-quoted
+- Escape quotes within values by doubling them ("")
+- The field column must be a **numeric ID** — use the ID shown as \`(#N)\` in the dependency list
+- If you cannot determine a description, **omit the row entirely**`;
+}
+
+/**
+ * Build the user prompt for relationship-only annotation.
+ */
+export function buildRelationshipUserPrompt(groups: RelationshipSourceGroup[]): string {
+  const parts: string[] = [];
+
+  parts.push('## Relationships to Annotate');
+  parts.push('');
+
+  for (const group of groups) {
+    parts.push(`### Source: #${group.id} ${group.name} (${group.kind})`);
+
+    const lineRange = group.line === group.endLine ? `${group.line}` : `${group.line}-${group.endLine}`;
+    parts.push(`File: ${group.filePath}:${lineRange}`);
+
+    if (group.purpose) {
+      parts.push(`Purpose: "${group.purpose}"`);
+    }
+    if (group.domains && group.domains.length > 0) {
+      parts.push(`Domains: ${JSON.stringify(group.domains)}`);
+    }
+    if (group.role) {
+      parts.push(`Role: "${group.role}"`);
+    }
+    parts.push('');
+
+    parts.push('Dependencies to annotate:');
+    for (const rel of group.relationships) {
+      const targetInfo: string[] = [];
+      if (rel.toPurpose) {
+        targetInfo.push(`purpose: "${rel.toPurpose}"`);
+      }
+      const targetMeta = targetInfo.length > 0 ? ` — ${targetInfo.join(', ')}` : '';
+      parts.push(
+        `- [${rel.relationshipType}] → ${rel.toName} (#${rel.toId}, ${rel.toKind}) at line ${rel.usageLine}${targetMeta}`
+      );
+    }
+    parts.push('');
+
+    parts.push('Source Code:');
+    parts.push('```typescript');
+    parts.push(group.sourceCode);
+    parts.push('```');
+    parts.push('');
+  }
+
+  parts.push('Respond with CSV relationship annotations for all listed dependencies.');
+
+  return parts.join('\n');
+}
+
+// ============================================================
 // Module Detection Prompts
 // ============================================================
 
