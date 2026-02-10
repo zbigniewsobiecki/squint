@@ -19,10 +19,16 @@ export interface DomainSummary {
   }>;
 }
 
+export interface DirectoryInfo {
+  path: string;
+  symbolCount: number;
+}
+
 export interface TreeGenerationContext {
   totalSymbolCount: number;
   domains: DomainSummary[];
-  directoryStructure: string[];
+  directoryStructure: DirectoryInfo[];
+  maxModules?: number;
 }
 
 /**
@@ -108,6 +114,12 @@ export function buildTreeUserPrompt(context: TreeGenerationContext): string {
 
   parts.push('## Codebase Overview');
   parts.push(`Total symbols: ${context.totalSymbolCount}`);
+  if (context.maxModules && context.maxModules > 0) {
+    const initialTarget = Math.floor(context.maxModules * 0.4);
+    parts.push(
+      `Module budget: ${context.maxModules} total. Create ~${initialTarget} modules now — oversized leaves will be split automatically later. Focus on the top 2–3 levels.`
+    );
+  }
   parts.push('');
 
   // Domains with sample symbols
@@ -127,7 +139,7 @@ export function buildTreeUserPrompt(context: TreeGenerationContext): string {
   // Directory structure (full — the LLM needs the complete picture to design modules)
   parts.push('## Directory Structure');
   for (const dir of context.directoryStructure) {
-    parts.push(`- ${dir}`);
+    parts.push(`- ${dir.path} (${dir.symbolCount} symbols)`);
   }
   parts.push('');
 
@@ -185,7 +197,7 @@ assignment,123,project.shared.utils
 /**
  * Format module tree for display in user prompt.
  */
-export function formatModuleTreeForPrompt(modules: Module[]): string {
+export function formatModuleTreeForPrompt(modules: Module[], directoryHints?: Map<number, string[]>): string {
   const lines: string[] = [];
 
   // Sort by depth then path
@@ -197,7 +209,9 @@ export function formatModuleTreeForPrompt(modules: Module[]): string {
   for (const mod of sorted) {
     const indent = '  '.repeat(mod.depth);
     const desc = mod.description ? ` - ${mod.description}` : '';
-    lines.push(`${indent}${mod.fullPath}: ${mod.name}${desc}`);
+    const hints = directoryHints?.get(mod.id);
+    const hintStr = hints?.length ? ` [${hints.join(', ')}]` : '';
+    lines.push(`${indent}${mod.fullPath}: ${mod.name}${desc}${hintStr}`);
   }
 
   return lines.join('\n');
@@ -206,13 +220,17 @@ export function formatModuleTreeForPrompt(modules: Module[]): string {
 /**
  * Build the user prompt for Phase 2 (symbol assignment batch).
  */
-export function buildAssignmentUserPrompt(modules: Module[], symbols: SymbolForAssignment[]): string {
+export function buildAssignmentUserPrompt(
+  modules: Module[],
+  symbols: SymbolForAssignment[],
+  directoryHints?: Map<number, string[]>
+): string {
   const parts: string[] = [];
 
   // Module tree
   parts.push('## Available Modules');
   parts.push('');
-  parts.push(formatModuleTreeForPrompt(modules));
+  parts.push(formatModuleTreeForPrompt(modules, directoryHints));
   parts.push('');
 
   // Symbols to assign

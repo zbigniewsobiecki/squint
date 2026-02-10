@@ -421,4 +421,132 @@ describe('ModuleRepository', () => {
       expect(edge!.callerModuleId).toBe(authId);
     });
   });
+
+  describe('pruneEmptyLeaves', () => {
+    it('removes empty leaf modules', () => {
+      const rootId = repo.ensureRoot();
+      repo.insert(rootId, 'empty1', 'Empty1');
+      repo.insert(rootId, 'empty2', 'Empty2');
+
+      expect(repo.getCount()).toBe(3); // project + 2 empty
+
+      const pruned = repo.pruneEmptyLeaves();
+      expect(pruned).toBe(2);
+      expect(repo.getCount()).toBe(1); // only project remains
+    });
+
+    it('does not remove modules with members', () => {
+      const rootId = repo.ensureRoot();
+      const authId = repo.insert(rootId, 'auth', 'Authentication');
+      repo.assignSymbol(defId1, authId);
+
+      const pruned = repo.pruneEmptyLeaves();
+      expect(pruned).toBe(0);
+      expect(repo.getCount()).toBe(2);
+    });
+
+    it('does not remove branch modules (with children)', () => {
+      const rootId = repo.ensureRoot();
+      const parentId = repo.insert(rootId, 'parent', 'Parent');
+      const childId = repo.insert(parentId, 'child', 'Child');
+      repo.assignSymbol(defId1, childId);
+
+      // parent has no direct members but has a child with members
+      const pruned = repo.pruneEmptyLeaves();
+      expect(pruned).toBe(0);
+      expect(repo.getCount()).toBe(3);
+    });
+
+    it('iteratively prunes cascading empty leaves', () => {
+      const rootId = repo.ensureRoot();
+      const parentId = repo.insert(rootId, 'parent', 'Parent');
+      repo.insert(parentId, 'child', 'Child'); // empty leaf
+      // parent becomes empty leaf after child is pruned
+
+      const pruned = repo.pruneEmptyLeaves();
+      expect(pruned).toBe(2); // child first, then parent
+      expect(repo.getCount()).toBe(1); // only project
+    });
+
+    it('does not remove root project module', () => {
+      repo.ensureRoot();
+      const pruned = repo.pruneEmptyLeaves();
+      expect(pruned).toBe(0);
+      expect(repo.getCount()).toBe(1);
+    });
+  });
+
+  describe('getLeafModulesExceedingThreshold', () => {
+    it('returns leaf modules with members exceeding threshold', () => {
+      const rootId = repo.ensureRoot();
+      const authId = repo.insert(rootId, 'auth', 'Authentication');
+      repo.assignSymbol(defId1, authId);
+      repo.assignSymbol(defId2, authId);
+
+      const result = repo.getLeafModulesExceedingThreshold(1);
+      expect(result).toHaveLength(1);
+      expect(result[0].fullPath).toBe('project.auth');
+      expect(result[0].members).toHaveLength(2);
+    });
+
+    it('excludes branch modules (with children)', () => {
+      const rootId = repo.ensureRoot();
+      const parentId = repo.insert(rootId, 'parent', 'Parent');
+      repo.insert(parentId, 'child', 'Child');
+      // Assign both symbols to parent (a branch)
+      repo.assignSymbol(defId1, parentId);
+      repo.assignSymbol(defId2, parentId);
+
+      const result = repo.getLeafModulesExceedingThreshold(1);
+      expect(result).toHaveLength(0); // parent has children, so not a leaf
+    });
+
+    it('returns results ordered by member count DESC', () => {
+      const rootId = repo.ensureRoot();
+      const smallId = repo.insert(rootId, 'small', 'Small');
+      const bigId = repo.insert(rootId, 'big', 'Big');
+      repo.assignSymbol(defId1, smallId);
+      repo.assignSymbol(defId1, bigId);
+      repo.assignSymbol(defId2, bigId);
+
+      const result = repo.getLeafModulesExceedingThreshold(0);
+      expect(result.length).toBeGreaterThanOrEqual(1);
+      expect(result[0].fullPath).toBe('project.big');
+    });
+  });
+
+  describe('getBranchModulesWithDirectMembers', () => {
+    it('returns branch modules with direct members exceeding threshold', () => {
+      const rootId = repo.ensureRoot();
+      const parentId = repo.insert(rootId, 'parent', 'Parent');
+      repo.insert(parentId, 'child', 'Child');
+      repo.assignSymbol(defId1, parentId);
+      repo.assignSymbol(defId2, parentId);
+
+      const result = repo.getBranchModulesWithDirectMembers(1);
+      expect(result).toHaveLength(1);
+      expect(result[0].fullPath).toBe('project.parent');
+      expect(result[0].members).toHaveLength(2);
+    });
+
+    it('excludes leaf modules', () => {
+      const rootId = repo.ensureRoot();
+      const leafId = repo.insert(rootId, 'leaf', 'Leaf');
+      repo.assignSymbol(defId1, leafId);
+      repo.assignSymbol(defId2, leafId);
+
+      const result = repo.getBranchModulesWithDirectMembers(1);
+      expect(result).toHaveLength(0);
+    });
+
+    it('returns empty when no branch modules exceed threshold', () => {
+      const rootId = repo.ensureRoot();
+      const parentId = repo.insert(rootId, 'parent', 'Parent');
+      repo.insert(parentId, 'child', 'Child');
+      repo.assignSymbol(defId1, parentId); // only 1 member
+
+      const result = repo.getBranchModulesWithDirectMembers(5);
+      expect(result).toHaveLength(0);
+    });
+  });
 });

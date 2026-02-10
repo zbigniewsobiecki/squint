@@ -3,12 +3,58 @@ import {
   formatCsvValue,
   isValidModulePath,
   isValidSlug,
+  normalizeModulePath,
   parseAssignmentCsv,
   parseDeepenCsv,
   parseTreeCsv,
 } from '../../../src/commands/llm/_shared/module-csv.js';
 
 describe('module-csv', () => {
+  // ============================================
+  // normalizeModulePath
+  // ============================================
+  describe('normalizeModulePath', () => {
+    it('passes through a clean path unchanged', () => {
+      expect(normalizeModulePath('project.frontend.screens')).toBe('project.frontend.screens');
+    });
+
+    it('strips backticks', () => {
+      expect(normalizeModulePath('`project.frontend.screens`')).toBe('project.frontend.screens');
+    });
+
+    it('strips surrounding double quotes', () => {
+      expect(normalizeModulePath('"project.frontend.screens"')).toBe('project.frontend.screens');
+    });
+
+    it('strips surrounding single quotes', () => {
+      expect(normalizeModulePath("'project.frontend.screens'")).toBe('project.frontend.screens');
+    });
+
+    it('lowercases each segment', () => {
+      expect(normalizeModulePath('Project.Frontend.Screens')).toBe('project.frontend.screens');
+    });
+
+    it('replaces underscores with hyphens', () => {
+      expect(normalizeModulePath('project.data_fetching.api_client')).toBe('project.data-fetching.api-client');
+    });
+
+    it('trims whitespace within segments', () => {
+      expect(normalizeModulePath('project. frontend . screens ')).toBe('project.frontend.screens');
+    });
+
+    it('collapses consecutive dots (empty segments)', () => {
+      expect(normalizeModulePath('project..frontend...screens')).toBe('project.frontend.screens');
+    });
+
+    it('handles combined LLM quirks', () => {
+      expect(normalizeModulePath('`Project.Data_Fetching. API_Client`')).toBe('project.data-fetching.api-client');
+    });
+
+    it('handles empty string', () => {
+      expect(normalizeModulePath('')).toBe('');
+    });
+  });
+
   // ============================================
   // isValidSlug
   // ============================================
@@ -286,6 +332,14 @@ assignment,87,project.backend.services`;
       const csv = 'type,symbol_id,module_path\n\nassignment,1,project.test\n\n';
       const result = parseAssignmentCsv(csv);
       expect(result.assignments).toHaveLength(1);
+    });
+
+    it('normalizes LLM-returned paths (backticks, uppercase, underscores)', () => {
+      const csv = 'type,symbol_id,module_path\nassignment,1,`Project.Data_Fetching`';
+      const result = parseAssignmentCsv(csv);
+      expect(result.errors).toEqual([]);
+      expect(result.assignments).toHaveLength(1);
+      expect(result.assignments[0].modulePath).toBe('project.data-fetching');
     });
   });
 

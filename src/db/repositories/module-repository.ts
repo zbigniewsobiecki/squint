@@ -568,6 +568,130 @@ export class ModuleRepository {
   }
 
   /**
+   * Prune empty leaf modules iteratively.
+   * A leaf is a module with no children and no members.
+   * Deleting a leaf may turn its parent into a new empty leaf, so we loop.
+   */
+  pruneEmptyLeaves(): number {
+    let totalPruned = 0;
+    // foreign_keys pragma is OFF, so no CASCADE — but empty leaves
+    // have no members and no children by definition, so plain DELETE works.
+    const stmt = this.db.prepare(`
+      DELETE FROM modules WHERE full_path != 'project'
+        AND id NOT IN (SELECT DISTINCT parent_id FROM modules WHERE parent_id IS NOT NULL)
+        AND id NOT IN (SELECT DISTINCT module_id FROM module_members)
+    `);
+    while (true) {
+      const result = stmt.run();
+      if (result.changes === 0) break;
+      totalPruned += result.changes;
+    }
+    return totalPruned;
+  }
+
+  /**
+   * Get leaf modules exceeding a member threshold.
+   * Leaf = not a parent of any other module. Ordered by member count DESC (largest first).
+   */
+  getLeafModulesExceedingThreshold(threshold: number): ModuleWithMembers[] {
+    ensureModulesTables(this.db);
+
+    const modulesStmt = this.db.prepare(`
+      SELECT
+        m.id,
+        m.parent_id as parentId,
+        m.slug,
+        m.full_path as fullPath,
+        m.name,
+        m.description,
+        m.depth,
+        m.color_index as colorIndex,
+        m.is_test as isTest,
+        m.created_at as createdAt,
+        COUNT(mm.definition_id) as memberCount
+      FROM modules m
+      JOIN module_members mm ON mm.module_id = m.id
+      WHERE m.id NOT IN (SELECT DISTINCT parent_id FROM modules WHERE parent_id IS NOT NULL)
+      GROUP BY m.id
+      HAVING COUNT(mm.definition_id) > ?
+      ORDER BY COUNT(mm.definition_id) DESC
+    `);
+
+    const rawModules = modulesStmt.all(threshold) as Array<
+      Omit<Module, 'isTest'> & { isTest: number; memberCount: number }
+    >;
+    const modules = rawModules.map((m) => ({ ...m, isTest: m.isTest === 1 }));
+
+    return modules.map((m) => {
+      const members = this.getMemberInfo(m.id);
+      return {
+        id: m.id,
+        parentId: m.parentId,
+        slug: m.slug,
+        fullPath: m.fullPath,
+        name: m.name,
+        description: m.description,
+        depth: m.depth,
+        colorIndex: m.colorIndex,
+        isTest: m.isTest,
+        createdAt: m.createdAt,
+        members,
+      };
+    });
+  }
+
+  /**
+   * Get branch modules (has children) with direct members exceeding a threshold.
+   * These need rebalancing, not splitting.
+   */
+  getBranchModulesWithDirectMembers(threshold: number): ModuleWithMembers[] {
+    ensureModulesTables(this.db);
+
+    const modulesStmt = this.db.prepare(`
+      SELECT
+        m.id,
+        m.parent_id as parentId,
+        m.slug,
+        m.full_path as fullPath,
+        m.name,
+        m.description,
+        m.depth,
+        m.color_index as colorIndex,
+        m.is_test as isTest,
+        m.created_at as createdAt,
+        COUNT(mm.definition_id) as memberCount
+      FROM modules m
+      JOIN module_members mm ON mm.module_id = m.id
+      WHERE m.id IN (SELECT DISTINCT parent_id FROM modules WHERE parent_id IS NOT NULL)
+      GROUP BY m.id
+      HAVING COUNT(mm.definition_id) > ?
+      ORDER BY COUNT(mm.definition_id) DESC
+    `);
+
+    const rawModules = modulesStmt.all(threshold) as Array<
+      Omit<Module, 'isTest'> & { isTest: number; memberCount: number }
+    >;
+    const modules = rawModules.map((m) => ({ ...m, isTest: m.isTest === 1 }));
+
+    return modules.map((m) => {
+      const members = this.getMemberInfo(m.id);
+      return {
+        id: m.id,
+        parentId: m.parentId,
+        slug: m.slug,
+        fullPath: m.fullPath,
+        name: m.name,
+        description: m.description,
+        depth: m.depth,
+        colorIndex: m.colorIndex,
+        isTest: m.isTest,
+        createdAt: m.createdAt,
+        members,
+      };
+    });
+  }
+
+  /**
    * Get all callers of a definition with their module assignments.
    */
   getIncomingEdgesFor(definitionId: number): IncomingEdge[] {

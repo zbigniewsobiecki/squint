@@ -7,6 +7,38 @@ import { extractCsvContent, parseRow, splitCsvLines } from './csv-utils.js';
 export { formatCsvValue } from './csv-utils.js';
 
 // ============================================================
+// Normalization
+// ============================================================
+
+/**
+ * Normalize an LLM-returned module path before validation.
+ *
+ * Fixes common LLM formatting quirks:
+ * - Strips backticks and surrounding quotes
+ * - Lowercases each segment
+ * - Replaces underscores with hyphens
+ * - Trims whitespace within segments
+ * - Collapses consecutive dots
+ */
+export function normalizeModulePath(raw: string): string {
+  let p = raw;
+  // Strip backticks and surrounding quotes
+  p = p.replace(/`/g, '');
+  p = p.replace(/^["']|["']$/g, '');
+  // Lowercase
+  p = p.toLowerCase();
+  // Replace underscores with hyphens
+  p = p.replace(/_/g, '-');
+  // Trim whitespace (including within segments around dots)
+  p = p
+    .split('.')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join('.');
+  return p;
+}
+
+// ============================================================
 // Validation Rules
 // ============================================================
 
@@ -219,7 +251,7 @@ export function parseAssignmentCsv(content: string): AssignmentParseResult {
       continue;
     }
 
-    const [rowType, symbolIdStr, modulePath] = parsed.map((v) => v.trim());
+    const [rowType, symbolIdStr, rawModulePath] = parsed.map((v) => v.trim());
 
     if (rowType !== 'assignment') {
       errors.push(`Line ${i + 1}: Unknown type "${rowType}", expected "assignment"`);
@@ -232,8 +264,9 @@ export function parseAssignmentCsv(content: string): AssignmentParseResult {
       continue;
     }
 
+    const modulePath = normalizeModulePath(rawModulePath);
     if (!isValidModulePath(modulePath)) {
-      errors.push(`Line ${i + 1}: Invalid module_path "${modulePath}"`);
+      errors.push(`Line ${i + 1}: Invalid module_path "${rawModulePath}"`);
       continue;
     }
 

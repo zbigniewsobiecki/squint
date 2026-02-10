@@ -13,6 +13,7 @@ import {
 import { isValidModulePath, parseAssignmentCsv, parseDeepenCsv, parseTreeCsv } from './_shared/module-csv.js';
 import {
   type AncestorSymbolGroup,
+  type DirectoryInfo,
   type DomainSummary,
   type ModuleForDeepening,
   type NewSubModuleInfo,
@@ -122,10 +123,26 @@ export default class Modules extends BaseLlmCommand {
         await this.runAssignmentCoverageGate(db, flags, maxUnassignedPct, maxGateRetries, isJson, verbose);
       }
 
+      // Prune empty leaf modules after assignment
+      if (!dryRun) {
+        const pruned = db.pruneEmptyLeafModules();
+        if (pruned > 0 && !isJson) {
+          this.log(chalk.green(`  Pruned ${pruned} empty leaf modules`));
+        }
+      }
+
       // Phase 3: Deepening (automatic after assignment, unless disabled)
       const deepenThreshold = flags['deepen-threshold'] as number;
       if (deepenThreshold > 0) {
         await this.runDeepenPhase(db, flags, deepenThreshold, dryRun, isJson, verbose, llmLogOptions, maxModules);
+
+        // Prune any modules emptied by reassignment during deepening
+        if (!dryRun) {
+          const pruned = db.pruneEmptyLeafModules();
+          if (pruned > 0 && !isJson) {
+            this.log(chalk.green(`  Pruned ${pruned} empty leaf modules after deepening`));
+          }
+        }
       }
     }
 
@@ -171,7 +188,7 @@ export default class Modules extends BaseLlmCommand {
     }
 
     // Gather context for the LLM
-    const context = this.buildTreeContext(db);
+    const context = this.buildTreeContext(db, maxModules);
 
     if (context.totalSymbolCount === 0) {
       if (isJson) {
@@ -352,6 +369,7 @@ export default class Modules extends BaseLlmCommand {
     let totalAssigned = 0;
     let iteration = 0;
     const allAssignments: Array<{ symbolId: number; modulePath: string }> = [];
+    let directoryHints: Map<number, string[]> | undefined;
 
     // Process in batches
     for (let i = 0; i < unassignedSymbols.length && iteration < maxIterations; i += batchSize) {
@@ -359,11 +377,16 @@ export default class Modules extends BaseLlmCommand {
       const batch = unassignedSymbols.slice(i, i + batchSize);
       const symbolsForAssignment = batch.map(toSymbolForAssignment);
 
+      // Recompute directory hints every 5 batches (first batch has no hints — no symbols assigned yet)
+      if (!dryRun && iteration > 1 && (iteration - 1) % 5 === 0) {
+        directoryHints = this.computeModuleDirectoryHints(db);
+      }
+
       if (verbose && !isJson) {
         this.log(chalk.gray(`  Batch ${iteration}: ${batch.length} symbols...`));
       }
 
-      const userPrompt = buildAssignmentUserPrompt(modules, symbolsForAssignment);
+      const userPrompt = buildAssignmentUserPrompt(modules, symbolsForAssignment, directoryHints);
 
       try {
         logLlmRequest(this, `runAssignmentPhase-batch${iteration}`, systemPrompt, userPrompt, llmLogOptions);
@@ -387,27 +410,40 @@ export default class Modules extends BaseLlmCommand {
         }
 
         // Validate and collect assignments
+        let batchFuzzy = 0;
+        let batchInvalidPath = 0;
+        let batchNotFound = 0;
+
         for (const assignment of assignments) {
           if (!isValidModulePath(assignment.modulePath)) {
-            if (verbose && !isJson) {
-              this.log(chalk.yellow(`    Invalid path: ${assignment.modulePath}`));
-            }
+            batchInvalidPath++;
             continue;
           }
 
-          const targetModule = moduleByPath.get(assignment.modulePath);
+          let targetModule = moduleByPath.get(assignment.modulePath);
           if (!targetModule) {
-            if (verbose && !isJson) {
-              this.log(chalk.yellow(`    Module not found: ${assignment.modulePath}`));
+            targetModule = this.resolveModulePath(assignment.modulePath, moduleByPath);
+            if (targetModule) {
+              batchFuzzy++;
+            } else {
+              batchNotFound++;
+              continue;
             }
-            continue;
           }
 
           if (!dryRun) {
             db.assignSymbolToModule(assignment.symbolId, targetModule.id);
           }
-          allAssignments.push(assignment);
+          allAssignments.push({ symbolId: assignment.symbolId, modulePath: targetModule.fullPath });
           totalAssigned++;
+        }
+
+        if (!isJson && (batchInvalidPath > 0 || batchNotFound > 0 || batchFuzzy > 0)) {
+          const parts: string[] = [];
+          if (batchFuzzy > 0) parts.push(`${batchFuzzy} fuzzy-resolved`);
+          if (batchInvalidPath > 0) parts.push(`${batchInvalidPath} invalid-path`);
+          if (batchNotFound > 0) parts.push(`${batchNotFound} not-found`);
+          this.log(chalk.yellow(`    Batch ${iteration}: ${parts.join(', ')}`));
         }
 
         if (!isJson && !verbose) {
@@ -459,7 +495,7 @@ export default class Modules extends BaseLlmCommand {
     maxUnassignedPct: number,
     maxGateRetries: number,
     isJson: boolean,
-    verbose: boolean
+    _verbose: boolean
   ): Promise<void> {
     const stats = db.getModuleStats();
     const total = stats.assigned + stats.unassigned;
@@ -510,9 +546,15 @@ assignment,42,project.frontend.screens.login
       const currentPct = (unassigned.length / total) * 100;
       if (currentPct <= maxUnassignedPct) break;
 
-      if (!isJson && verbose) {
+      if (!isJson) {
         this.log(chalk.gray(`  Catch-up pass ${retry + 1}/${maxGateRetries}: ${unassigned.length} symbols remaining`));
       }
+
+      let passAssigned = 0;
+      let passFuzzy = 0;
+      let passInvalidPath = 0;
+      let passNotFound = 0;
+      let passErrors = 0;
 
       for (let i = 0; i < unassigned.length; i += batchSize) {
         const batch = unassigned.slice(i, i + batchSize);
@@ -532,14 +574,49 @@ assignment,42,project.frontend.screens.login
 
           const { assignments } = parseAssignmentCsv(response);
           for (const assignment of assignments) {
-            if (!isValidModulePath(assignment.modulePath)) continue;
-            const targetModule = moduleByPath.get(assignment.modulePath);
-            if (!targetModule) continue;
+            if (!isValidModulePath(assignment.modulePath)) {
+              passInvalidPath++;
+              continue;
+            }
+
+            let targetModule = moduleByPath.get(assignment.modulePath);
+            if (!targetModule) {
+              targetModule = this.resolveModulePath(assignment.modulePath, moduleByPath);
+              if (targetModule) {
+                passFuzzy++;
+              } else {
+                passNotFound++;
+                continue;
+              }
+            }
+
             db.assignSymbolToModule(assignment.symbolId, targetModule.id);
+            passAssigned++;
           }
-        } catch {
-          // Continue with next batch on failure
+        } catch (error) {
+          passErrors++;
+          const message = getErrorMessage(error);
+          if (!isJson) {
+            this.log(chalk.red(`    Catch-up batch error: ${message}`));
+          }
         }
+      }
+
+      if (!isJson) {
+        const parts: string[] = [`${passAssigned} assigned`];
+        if (passFuzzy > 0) parts.push(`${passFuzzy} fuzzy-resolved`);
+        if (passInvalidPath > 0) parts.push(`${passInvalidPath} invalid-path`);
+        if (passNotFound > 0) parts.push(`${passNotFound} not-found`);
+        if (passErrors > 0) parts.push(`${passErrors} errors`);
+        this.log(chalk.gray(`  Pass ${retry + 1} summary: ${parts.join(', ')}`));
+      }
+
+      // Early exit: no progress this pass
+      if (passAssigned === 0) {
+        if (!isJson) {
+          this.log(chalk.yellow('  No progress this pass \u2014 stopping early'));
+        }
+        break;
       }
 
       // Re-check
@@ -564,6 +641,8 @@ assignment,42,project.frontend.screens.login
 
   /**
    * Phase 3: Deepen large modules by splitting them into sub-modules.
+   * Step 1: Rebalance branch modules (has children + direct members) — no new modules created.
+   * Step 2: Split leaf modules (largest first) — consumes module budget.
    */
   private async runDeepenPhase(
     db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never,
@@ -580,32 +659,73 @@ assignment,42,project.frontend.screens.login
       this.log(chalk.bold('Phase 3: Module Deepening'));
     }
 
-    const maxIterations = 5; // Safety limit to prevent infinite loops
-    let iteration = 0;
     let totalNewModules = 0;
     let totalReassignments = 0;
     let totalRebalanced = 0;
+
+    // Step 1: Rebalance branch modules (no new modules, no budget spent)
+    if (!dryRun) {
+      const branchModules = db.getBranchModulesWithDirectMembers(threshold);
+      if (branchModules.length > 0 && !isJson) {
+        this.log(chalk.gray(`  Rebalancing ${branchModules.length} branch modules with direct members`));
+      }
+      for (const mod of branchModules) {
+        if (verbose && !isJson) {
+          this.log(chalk.gray(`    Rebalancing ${mod.fullPath} (${mod.members.length} direct members)...`));
+        }
+
+        // Get existing children paths
+        const children = db.getModuleChildren(mod.id);
+        const childPaths = children.map((c) => c.fullPath);
+
+        if (childPaths.length === 0) continue;
+
+        try {
+          const rebalanced = await this.rebalanceAncestorSymbols(
+            db,
+            mod.fullPath,
+            childPaths,
+            flags,
+            isJson,
+            verbose,
+            llmLogOptions
+          );
+          totalRebalanced += rebalanced;
+        } catch (error) {
+          const message = getErrorMessage(error);
+          if (!isJson) {
+            this.log(chalk.red(`    Failed to rebalance ${mod.fullPath}: ${message}`));
+          }
+        }
+      }
+    }
+
+    // Step 2: Split leaf modules (budget consumed)
+    const maxIterations = 5; // Safety limit to prevent infinite loops
+    let iteration = 0;
     let hitModuleLimit = false;
 
     while (iteration < maxIterations && !hitModuleLimit) {
       iteration++;
 
-      // Query modules exceeding threshold
-      const largeModules = db.getModulesExceedingThreshold(threshold);
+      // Query leaf modules exceeding threshold (largest first)
+      const largeLeaves = dryRun
+        ? db.getModulesExceedingThreshold(threshold)
+        : db.getLeafModulesExceedingThreshold(threshold);
 
-      if (largeModules.length === 0) {
+      if (largeLeaves.length === 0) {
         if (verbose && !isJson) {
-          this.log(chalk.gray(`  Iteration ${iteration}: All modules under threshold`));
+          this.log(chalk.gray(`  Iteration ${iteration}: All leaf modules under threshold`));
         }
         break;
       }
 
       if (!isJson) {
-        this.log(chalk.gray(`  Iteration ${iteration}: ${largeModules.length} modules exceed threshold`));
+        this.log(chalk.gray(`  Iteration ${iteration}: ${largeLeaves.length} leaf modules exceed threshold`));
       }
 
-      // Process each large module
-      for (const mod of largeModules) {
+      // Process each large leaf module
+      for (const mod of largeLeaves) {
         if (hitModuleLimit) break;
 
         if (verbose && !isJson) {
@@ -846,18 +966,29 @@ assignment,42,project.frontend.screens.login
 
       // Apply reassignments — only allow moves into the new sub-structure
       const validSubPaths = new Set(newSubModulePaths);
+      const subModuleByPath = new Map<string, { id: number; fullPath: string }>();
+      for (const p of newSubModulePaths) {
+        const mod = db.getModuleByPath(p);
+        if (mod) subModuleByPath.set(p, { id: mod.id, fullPath: mod.fullPath });
+      }
       let rebalanced = 0;
 
       for (const assignment of assignments) {
-        if (!validSubPaths.has(assignment.modulePath)) {
+        let targetModule: { id: number; fullPath: string } | undefined;
+
+        if (validSubPaths.has(assignment.modulePath)) {
+          targetModule = subModuleByPath.get(assignment.modulePath);
+        } else {
+          // Fuzzy resolve constrained to the deepened module prefix
+          targetModule = this.resolveModulePath(assignment.modulePath, subModuleByPath, deepenedModulePath);
+        }
+
+        if (!targetModule) {
           if (verbose && !isJson) {
             this.log(chalk.yellow(`      Rebalance: skipping move to ${assignment.modulePath} (not a new sub-module)`));
           }
           continue;
         }
-
-        const targetModule = db.getModuleByPath(assignment.modulePath);
-        if (!targetModule) continue;
 
         db.assignSymbolToModule(assignment.symbolId, targetModule.id);
         rebalanced++;
@@ -878,10 +1009,71 @@ assignment,42,project.frontend.screens.login
   }
 
   /**
+   * Resolve a module path against the lookup map.
+   * Tries exact match first, then falls back to matching by final segment(s).
+   * Returns undefined if no match or ambiguous (multiple candidates).
+   */
+  private resolveModulePath<T extends { id: number; fullPath: string }>(
+    path: string,
+    moduleByPath: Map<string, T>,
+    constrainPrefix?: string
+  ): T | undefined {
+    // Exact match
+    const exact = moduleByPath.get(path);
+    if (exact) return exact;
+
+    // Fuzzy: match by final segment(s)
+    const segments = path.split('.');
+    const candidates: T[] = [];
+
+    for (const [fullPath, mod] of moduleByPath) {
+      if (constrainPrefix && !fullPath.startsWith(constrainPrefix)) continue;
+      const fullSegments = fullPath.split('.');
+      // Check if the path's segments match the tail of the full path
+      if (fullSegments.length >= segments.length) {
+        const tail = fullSegments.slice(fullSegments.length - segments.length);
+        if (tail.every((s, i) => s === segments[i])) {
+          candidates.push(mod);
+        }
+      }
+    }
+
+    // Only return if exactly one candidate (avoid ambiguity)
+    return candidates.length === 1 ? candidates[0] : undefined;
+  }
+
+  /**
+   * Compute directory hints for each module based on current member file paths.
+   * Returns the top 3 directories per module by member count.
+   */
+  private computeModuleDirectoryHints(
+    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never
+  ): Map<number, string[]> {
+    const hints = new Map<number, string[]>();
+    for (const mod of db.getAllModulesWithMembers()) {
+      if (mod.members.length === 0) continue;
+      const dirCounts = new Map<string, number>();
+      for (const m of mod.members) {
+        const dir = m.filePath.split('/').slice(0, -1).join('/');
+        if (dir) dirCounts.set(dir, (dirCounts.get(dir) ?? 0) + 1);
+      }
+      hints.set(
+        mod.id,
+        Array.from(dirCounts.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([dir]) => dir)
+      );
+    }
+    return hints;
+  }
+
+  /**
    * Build context for tree generation from database.
    */
   private buildTreeContext(
-    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never
+    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never,
+    maxModules?: number
   ): TreeGenerationContext {
     // Get all annotated symbols
     const allSymbols = db.getUnassignedSymbols();
@@ -916,23 +1108,36 @@ assignment,42,project.frontend.screens.login
       }))
       .sort((a, b) => b.count - a.count);
 
-    // Get unique directory paths
-    const directories = new Set<string>();
+    // Count symbols per leaf directory
+    const dirCounts = new Map<string, number>();
+    for (const sym of allSymbols) {
+      const dir = sym.filePath.split('/').slice(0, -1).join('/');
+      if (dir) dirCounts.set(dir, (dirCounts.get(dir) ?? 0) + 1);
+    }
+
+    // Build DirectoryInfo[] — include all ancestor directories too, with cumulative counts
+    const allDirs = new Set<string>();
     for (const sym of allSymbols) {
       const parts = sym.filePath.split('/');
       let path = '';
       for (let i = 0; i < parts.length - 1; i++) {
         path = path ? `${path}/${parts[i]}` : parts[i];
-        directories.add(path);
+        allDirs.add(path);
       }
     }
 
-    const directoryStructure = Array.from(directories).sort();
+    const directoryStructure: DirectoryInfo[] = Array.from(allDirs)
+      .sort()
+      .map((dir) => ({
+        path: dir,
+        symbolCount: dirCounts.get(dir) ?? 0,
+      }));
 
     return {
       totalSymbolCount: allSymbols.length,
       domains,
       directoryStructure,
+      maxModules: maxModules && maxModules > 0 ? maxModules : undefined,
     };
   }
 }

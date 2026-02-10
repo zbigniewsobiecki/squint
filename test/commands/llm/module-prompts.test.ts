@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type DirectoryInfo,
   type DomainSummary,
   type ModuleForDeepening,
   type SymbolForAssignment,
@@ -67,7 +68,10 @@ describe('module-prompts', () => {
             sampleSymbols: [{ name: 'LoginService', kind: 'class', role: 'service' }],
           },
         ],
-        directoryStructure: ['src/services/', 'src/controllers/'],
+        directoryStructure: [
+          { path: 'src/services/', symbolCount: 10 },
+          { path: 'src/controllers/', symbolCount: 5 },
+        ],
       };
 
       const prompt = buildTreeUserPrompt(context);
@@ -75,14 +79,15 @@ describe('module-prompts', () => {
       expect(prompt).toContain('## Domains Found (1)');
       expect(prompt).toContain('### auth (20 symbols)');
       expect(prompt).toContain('LoginService (class) [service]');
-      expect(prompt).toContain('src/services/');
+      expect(prompt).toContain('src/services/ (10 symbols)');
+      expect(prompt).toContain('src/controllers/ (5 symbols)');
     });
 
     it('includes all directories without truncation', () => {
       const context: TreeGenerationContext = {
         totalSymbolCount: 10,
         domains: [],
-        directoryStructure: Array.from({ length: 40 }, (_, i) => `dir${i}/`),
+        directoryStructure: Array.from({ length: 40 }, (_, i) => ({ path: `dir${i}/`, symbolCount: i })),
       };
 
       const prompt = buildTreeUserPrompt(context);
@@ -133,6 +138,53 @@ describe('module-prompts', () => {
       expect(prompt).toContain('Foo (function)');
       expect(prompt).not.toContain('[');
     });
+
+    it('includes budget hint when maxModules is set', () => {
+      const context: TreeGenerationContext = {
+        totalSymbolCount: 100,
+        domains: [],
+        directoryStructure: [],
+        maxModules: 200,
+      };
+
+      const prompt = buildTreeUserPrompt(context);
+      expect(prompt).toContain('Module budget: 200 total');
+      expect(prompt).toContain('Create ~80 modules now');
+      expect(prompt).toContain('oversized leaves will be split automatically later');
+    });
+
+    it('omits budget hint when maxModules is 0 or undefined', () => {
+      const context1: TreeGenerationContext = {
+        totalSymbolCount: 100,
+        domains: [],
+        directoryStructure: [],
+        maxModules: 0,
+      };
+
+      const context2: TreeGenerationContext = {
+        totalSymbolCount: 100,
+        domains: [],
+        directoryStructure: [],
+      };
+
+      expect(buildTreeUserPrompt(context1)).not.toContain('Module budget');
+      expect(buildTreeUserPrompt(context2)).not.toContain('Module budget');
+    });
+
+    it('renders directory info with symbol counts', () => {
+      const context: TreeGenerationContext = {
+        totalSymbolCount: 150,
+        domains: [],
+        directoryStructure: [
+          { path: 'packages/backend/src/agent/gadgets', symbolCount: 109 },
+          { path: 'packages/frontend/src/components', symbolCount: 3 },
+        ],
+      };
+
+      const prompt = buildTreeUserPrompt(context);
+      expect(prompt).toContain('- packages/backend/src/agent/gadgets (109 symbols)');
+      expect(prompt).toContain('- packages/frontend/src/components (3 symbols)');
+    });
   });
 
   // ============================================
@@ -176,6 +228,34 @@ describe('module-prompts', () => {
       const modules = [makeModule({ fullPath: 'project.api', name: 'API', depth: 1, description: null })];
       const result = formatModuleTreeForPrompt(modules);
       expect(result).toBe('  project.api: API');
+    });
+
+    it('includes directory hints when provided', () => {
+      const modules = [
+        makeModule({ id: 1, fullPath: 'project', name: 'Project', depth: 0 }),
+        makeModule({ id: 2, fullPath: 'project.api', name: 'API', depth: 1, description: 'REST endpoints' }),
+      ];
+      const hints = new Map<number, string[]>();
+      hints.set(2, ['src/controllers', 'src/routes']);
+
+      const result = formatModuleTreeForPrompt(modules, hints);
+      expect(result).toContain('project.api: API - REST endpoints [src/controllers, src/routes]');
+    });
+
+    it('omits hint brackets when module has no hints', () => {
+      const modules = [makeModule({ id: 5, fullPath: 'project.core', name: 'Core', depth: 1 })];
+      const hints = new Map<number, string[]>();
+      // no entry for id 5
+
+      const result = formatModuleTreeForPrompt(modules, hints);
+      expect(result).toBe('  project.core: Core');
+      expect(result).not.toContain('[');
+    });
+
+    it('omits hint brackets when hints map is not provided', () => {
+      const modules = [makeModule({ id: 5, fullPath: 'project.core', name: 'Core', depth: 1 })];
+      const result = formatModuleTreeForPrompt(modules);
+      expect(result).not.toContain('[');
     });
   });
 

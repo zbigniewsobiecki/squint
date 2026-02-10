@@ -533,6 +533,18 @@ export class IndexDatabase implements IIndexWriter {
     return this.modules.getTestModuleIds();
   }
 
+  pruneEmptyLeafModules(): number {
+    return this.modules.pruneEmptyLeaves();
+  }
+
+  getLeafModulesExceedingThreshold(threshold: number): ModuleWithMembers[] {
+    return this.modules.getLeafModulesExceedingThreshold(threshold);
+  }
+
+  getBranchModulesWithDirectMembers(threshold: number): ModuleWithMembers[] {
+    return this.modules.getBranchModulesWithDirectMembers(threshold);
+  }
+
   assignColorIndices(): void {
     this.modules.assignColorIndices();
   }
