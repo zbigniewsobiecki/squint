@@ -24,7 +24,7 @@ interface VerifyFlags {
 /**
  * Parse the verification CSV response (definition_id,check,verdict,reason).
  */
-function parseAnnotationVerifyCsv(
+export function parseAnnotationVerifyCsv(
   content: string
 ): Array<{ definitionId: number; check: string; verdict: string; reason: string }> {
   const { items } = parseCsvWithMapper(content, {
@@ -46,7 +46,7 @@ function parseAnnotationVerifyCsv(
 /**
  * Parse the relationship verification CSV response (from_id,to_id,verdict,reason).
  */
-function parseRelationshipVerifyCsv(
+export function parseRelationshipVerifyCsv(
   content: string
 ): Array<{ fromId: number; toId: number; verdict: string; reason: string }> {
   const { items } = parseCsvWithMapper(content, {
@@ -66,7 +66,7 @@ function parseRelationshipVerifyCsv(
   return items;
 }
 
-function verdictToSeverity(verdict: string): VerifySeverity | null {
+export function verdictToSeverity(verdict: string): VerifySeverity | null {
   if (verdict === 'wrong') return 'error';
   if (verdict === 'suspect') return 'warning';
   return null; // correct — no issue
