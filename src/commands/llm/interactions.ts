@@ -4,7 +4,7 @@ import type { IndexDatabase } from '../../db/database-facade.js';
 import type { EnrichedModuleCallEdge, Module, ModuleCallEdge, ModuleWithMembers } from '../../db/schema.js';
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
-import { parseCSVLine } from './_shared/csv-utils.js';
+import { parseRow } from './_shared/csv-utils.js';
 import { completeWithLogging, getErrorMessage } from './_shared/llm-utils.js';
 import {
   type ProcessGroups,
@@ -515,8 +515,8 @@ Generate semantic descriptions for each interaction in CSV format.`;
     const lines = csvContent.split('\n').filter((l) => l.trim() && !l.startsWith('from_module'));
 
     for (const line of lines) {
-      const fields = parseCSVLine(line);
-      if (fields.length < 3) continue;
+      const fields = parseRow(line);
+      if (!fields || fields.length < 3) continue;
 
       const [fromPath, toPath, semantic] = fields;
 
@@ -780,8 +780,8 @@ Evaluate each pair and output CONFIRM or SKIP in CSV format.`;
     for (const line of csv.split('\n')) {
       if (!line.trim() || line.startsWith('from_module')) continue;
 
-      const fields = parseCSVLine(line);
-      if (fields.length < 4) continue;
+      const fields = parseRow(line);
+      if (!fields || fields.length < 4) continue;
 
       const [fromPath, toPath, action, reason] = fields;
 
@@ -925,8 +925,8 @@ DO NOT report:
     for (const line of csv.split('\n')) {
       if (!line.trim() || line.startsWith('from_module')) continue;
 
-      const fields = parseCSVLine(line);
-      if (fields.length < 4) continue;
+      const fields = parseRow(line);
+      if (!fields || fields.length < 4) continue;
 
       const [fromPath, toPath, reason, confidence] = fields;
 

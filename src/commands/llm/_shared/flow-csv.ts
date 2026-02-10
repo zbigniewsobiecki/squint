@@ -6,7 +6,7 @@
  * 2. Flow construction with sub-flow references (Phase 2)
  */
 
-import { extractCsvContent, parseRow, splitCsvLines } from './csv-utils.js';
+import { extractCsvContent, parseCsvWithMapper, parseRow, safeParseInt, splitCsvLines } from './csv-utils.js';
 
 // ============================================
 // Entry Point Classification (Phase 1)
@@ -28,74 +28,33 @@ export interface EntryPointParseResult {
 
 /**
  * Parse entry point classification output.
- * Expected format:
- * ```csv
- * type,id,classification,confidence,reason
- * entry,42,top_level,high,"HTTP controller - receives external requests"
- * entry,87,subflow_candidate,medium,"Validation logic reused by multiple controllers"
- * ```
+ * Expected format: type,id,classification,confidence,reason
  */
 export function parseEntryPointClassification(content: string): EntryPointParseResult {
-  const entries: ClassifiedEntryPoint[] = [];
-  const errors: string[] = [];
+  const { items, errors } = parseCsvWithMapper<ClassifiedEntryPoint>(content, {
+    minColumns: 5,
+    rowMapper: (cols, lineNum, errs) => {
+      const [type, idStr, classification, confidence, reason] = cols;
 
-  const csv = extractCsvContent(content);
-  const lines = splitCsvLines(csv);
+      if (type !== 'entry') return null; // Skip non-entry rows
 
-  if (lines.length === 0) {
-    errors.push('Empty CSV content');
-    return { entries, errors };
-  }
+      const id = safeParseInt(idStr, 'ID', lineNum, errs);
+      if (id === null) return null;
 
-  // Validate header
-  const header = parseRow(lines[0]);
-  if (!header || header.length < 5) {
-    errors.push(`Invalid header: expected "type,id,classification,confidence,reason", got "${lines[0]}"`);
-    return { entries, errors };
-  }
+      if (!isValidClassification(classification)) {
+        errs.push(`Line ${lineNum}: Invalid classification "${classification}"`);
+        return null;
+      }
+      if (!isValidConfidence(confidence)) {
+        errs.push(`Line ${lineNum}: Invalid confidence "${confidence}"`);
+        return null;
+      }
 
-  // Parse data rows
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
+      return { id, classification, confidence, reason };
+    },
+  });
 
-    const parsed = parseRow(line);
-    if (!parsed || parsed.length < 5) {
-      errors.push(`Line ${i + 1}: Invalid row format`);
-      continue;
-    }
-
-    const [type, idStr, classification, confidence, reason] = parsed;
-
-    if (type !== 'entry') {
-      continue; // Skip non-entry rows
-    }
-
-    const id = Number.parseInt(idStr, 10);
-    if (Number.isNaN(id)) {
-      errors.push(`Line ${i + 1}: Invalid ID "${idStr}"`);
-      continue;
-    }
-
-    if (!isValidClassification(classification)) {
-      errors.push(`Line ${i + 1}: Invalid classification "${classification}"`);
-      continue;
-    }
-
-    if (!isValidConfidence(confidence)) {
-      errors.push(`Line ${i + 1}: Invalid confidence "${confidence}"`);
-      continue;
-    }
-
-    entries.push({
-      id,
-      classification,
-      confidence,
-      reason: reason.trim(),
-    });
-  }
-
-  return { entries, errors };
+  return { entries: items, errors };
 }
 
 function isValidClassification(s: string): s is EntryPointClassification {
@@ -178,12 +137,8 @@ export function parseFlowConstruction(content: string): FlowParseResult {
     }
 
     const [type, flowIdStr, field, value] = parsed;
-    const flowId = Number.parseInt(flowIdStr, 10);
-
-    if (Number.isNaN(flowId)) {
-      errors.push(`Line ${i + 1}: Invalid flow_id "${flowIdStr}"`);
-      continue;
-    }
+    const flowId = safeParseInt(flowIdStr, 'flow_id', i + 1, errors);
+    if (flowId === null) continue;
 
     // Ensure flow exists in map
     if (!flowsMap.has(flowId)) {
@@ -220,11 +175,8 @@ export function parseFlowConstruction(content: string): FlowParseResult {
         break;
 
       case 'step': {
-        const stepOrder = Number.parseInt(field, 10);
-        if (Number.isNaN(stepOrder)) {
-          errors.push(`Line ${i + 1}: Invalid step order "${field}"`);
-          continue;
-        }
+        const stepOrder = safeParseInt(field, 'step order', i + 1, errors);
+        if (stepOrder === null) continue;
 
         const stepValue = value.trim();
         if (stepValue.startsWith('subflow:')) {
@@ -236,11 +188,8 @@ export function parseFlowConstruction(content: string): FlowParseResult {
           });
           flow.isComposite = true;
         } else {
-          const defId = Number.parseInt(stepValue, 10);
-          if (Number.isNaN(defId)) {
-            errors.push(`Line ${i + 1}: Invalid step definition ID "${stepValue}"`);
-            continue;
-          }
+          const defId = safeParseInt(stepValue, 'step definition ID', i + 1, errors);
+          if (defId === null) continue;
           flow.steps.push({
             type: 'definition',
             order: stepOrder,
@@ -251,11 +200,8 @@ export function parseFlowConstruction(content: string): FlowParseResult {
       }
 
       case 'subflow_reason': {
-        const stepOrder = Number.parseInt(field, 10);
-        if (Number.isNaN(stepOrder)) {
-          errors.push(`Line ${i + 1}: Invalid step order for subflow_reason "${field}"`);
-          continue;
-        }
+        const stepOrder = safeParseInt(field, 'step order for subflow_reason', i + 1, errors);
+        if (stepOrder === null) continue;
         flow.subflowReasons.set(stepOrder, value.trim());
         break;
       }
@@ -294,64 +240,38 @@ export interface GapFillParseResult {
 
 /**
  * Parse gap filling suggestions.
- * Expected format:
- * ```csv
- * type,symbol_id,target_flow_id,reason
- * new_flow,89,,"Payment validation should be a standalone flow"
- * add_to_existing,156,3,"Should be added to CreateSale flow as notification step"
- * new_subflow,42,,"Appears in multiple flows as common validation pattern"
- * ```
+ * Expected format: type,symbol_id,target_flow_id,reason
  */
 export function parseGapFillSuggestions(content: string): GapFillParseResult {
-  const suggestions: GapFillSuggestion[] = [];
-  const errors: string[] = [];
+  const { items, errors } = parseCsvWithMapper<GapFillSuggestion>(content, {
+    minColumns: 4,
+    rowMapper: (cols, lineNum, errs) => {
+      const [type, symbolIdStr, targetFlowIdStr, reason] = cols;
 
-  const csv = extractCsvContent(content);
-  const lines = splitCsvLines(csv);
+      if (!isValidGapFillType(type)) {
+        errs.push(`Line ${lineNum}: Invalid suggestion type "${type}"`);
+        return null;
+      }
 
-  if (lines.length === 0) {
-    return { suggestions, errors };
-  }
+      const symbolId = safeParseInt(symbolIdStr, 'symbol_id', lineNum, errs);
+      if (symbolId === null) return null;
 
-  // Skip header
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
+      const targetFlowId = targetFlowIdStr ? Number.parseInt(targetFlowIdStr, 10) : undefined;
+      if (type === 'add_to_existing' && (targetFlowId === undefined || Number.isNaN(targetFlowId))) {
+        errs.push(`Line ${lineNum}: add_to_existing requires valid target_flow_id`);
+        return null;
+      }
 
-    const parsed = parseRow(line);
-    if (!parsed || parsed.length < 4) {
-      errors.push(`Line ${i + 1}: Invalid row format`);
-      continue;
-    }
+      return {
+        type,
+        symbolId,
+        targetFlowId: targetFlowId && !Number.isNaN(targetFlowId) ? targetFlowId : undefined,
+        reason,
+      };
+    },
+  });
 
-    const [type, symbolIdStr, targetFlowIdStr, reason] = parsed;
-
-    if (!isValidGapFillType(type)) {
-      errors.push(`Line ${i + 1}: Invalid suggestion type "${type}"`);
-      continue;
-    }
-
-    const symbolId = Number.parseInt(symbolIdStr, 10);
-    if (Number.isNaN(symbolId)) {
-      errors.push(`Line ${i + 1}: Invalid symbol_id "${symbolIdStr}"`);
-      continue;
-    }
-
-    const targetFlowId = targetFlowIdStr ? Number.parseInt(targetFlowIdStr, 10) : undefined;
-    if (type === 'add_to_existing' && (targetFlowId === undefined || Number.isNaN(targetFlowId))) {
-      errors.push(`Line ${i + 1}: add_to_existing requires valid target_flow_id`);
-      continue;
-    }
-
-    suggestions.push({
-      type,
-      symbolId,
-      targetFlowId: targetFlowId && !Number.isNaN(targetFlowId) ? targetFlowId : undefined,
-      reason: reason.trim(),
-    });
-  }
-
-  return { suggestions, errors };
+  return { suggestions: items, errors };
 }
 
 function isValidGapFillType(s: string): s is GapFillSuggestion['type'] {

@@ -37,7 +37,7 @@ describe('csv', () => {
     it('reports error on wrong column count in header', () => {
       const result = parseCsv('id,aspect\n1,purpose');
       expect(result.rows).toEqual([]);
-      expect(result.errors[0]).toContain('Invalid header row');
+      expect(result.errors[0]).toContain('columns in header');
     });
 
     it('reports error on wrong column count in data row', () => {
@@ -139,7 +139,7 @@ describe('csv', () => {
 
     it('reports error on wrong column count', () => {
       const result = parseCombinedCsv('type,id\n1,2');
-      expect(result.errors[0]).toContain('Invalid header row');
+      expect(result.errors[0]).toContain('columns in header');
     });
 
     it('reports error on non-numeric symbol ID', () => {

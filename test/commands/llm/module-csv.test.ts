@@ -202,7 +202,7 @@ module,project,frontend,Frontend,UI components,false`;
 
     it('reports error on wrong column count', () => {
       const result = parseTreeCsv('type,parent_path,slug\nmodule,project,x');
-      expect(result.errors[0]).toContain('Invalid header');
+      expect(result.errors[0]).toContain('columns in header');
     });
 
     it('reports error on invalid header names', () => {
@@ -295,7 +295,7 @@ assignment,87,project.backend.services`;
 
     it('reports error on wrong column count', () => {
       const result = parseAssignmentCsv('type,symbol_id\n1,2');
-      expect(result.errors[0]).toContain('Invalid header row');
+      expect(result.errors[0]).toContain('columns in header');
     });
 
     it('reports error on invalid header names', () => {

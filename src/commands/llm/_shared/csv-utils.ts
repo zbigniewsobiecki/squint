@@ -106,29 +106,15 @@ export function parseRow(line: string): string[] | null {
 }
 
 /**
- * Simple CSV line parser that handles quoted fields.
- * Use this for simple parsing needs where full RFC 4180 compliance isn't needed.
+ * Safely parse an integer from a CSV field, pushing an error if invalid.
  */
-export function parseCSVLine(line: string): string[] {
-  const fields: string[] = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-
-    if (char === '"') {
-      inQuotes = !inQuotes;
-    } else if (char === ',' && !inQuotes) {
-      fields.push(current);
-      current = '';
-    } else {
-      current += char;
-    }
+export function safeParseInt(value: string, fieldName: string, lineNum: number, errors: string[]): number | null {
+  const n = Number.parseInt(value, 10);
+  if (Number.isNaN(n)) {
+    errors.push(`Line ${lineNum}: Invalid ${fieldName} "${value}"`);
+    return null;
   }
-  fields.push(current);
-
-  return fields;
+  return n;
 }
 
 /**
@@ -203,6 +189,100 @@ export function parseCsvWithHeader(
   }
 
   return { header: header.map((h) => h.trim().toLowerCase()), rows, errors };
+}
+
+/**
+ * Generic mapper-based CSV parser. Handles shared boilerplate (extract content,
+ * split lines, validate header, iterate rows, validate column count) and
+ * delegates row-level logic to a callback.
+ */
+export interface CsvParseOptions<T> {
+  /** Exact column count(s) accepted. Rows with other counts are rejected. */
+  expectedColumns?: number | number[];
+  /** Minimum column count accepted. Rows with fewer columns are rejected. */
+  minColumns?: number;
+  /** Optional header validation (receives raw header fields). */
+  headerValidator?: (header: string[]) => boolean;
+  /** Map trimmed columns to a domain object, or return null to skip the row. */
+  rowMapper: (columns: string[], lineNum: number, errors: string[]) => T | null;
+  /** Whether to skip the first row as a header (default: true). */
+  skipHeader?: boolean;
+}
+
+export function parseCsvWithMapper<T>(content: string, options: CsvParseOptions<T>): { items: T[]; errors: string[] } {
+  const errors: string[] = [];
+  const items: T[] = [];
+  const skipHeader = options.skipHeader !== false;
+
+  const csv = extractCsvContent(content);
+  const lines = splitCsvLines(csv);
+
+  if (lines.length === 0) {
+    errors.push('Empty CSV content');
+    return { items, errors };
+  }
+
+  let startIndex = 0;
+
+  if (skipHeader) {
+    const header = parseRow(lines[0]);
+    if (!header) {
+      errors.push(`Invalid header row: ${lines[0]}`);
+      return { items, errors };
+    }
+
+    if (options.expectedColumns !== undefined) {
+      const expected = Array.isArray(options.expectedColumns) ? options.expectedColumns : [options.expectedColumns];
+      if (!expected.includes(header.length)) {
+        errors.push(`Expected ${expected.join(' or ')} columns in header, got ${header.length}`);
+        return { items, errors };
+      }
+    }
+    if (options.minColumns !== undefined && header.length < options.minColumns) {
+      errors.push(`Expected at least ${options.minColumns} columns in header, got ${header.length}`);
+      return { items, errors };
+    }
+
+    if (options.headerValidator && !options.headerValidator(header)) {
+      errors.push(`Invalid header columns: ${header.join(',')}`);
+      return { items, errors };
+    }
+
+    startIndex = 1;
+  }
+
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const parsed = parseRow(line);
+    if (!parsed) {
+      errors.push(`Line ${i + 1}: Failed to parse row: ${line.substring(0, 50)}...`);
+      continue;
+    }
+
+    if (options.expectedColumns !== undefined) {
+      const expected = Array.isArray(options.expectedColumns) ? options.expectedColumns : [options.expectedColumns];
+      if (!expected.includes(parsed.length)) {
+        errors.push(
+          `Line ${i + 1}: Expected ${expected.join(' or ')} columns, got ${parsed.length}: ${line.substring(0, 50)}...`
+        );
+        continue;
+      }
+    }
+    if (options.minColumns !== undefined && parsed.length < options.minColumns) {
+      errors.push(`Line ${i + 1}: Expected at least ${options.minColumns} columns, got ${parsed.length}`);
+      continue;
+    }
+
+    const trimmed = parsed.map((v) => v.trim());
+    const item = options.rowMapper(trimmed, i + 1, errors);
+    if (item !== null) {
+      items.push(item);
+    }
+  }
+
+  return { items, errors };
 }
 
 /**

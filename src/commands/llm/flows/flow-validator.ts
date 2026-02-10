@@ -6,7 +6,7 @@
 import type { Command } from '@oclif/core';
 import type { IndexDatabase } from '../../../db/database.js';
 import type { InteractionWithPaths, Module } from '../../../db/schema.js';
-import { parseCSVLine } from '../_shared/csv-utils.js';
+import { parseRow } from '../_shared/csv-utils.js';
 import { groupModulesByEntity } from '../_shared/entity-utils.js';
 import {
   type LlmLogOptions,
@@ -256,8 +256,8 @@ Only report flows where the module interactions to support them actually EXIST i
     }
 
     for (const line of lines) {
-      const fields = parseCSVLine(line);
-      if (fields.length < 6) continue;
+      const fields = parseRow(line);
+      if (!fields || fields.length < 6) continue;
 
       const [flowName, stakeholder, actionType, targetEntity, interactionChain, description] = fields;
 

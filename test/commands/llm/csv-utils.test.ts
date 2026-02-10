@@ -3,9 +3,10 @@ import {
   extractCsvContent,
   formatCsvValue,
   getDataLines,
-  parseCSVLine,
   parseCsvWithHeader,
+  parseCsvWithMapper,
   parseRow,
+  safeParseInt,
   splitCsvLines,
 } from '../../../src/commands/llm/_shared/csv-utils.js';
 
@@ -121,26 +122,6 @@ describe('csv-utils', () => {
   });
 
   // ============================================
-  // parseCSVLine
-  // ============================================
-  describe('parseCSVLine', () => {
-    it('parses simple fields', () => {
-      expect(parseCSVLine('a,b,c')).toEqual(['a', 'b', 'c']);
-    });
-
-    it('handles quoted fields (strips quotes from toggle)', () => {
-      // parseCSVLine toggles inQuotes but doesn't strip quotes from the output value
-      const result = parseCSVLine('"hello","world"');
-      expect(result).toEqual(['hello', 'world']);
-    });
-
-    it('handles commas inside quotes', () => {
-      const result = parseCSVLine('"a,b",c');
-      expect(result).toEqual(['a,b', 'c']);
-    });
-  });
-
-  // ============================================
   // formatCsvValue
   // ============================================
   describe('formatCsvValue', () => {
@@ -237,6 +218,160 @@ describe('csv-utils', () => {
       // The header won't parse properly.
       const result = parseCsvWithHeader(csv, 2);
       expect(result.errors.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ============================================
+  // safeParseInt
+  // ============================================
+  describe('safeParseInt', () => {
+    it('parses valid integer', () => {
+      const errors: string[] = [];
+      expect(safeParseInt('42', 'id', 1, errors)).toBe(42);
+      expect(errors).toEqual([]);
+    });
+
+    it('returns null and pushes error for non-numeric', () => {
+      const errors: string[] = [];
+      expect(safeParseInt('abc', 'id', 3, errors)).toBeNull();
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('Line 3');
+      expect(errors[0]).toContain('Invalid id');
+    });
+
+    it('parses negative integers', () => {
+      const errors: string[] = [];
+      expect(safeParseInt('-5', 'offset', 1, errors)).toBe(-5);
+      expect(errors).toEqual([]);
+    });
+
+    it('returns null for empty string', () => {
+      const errors: string[] = [];
+      expect(safeParseInt('', 'val', 1, errors)).toBeNull();
+      expect(errors).toHaveLength(1);
+    });
+  });
+
+  // ============================================
+  // parseCsvWithMapper
+  // ============================================
+  describe('parseCsvWithMapper', () => {
+    it('parses simple CSV with mapper', () => {
+      const csv = 'id,name\n1,Alice\n2,Bob';
+      const result = parseCsvWithMapper<{ id: number; name: string }>(csv, {
+        expectedColumns: 2,
+        rowMapper: (cols) => ({ id: Number(cols[0]), name: cols[1] }),
+      });
+      expect(result.errors).toEqual([]);
+      expect(result.items).toHaveLength(2);
+      expect(result.items[0]).toEqual({ id: 1, name: 'Alice' });
+      expect(result.items[1]).toEqual({ id: 2, name: 'Bob' });
+    });
+
+    it('skips rows when mapper returns null', () => {
+      const csv = 'type,value\nkeep,yes\nskip,no\nkeep,also';
+      const result = parseCsvWithMapper<string>(csv, {
+        expectedColumns: 2,
+        rowMapper: (cols) => (cols[0] === 'keep' ? cols[1] : null),
+      });
+      expect(result.items).toEqual(['yes', 'also']);
+    });
+
+    it('reports errors for wrong column count', () => {
+      const csv = 'a,b,c\n1,2\n4,5,6';
+      const result = parseCsvWithMapper<string[]>(csv, {
+        expectedColumns: 3,
+        rowMapper: (cols) => cols,
+      });
+      expect(result.items).toHaveLength(1);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain('Expected 3 columns, got 2');
+    });
+
+    it('accepts multiple column counts', () => {
+      const csv = 'a,b,c\n1,2,3\n4,5,6,7';
+      const result = parseCsvWithMapper<string[]>(csv, {
+        expectedColumns: [3, 4],
+        rowMapper: (cols) => cols,
+      });
+      expect(result.items).toHaveLength(2);
+      expect(result.errors).toEqual([]);
+    });
+
+    it('validates minimum column count', () => {
+      const csv = 'a,b,c\n1,2,3\n4,5\n6,7,8,9';
+      const result = parseCsvWithMapper<string[]>(csv, {
+        minColumns: 3,
+        rowMapper: (cols) => cols,
+      });
+      expect(result.items).toHaveLength(2);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain('at least 3 columns');
+    });
+
+    it('validates header with headerValidator', () => {
+      const csv = 'wrong,header\n1,2';
+      const result = parseCsvWithMapper<string[]>(csv, {
+        expectedColumns: 2,
+        headerValidator: (h) => h[0] === 'correct',
+        rowMapper: (cols) => cols,
+      });
+      expect(result.items).toEqual([]);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain('Invalid header columns');
+    });
+
+    it('handles empty content', () => {
+      const result = parseCsvWithMapper<string>('', {
+        rowMapper: (cols) => cols[0],
+      });
+      expect(result.items).toEqual([]);
+      expect(result.errors[0]).toContain('Empty CSV content');
+    });
+
+    it('handles skipHeader=false', () => {
+      const csv = 'data1,val1\ndata2,val2';
+      const result = parseCsvWithMapper<string>(csv, {
+        expectedColumns: 2,
+        skipHeader: false,
+        rowMapper: (cols) => cols[0],
+      });
+      expect(result.items).toEqual(['data1', 'data2']);
+    });
+
+    it('strips code fences before parsing', () => {
+      const csv = '```csv\nid,name\n1,Alice\n```';
+      const result = parseCsvWithMapper<string>(csv, {
+        expectedColumns: 2,
+        rowMapper: (cols) => cols[1],
+      });
+      expect(result.items).toEqual(['Alice']);
+    });
+
+    it('trims cell values', () => {
+      const csv = 'a,b\n  hello  ,  world  ';
+      const result = parseCsvWithMapper<string[]>(csv, {
+        expectedColumns: 2,
+        rowMapper: (cols) => cols,
+      });
+      expect(result.items[0]).toEqual(['hello', 'world']);
+    });
+
+    it('mapper can push custom errors', () => {
+      const csv = 'id,val\n1,ok\n2,bad';
+      const result = parseCsvWithMapper<string>(csv, {
+        expectedColumns: 2,
+        rowMapper: (cols, lineNum, errs) => {
+          if (cols[1] === 'bad') {
+            errs.push(`Line ${lineNum}: bad value`);
+            return null;
+          }
+          return cols[1];
+        },
+      });
+      expect(result.items).toEqual(['ok']);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain('bad value');
     });
   });
 

@@ -2,7 +2,7 @@
  * CSV parsing for module tree and symbol assignment LLM responses.
  */
 
-import { extractCsvContent, parseRow, splitCsvLines } from './csv-utils.js';
+import { extractCsvContent, parseCsvWithMapper, parseRow, safeParseInt, splitCsvLines } from './csv-utils.js';
 
 export { formatCsvValue } from './csv-utils.js';
 
@@ -87,104 +87,52 @@ export interface TreeParseResult {
  * Also accepts legacy 5-column format without is_test.
  */
 export function parseTreeCsv(content: string): TreeParseResult {
-  const modules: ModuleDefinitionRow[] = [];
-  const errors: string[] = [];
-
-  const csv = extractCsvContent(content);
-  const lines = splitCsvLines(csv);
-  if (lines.length === 0) {
-    errors.push('Empty CSV content');
-    return { modules, errors };
-  }
-
-  // Parse header
-  const headerLine = lines[0];
-  const header = parseRow(headerLine);
-  if (!header || (header.length !== 5 && header.length !== 6)) {
-    errors.push(`Invalid header row: expected "type,parent_path,slug,name,description,is_test", got "${headerLine}"`);
-    return { modules, errors };
-  }
-
-  const normalizedHeaders = header.map((h) => h.toLowerCase().trim().replace(/_/g, '_'));
-  const hasIsTestColumn = header.length === 6;
-
-  // Check headers (allow some flexibility)
-  const headerOk =
-    normalizedHeaders[0] === 'type' &&
-    (normalizedHeaders[1] === 'parent_path' || normalizedHeaders[1] === 'parentpath') &&
-    normalizedHeaders[2] === 'slug' &&
-    normalizedHeaders[3] === 'name' &&
-    (normalizedHeaders[4] === 'description' || normalizedHeaders[4] === 'desc') &&
-    (!hasIsTestColumn || normalizedHeaders[5] === 'is_test' || normalizedHeaders[5] === 'istest');
-
-  if (!headerOk) {
-    const expectedHeaders = hasIsTestColumn
-      ? ['type', 'parent_path', 'slug', 'name', 'description', 'is_test']
-      : ['type', 'parent_path', 'slug', 'name', 'description'];
-    errors.push(`Invalid header columns: expected "${expectedHeaders.join(',')}", got "${header.join(',')}"`);
-    return { modules, errors };
-  }
-
-  const expectedColCount = hasIsTestColumn ? 6 : 5;
-
-  // Parse data rows
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-
-    const parsed = parseRow(line);
-    if (!parsed) {
-      errors.push(`Line ${i + 1}: Failed to parse row: ${line.substring(0, 50)}...`);
-      continue;
-    }
-
-    if (parsed.length !== expectedColCount) {
-      errors.push(
-        `Line ${i + 1}: Expected ${expectedColCount} columns, got ${parsed.length}: ${line.substring(0, 50)}...`
+  const { items, errors } = parseCsvWithMapper<ModuleDefinitionRow>(content, {
+    expectedColumns: [5, 6],
+    headerValidator: (h) => {
+      const norm = h.map((s) => s.toLowerCase().trim().replace(/_/g, '_'));
+      const hasIsTest = h.length === 6;
+      return (
+        norm[0] === 'type' &&
+        (norm[1] === 'parent_path' || norm[1] === 'parentpath') &&
+        norm[2] === 'slug' &&
+        norm[3] === 'name' &&
+        (norm[4] === 'description' || norm[4] === 'desc') &&
+        (!hasIsTest || norm[5] === 'is_test' || norm[5] === 'istest')
       );
-      continue;
-    }
+    },
+    rowMapper: (cols, lineNum, errs) => {
+      const [rowType, parentPath, slug, name, description] = cols;
+      const isTestStr = cols.length >= 6 ? cols[5] : 'false';
 
-    const trimmed = parsed.map((v) => v.trim());
-    const rowType = trimmed[0];
-    const parentPath = trimmed[1];
-    const slug = trimmed[2];
-    const name = trimmed[3];
-    const description = trimmed[4];
-    const isTestStr = hasIsTestColumn ? trimmed[5] : 'false';
+      if (rowType !== 'module') {
+        errs.push(`Line ${lineNum}: Unknown type "${rowType}", expected "module"`);
+        return null;
+      }
+      if (!isValidModulePath(parentPath)) {
+        errs.push(`Line ${lineNum}: Invalid parent_path "${parentPath}"`);
+        return null;
+      }
+      if (!isValidSlug(slug)) {
+        errs.push(`Line ${lineNum}: Invalid slug "${slug}"`);
+        return null;
+      }
+      if (!name) {
+        errs.push(`Line ${lineNum}: Missing name`);
+        return null;
+      }
 
-    if (rowType !== 'module') {
-      errors.push(`Line ${i + 1}: Unknown type "${rowType}", expected "module"`);
-      continue;
-    }
+      return {
+        parentPath,
+        slug,
+        name,
+        description: description || '',
+        isTest: isTestStr.toLowerCase() === 'true',
+      };
+    },
+  });
 
-    // Validate parent_path
-    if (!isValidModulePath(parentPath)) {
-      errors.push(`Line ${i + 1}: Invalid parent_path "${parentPath}"`);
-      continue;
-    }
-
-    // Validate slug
-    if (!isValidSlug(slug)) {
-      errors.push(`Line ${i + 1}: Invalid slug "${slug}"`);
-      continue;
-    }
-
-    if (!name) {
-      errors.push(`Line ${i + 1}: Missing name`);
-      continue;
-    }
-
-    modules.push({
-      parentPath,
-      slug,
-      name,
-      description: description || '',
-      isTest: isTestStr.toLowerCase() === 'true',
-    });
-  }
-
-  return { modules, errors };
+  return { modules: items, errors };
 }
 
 // ============================================================
@@ -206,77 +154,38 @@ export interface AssignmentParseResult {
  * Expected CSV format: type,symbol_id,module_path
  */
 export function parseAssignmentCsv(content: string): AssignmentParseResult {
-  const assignments: SymbolAssignmentRow[] = [];
-  const errors: string[] = [];
+  const { items, errors } = parseCsvWithMapper<SymbolAssignmentRow>(content, {
+    expectedColumns: 3,
+    headerValidator: (h) => {
+      const norm = h.map((s) => s.toLowerCase().trim().replace(/_/g, '_'));
+      return (
+        norm[0] === 'type' &&
+        (norm[1] === 'symbol_id' || norm[1] === 'symbolid') &&
+        (norm[2] === 'module_path' || norm[2] === 'modulepath')
+      );
+    },
+    rowMapper: (cols, lineNum, errs) => {
+      const [rowType, symbolIdStr, rawModulePath] = cols;
 
-  const csv = extractCsvContent(content);
-  const lines = splitCsvLines(csv);
-  if (lines.length === 0) {
-    errors.push('Empty CSV content');
-    return { assignments, errors };
-  }
+      if (rowType !== 'assignment') {
+        errs.push(`Line ${lineNum}: Unknown type "${rowType}", expected "assignment"`);
+        return null;
+      }
 
-  // Parse header
-  const headerLine = lines[0];
-  const header = parseRow(headerLine);
-  if (!header || header.length !== 3) {
-    errors.push(`Invalid header row: expected "type,symbol_id,module_path", got "${headerLine}"`);
-    return { assignments, errors };
-  }
+      const symbolId = safeParseInt(symbolIdStr, 'symbol_id', lineNum, errs);
+      if (symbolId === null) return null;
 
-  const normalizedHeaders = header.map((h) => h.toLowerCase().trim().replace(/_/g, '_'));
-  const headerOk =
-    normalizedHeaders[0] === 'type' &&
-    (normalizedHeaders[1] === 'symbol_id' || normalizedHeaders[1] === 'symbolid') &&
-    (normalizedHeaders[2] === 'module_path' || normalizedHeaders[2] === 'modulepath');
+      const modulePath = normalizeModulePath(rawModulePath);
+      if (!isValidModulePath(modulePath)) {
+        errs.push(`Line ${lineNum}: Invalid module_path "${rawModulePath}"`);
+        return null;
+      }
 
-  if (!headerOk) {
-    errors.push(`Invalid header columns: expected "type,symbol_id,module_path", got "${header.join(',')}"`);
-    return { assignments, errors };
-  }
+      return { symbolId, modulePath };
+    },
+  });
 
-  // Parse data rows
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-
-    const parsed = parseRow(line);
-    if (!parsed) {
-      errors.push(`Line ${i + 1}: Failed to parse row: ${line.substring(0, 50)}...`);
-      continue;
-    }
-
-    if (parsed.length !== 3) {
-      errors.push(`Line ${i + 1}: Expected 3 columns, got ${parsed.length}: ${line.substring(0, 50)}...`);
-      continue;
-    }
-
-    const [rowType, symbolIdStr, rawModulePath] = parsed.map((v) => v.trim());
-
-    if (rowType !== 'assignment') {
-      errors.push(`Line ${i + 1}: Unknown type "${rowType}", expected "assignment"`);
-      continue;
-    }
-
-    const symbolId = Number.parseInt(symbolIdStr, 10);
-    if (Number.isNaN(symbolId)) {
-      errors.push(`Line ${i + 1}: Invalid symbol_id "${symbolIdStr}"`);
-      continue;
-    }
-
-    const modulePath = normalizeModulePath(rawModulePath);
-    if (!isValidModulePath(modulePath)) {
-      errors.push(`Line ${i + 1}: Invalid module_path "${rawModulePath}"`);
-      continue;
-    }
-
-    assignments.push({
-      symbolId,
-      modulePath,
-    });
-  }
-
-  return { assignments, errors };
+  return { assignments: items, errors };
 }
 
 // ============================================================
@@ -306,93 +215,54 @@ export interface DeepenParseResult {
  * Expected CSV format: type,parent_path,slug,name,description,definition_id
  */
 export function parseDeepenCsv(content: string): DeepenParseResult {
-  const newModules: DeepenModuleRow[] = [];
-  const reassignments: DeepenReassignRow[] = [];
-  const errors: string[] = [];
-
+  // Detect whether first row is a header or data
   const csv = extractCsvContent(content);
-  const lines = splitCsvLines(csv);
-  if (lines.length === 0) {
-    errors.push('Empty CSV content');
-    return { newModules, reassignments, errors };
-  }
+  const firstLine = splitCsvLines(csv)[0] ?? '';
+  const firstRow = parseRow(firstLine);
+  const hasHeader = firstRow?.[0]?.toLowerCase().trim() === 'type';
 
-  // Determine if first row is header or data
-  const firstRow = parseRow(lines[0]);
-  let startIndex = 0;
+  type DeepenItem = { kind: 'module'; data: DeepenModuleRow } | { kind: 'reassign'; data: DeepenReassignRow };
 
-  if (firstRow && firstRow.length >= 1) {
-    const firstValue = firstRow[0].toLowerCase().trim();
-    // If first row starts with 'type', it's a header - skip it
-    // If it starts with 'module' or 'reassign', it's data - process from index 0
-    if (firstValue === 'type') {
-      startIndex = 1;
-    }
-  }
+  const { items, errors } = parseCsvWithMapper<DeepenItem>(content, {
+    expectedColumns: 6,
+    skipHeader: hasHeader,
+    rowMapper: (cols, lineNum, errs) => {
+      const [rowType, parentPath, slug, name, description, definitionIdStr] = cols;
 
-  // Parse data rows
-  for (let i = startIndex; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-
-    const parsed = parseRow(line);
-    if (!parsed) {
-      errors.push(`Line ${i + 1}: Failed to parse row: ${line.substring(0, 50)}...`);
-      continue;
-    }
-
-    if (parsed.length !== 6) {
-      errors.push(`Line ${i + 1}: Expected 6 columns, got ${parsed.length}: ${line.substring(0, 50)}...`);
-      continue;
-    }
-
-    const [rowType, parentPath, slug, name, description, definitionIdStr] = parsed.map((v) => v.trim());
-
-    if (rowType === 'module') {
-      // Validate parent_path
-      if (!isValidModulePath(parentPath)) {
-        errors.push(`Line ${i + 1}: Invalid parent_path "${parentPath}"`);
-        continue;
+      if (rowType === 'module') {
+        if (!isValidModulePath(parentPath)) {
+          errs.push(`Line ${lineNum}: Invalid parent_path "${parentPath}"`);
+          return null;
+        }
+        if (!isValidSlug(slug)) {
+          errs.push(`Line ${lineNum}: Invalid slug "${slug}"`);
+          return null;
+        }
+        if (!name) {
+          errs.push(`Line ${lineNum}: Missing name for module`);
+          return null;
+        }
+        return { kind: 'module', data: { parentPath, slug, name, description: description || '' } };
       }
-
-      // Validate slug
-      if (!isValidSlug(slug)) {
-        errors.push(`Line ${i + 1}: Invalid slug "${slug}"`);
-        continue;
+      if (rowType === 'reassign') {
+        if (!isValidModulePath(parentPath)) {
+          errs.push(`Line ${lineNum}: Invalid target module path "${parentPath}"`);
+          return null;
+        }
+        const definitionId = safeParseInt(definitionIdStr, 'definition_id', lineNum, errs);
+        if (definitionId === null) return null;
+        return { kind: 'reassign', data: { definitionId, targetModulePath: parentPath } };
       }
+      errs.push(`Line ${lineNum}: Unknown type "${rowType}", expected "module" or "reassign"`);
+      return null;
+    },
+  });
 
-      if (!name) {
-        errors.push(`Line ${i + 1}: Missing name for module`);
-        continue;
-      }
-
-      newModules.push({
-        parentPath,
-        slug,
-        name,
-        description: description || '',
-      });
-    } else if (rowType === 'reassign') {
-      // For reassign rows, parent_path is the target module path
-      if (!isValidModulePath(parentPath)) {
-        errors.push(`Line ${i + 1}: Invalid target module path "${parentPath}"`);
-        continue;
-      }
-
-      const definitionId = Number.parseInt(definitionIdStr, 10);
-      if (Number.isNaN(definitionId)) {
-        errors.push(`Line ${i + 1}: Invalid definition_id "${definitionIdStr}"`);
-        continue;
-      }
-
-      reassignments.push({
-        definitionId,
-        targetModulePath: parentPath,
-      });
-    } else {
-      errors.push(`Line ${i + 1}: Unknown type "${rowType}", expected "module" or "reassign"`);
-    }
-  }
-
-  return { newModules, reassignments, errors };
+  return {
+    newModules: items.filter((i): i is DeepenItem & { kind: 'module' } => i.kind === 'module').map((i) => i.data),
+    reassignments: items
+      .filter((i): i is DeepenItem & { kind: 'reassign' } => i.kind === 'reassign')
+      .map((i) => i.data),
+    errors,
+  };
 }

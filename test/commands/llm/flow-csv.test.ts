@@ -53,7 +53,7 @@ entry,87,subflow_candidate,medium,Shared validation logic`;
 
     it('reports error on invalid header', () => {
       const result = parseEntryPointClassification('a,b\n1,2');
-      expect(result.errors[0]).toContain('Invalid header');
+      expect(result.errors[0]).toContain('columns in header');
     });
 
     it('reports error on invalid ID', () => {
@@ -77,7 +77,7 @@ entry,87,subflow_candidate,medium,Shared validation logic`;
     it('reports error on too few columns in row', () => {
       const csv = 'type,id,classification,confidence,reason\nentry,42,top_level';
       const result = parseEntryPointClassification(csv);
-      expect(result.errors[0]).toContain('Invalid row format');
+      expect(result.errors[0]).toContain('Expected at least 5 columns');
     });
 
     it('skips empty lines', () => {
@@ -311,7 +311,7 @@ new_subflow,3,,reason 3`;
     it('reports error on too few columns', () => {
       const csv = 'type,symbol_id,target_flow_id,reason\nnew_flow,42';
       const result = parseGapFillSuggestions(csv);
-      expect(result.errors[0]).toContain('Invalid row format');
+      expect(result.errors[0]).toContain('Expected at least 4 columns');
     });
 
     it('returns empty for empty content', () => {

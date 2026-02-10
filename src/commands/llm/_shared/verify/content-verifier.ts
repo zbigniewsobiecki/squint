@@ -6,7 +6,7 @@ import type { Command } from '@oclif/core';
 import type { IndexDatabase } from '../../../../db/database.js';
 import { readSourceAsString } from '../../../_shared/index.js';
 import type { LlmContext } from '../base-llm-command.js';
-import { extractCsvContent, parseRow, splitCsvLines } from '../csv-utils.js';
+import { parseCsvWithMapper, safeParseInt } from '../csv-utils.js';
 import { completeWithLogging } from '../llm-utils.js';
 import {
   buildAnnotationVerifySystemPrompt,
@@ -27,29 +27,20 @@ interface VerifyFlags {
 function parseAnnotationVerifyCsv(
   content: string
 ): Array<{ definitionId: number; check: string; verdict: string; reason: string }> {
-  const results: Array<{ definitionId: number; check: string; verdict: string; reason: string }> = [];
-  const csv = extractCsvContent(content);
-  const lines = splitCsvLines(csv);
-
-  // Skip header
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const parsed = parseRow(line);
-    if (!parsed || parsed.length < 4) continue;
-
-    const definitionId = Number.parseInt(parsed[0], 10);
-    if (Number.isNaN(definitionId)) continue;
-
-    results.push({
-      definitionId,
-      check: parsed[1].trim(),
-      verdict: parsed[2].trim().toLowerCase(),
-      reason: parsed[3].trim(),
-    });
-  }
-
-  return results;
+  const { items } = parseCsvWithMapper(content, {
+    minColumns: 4,
+    rowMapper: (cols, lineNum, errors) => {
+      const definitionId = safeParseInt(cols[0], 'definitionId', lineNum, errors);
+      if (definitionId === null) return null;
+      return {
+        definitionId,
+        check: cols[1],
+        verdict: cols[2].toLowerCase(),
+        reason: cols[3],
+      };
+    },
+  });
+  return items;
 }
 
 /**
@@ -58,30 +49,21 @@ function parseAnnotationVerifyCsv(
 function parseRelationshipVerifyCsv(
   content: string
 ): Array<{ fromId: number; toId: number; verdict: string; reason: string }> {
-  const results: Array<{ fromId: number; toId: number; verdict: string; reason: string }> = [];
-  const csv = extractCsvContent(content);
-  const lines = splitCsvLines(csv);
-
-  // Skip header
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const parsed = parseRow(line);
-    if (!parsed || parsed.length < 4) continue;
-
-    const fromId = Number.parseInt(parsed[0], 10);
-    const toId = Number.parseInt(parsed[1], 10);
-    if (Number.isNaN(fromId) || Number.isNaN(toId)) continue;
-
-    results.push({
-      fromId,
-      toId,
-      verdict: parsed[2].trim().toLowerCase(),
-      reason: parsed[3].trim(),
-    });
-  }
-
-  return results;
+  const { items } = parseCsvWithMapper(content, {
+    minColumns: 4,
+    rowMapper: (cols, lineNum, errors) => {
+      const fromId = safeParseInt(cols[0], 'from_id', lineNum, errors);
+      const toId = safeParseInt(cols[1], 'to_id', lineNum, errors);
+      if (fromId === null || toId === null) return null;
+      return {
+        fromId,
+        toId,
+        verdict: cols[2].toLowerCase(),
+        reason: cols[3],
+      };
+    },
+  });
+  return items;
 }
 
 function verdictToSeverity(verdict: string): VerifySeverity | null {

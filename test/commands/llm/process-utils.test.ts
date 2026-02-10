@@ -360,13 +360,10 @@ describe('process-utils', () => {
 
       const groups = computeProcessGroups(db);
       const pairs = getCrossProcessGroupPairs(groups);
-      // Root module is also in its own group, so we have 2 groups
-      // Filter to see only non-root pairs
-      const nonRootGroups = Array.from(groups.groupToModules.values()).filter(
-        (mods) => !mods.some((m) => m.depth === 0)
-      );
-      // The key assertion is about the pairing logic
-      expect(pairs.length).toBe((groups.groupCount * (groups.groupCount - 1)) / 2);
+      // modA and modB share an import → same file-based group
+      // Root module is an isolated singleton (no files) → filtered out by getCrossProcessGroupPairs
+      // Result: 1 non-isolated group → 0 pairs
+      expect(pairs.length).toBe(0);
     });
 
     it('2 disconnected groups → at least 1 pair', () => {
@@ -383,8 +380,10 @@ describe('process-utils', () => {
 
       const groups = computeProcessGroups(db);
       const pairs = getCrossProcessGroupPairs(groups);
-      // Should have C(n,2) pairs where n = number of groups
-      expect(pairs.length).toBe((groups.groupCount * (groups.groupCount - 1)) / 2);
+      // modA and modB have no imports → 2 separate file-based groups
+      // Root module is an isolated singleton → filtered out by getCrossProcessGroupPairs
+      // Result: 2 non-isolated groups → C(2,2) = 1 pair
+      expect(pairs.length).toBe(1);
       expect(pairs.length).toBeGreaterThan(0);
     });
 

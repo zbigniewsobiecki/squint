@@ -6,7 +6,7 @@
 import type { Command } from '@oclif/core';
 import type { IndexDatabase } from '../../../db/database.js';
 import type { EnrichedModuleCallEdge, RelationshipWithDetails } from '../../../db/schema.js';
-import { parseCSVLine } from '../_shared/csv-utils.js';
+import { parseRow } from '../_shared/csv-utils.js';
 import {
   type LlmLogOptions,
   completeWithLogging,
@@ -49,7 +49,7 @@ export class EntryPointDetector {
 
       // Skip modules where ALL members are type-only (no callable code)
       const callableKinds = new Set(['function', 'class', 'const', 'variable', 'method']);
-      const hasCallableMembers = mod.members.some(m => callableKinds.has(m.kind));
+      const hasCallableMembers = mod.members.some((m) => callableKinds.has(m.kind));
       if (!hasCallableMembers) continue;
 
       candidates.push({
@@ -280,8 +280,8 @@ Modules containing only interfaces, types, and enums are data structure definiti
     const candidateMap = new Map(candidates.map((c) => [c.id, c]));
 
     for (const line of lines) {
-      const fields = parseCSVLine(line);
-      if (fields.length < 6) continue;
+      const fields = parseRow(line);
+      if (!fields || fields.length < 6) continue;
 
       const moduleId = Number.parseInt(fields[0].trim(), 10);
       if (!candidateMap.has(moduleId)) continue;

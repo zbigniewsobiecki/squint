@@ -5,7 +5,7 @@
 
 import type { Command } from '@oclif/core';
 import type { InteractionWithPaths } from '../../../db/schema.js';
-import { parseCSVLine } from '../_shared/csv-utils.js';
+import { parseRow } from '../_shared/csv-utils.js';
 import { type LlmLogOptions, completeWithLogging, logLlmRequest, logLlmResponse } from '../_shared/llm-utils.js';
 import type { FlowSuggestion, LlmOptions } from './types.js';
 
@@ -164,8 +164,8 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
       const original = originalFlows[i];
 
       if (i < lines.length) {
-        const fields = parseCSVLine(lines[i]);
-        if (fields.length >= 3) {
+        const fields = parseRow(lines[i]);
+        if (fields && fields.length >= 3) {
           const newName = fields[1].trim().replace(/"/g, '');
           const newSlug = newName
             .toLowerCase()
