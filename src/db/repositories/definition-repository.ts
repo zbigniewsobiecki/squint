@@ -456,6 +456,16 @@ export class DefinitionRepository {
     return stmt.all(...params) as SymbolInfo[];
   }
 
+  getKindCounts(): Record<string, number> {
+    const stmt = this.db.prepare('SELECT kind, COUNT(*) as count FROM definitions GROUP BY kind ORDER BY count DESC');
+    const rows = stmt.all() as Array<{ kind: string; count: number }>;
+    const result: Record<string, number> = {};
+    for (const row of rows) {
+      result[row.kind] = row.count;
+    }
+    return result;
+  }
+
   getFilteredCount(filters?: { kind?: string; filePattern?: string }): number {
     let sql = `
       SELECT COUNT(*) as count FROM definitions d

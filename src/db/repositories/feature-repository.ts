@@ -144,6 +144,16 @@ export class FeatureRepository {
   }
 
   /**
+   * Get count of flows assigned to at least one feature.
+   */
+  getAssignedFlowCount(): number {
+    ensureFeaturesTables(this.db);
+    const stmt = this.db.prepare('SELECT COUNT(DISTINCT flow_id) as count FROM feature_flows');
+    const row = stmt.get() as { count: number };
+    return row.count;
+  }
+
+  /**
    * Delete all features and their flow associations.
    */
   clear(): number {
