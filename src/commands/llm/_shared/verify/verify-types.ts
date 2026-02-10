@@ -9,6 +9,11 @@ export interface VerificationIssue {
   category: string;
   message: string;
   suggestion?: string;
+  fixData?: {
+    action: 'set-pure-false' | 'change-relationship-type';
+    targetDefinitionId?: number;
+    expectedType?: string;
+  };
 }
 
 export interface CoverageCheckResult {

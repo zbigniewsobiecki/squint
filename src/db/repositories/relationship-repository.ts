@@ -82,6 +82,19 @@ export class RelationshipRepository {
   }
 
   /**
+   * Update only the relationship type for an existing annotation.
+   */
+  updateType(fromDefinitionId: number, toDefinitionId: number, relationshipType: RelationshipType): boolean {
+    const stmt = this.db.prepare(`
+      UPDATE relationship_annotations
+      SET relationship_type = ?
+      WHERE from_definition_id = ? AND to_definition_id = ?
+    `);
+    const result = stmt.run(relationshipType, fromDefinitionId, toDefinitionId);
+    return result.changes > 0;
+  }
+
+  /**
    * Remove a relationship annotation.
    */
   remove(fromDefinitionId: number, toDefinitionId: number): boolean {

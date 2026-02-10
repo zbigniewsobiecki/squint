@@ -327,21 +327,25 @@ export class GraphRepository {
   createInheritanceRelationships(): { created: number } {
     ensureRelationshipTypeColumn(this.db);
 
-    // Get all definitions with extends_name or implements_names
+    // Get all definitions with extends_name, implements_names, or extends_interfaces
     const stmt = this.db.prepare(`
       SELECT
         d.id,
         d.name,
         d.extends_name as extendsName,
-        d.implements_names as implementsNames
+        d.implements_names as implementsNames,
+        d.extends_interfaces as extendsInterfaces
       FROM definitions d
-      WHERE d.extends_name IS NOT NULL OR d.implements_names IS NOT NULL
+      WHERE d.extends_name IS NOT NULL
+        OR d.implements_names IS NOT NULL
+        OR d.extends_interfaces IS NOT NULL
     `);
     const rows = stmt.all() as Array<{
       id: number;
       name: string;
       extendsName: string | null;
       implementsNames: string | null;
+      extendsInterfaces: string | null;
     }>;
 
     // Build a map of name -> definition ids
@@ -382,6 +386,25 @@ export class GraphRepository {
               const existing = this.relationships.get(row.id, ifaceId);
               if (!existing) {
                 this.relationships.set(row.id, ifaceId, 'PENDING_LLM_ANNOTATION', 'implements');
+                created++;
+              }
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      // Handle extends_interfaces — resolve each interface to single target (extends relationship)
+      if (row.extendsInterfaces) {
+        try {
+          const interfaces = JSON.parse(row.extendsInterfaces) as string[];
+          for (const iface of interfaces) {
+            const ifaceId = this.resolveInheritanceTarget(row.id, iface, nameToIds);
+            if (ifaceId !== null) {
+              const existing = this.relationships.get(row.id, ifaceId);
+              if (!existing) {
+                this.relationships.set(row.id, ifaceId, 'PENDING_LLM_ANNOTATION', 'extends');
                 created++;
               }
             }

@@ -126,10 +126,37 @@ function checkPureAnnotations(db: IndexDatabase): VerificationIssue[] {
           category: 'suspect-pure',
           message: `'${def.name}' marked pure but source contains: ${impureReasons[0]}`,
           suggestion: 'Consider changing pure to "false"',
+          fixData: { action: 'set-pure-false' },
         });
       }
     } catch {
       // File not readable — skip
+    }
+
+    // Gate 2: transitive impurity — check if any dependency has pure:false
+    if (issues.every((i) => i.definitionId !== defId || i.category !== 'suspect-pure')) {
+      try {
+        const deps = db.getDependenciesWithMetadata(defId, 'pure');
+        for (const dep of deps) {
+          const depPure = db.getDefinitionMetadataValue(dep.id, 'pure');
+          if (depPure === 'false') {
+            issues.push({
+              definitionId: def.id,
+              definitionName: def.name,
+              filePath: def.filePath,
+              line: def.line,
+              severity: 'warning',
+              category: 'suspect-pure',
+              message: `'${def.name}' marked pure but depends on impure '${dep.name}'`,
+              suggestion: 'Consider changing pure to "false"',
+              fixData: { action: 'set-pure-false' },
+            });
+            break;
+          }
+        }
+      } catch {
+        // Ignore errors
+      }
     }
   }
 
@@ -339,6 +366,11 @@ function checkRelationshipTypeMismatches(db: IndexDatabase): VerificationIssue[]
           category: 'wrong-relationship-type',
           message: `'${def.name}' → '${rel.toName}' is type 'uses' but should be '${expectedType}' (based on definition columns)`,
           suggestion: `Use --fix to change relationship type to '${expectedType}'`,
+          fixData: {
+            action: 'change-relationship-type',
+            targetDefinitionId: rel.toDefinitionId,
+            expectedType,
+          },
         });
       }
     }

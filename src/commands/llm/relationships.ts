@@ -399,6 +399,25 @@ export default class Relationships extends BaseLlmCommand {
           this.log('');
         }
       }
+
+      const typeMismatchIssues = phase1.issues.filter((i) => i.fixData?.action === 'change-relationship-type');
+      if (typeMismatchIssues.length > 0) {
+        let fixed = 0;
+        for (const issue of typeMismatchIssues) {
+          if (issue.definitionId && issue.fixData?.targetDefinitionId && issue.fixData?.expectedType) {
+            db.updateRelationshipType(
+              issue.definitionId,
+              issue.fixData.targetDefinitionId,
+              issue.fixData.expectedType as 'extends' | 'implements'
+            );
+            fixed++;
+          }
+        }
+        if (!isJson) {
+          this.log(chalk.green(`  Fixed: corrected ${fixed} relationship types`));
+          this.log('');
+        }
+      }
     }
 
     // If dry-run, stop here

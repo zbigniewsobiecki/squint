@@ -378,8 +378,9 @@ export default class Annotate extends BaseLlmCommand {
             let cycleAnnotations = 0;
             let cycleRelAnnotations = 0;
 
-            // Build source code map for cycle symbols
+            // Build source code and dependency maps for cycle symbols
             const cycleSourceCodeById = new Map(symbolContexts.map((s) => [s.id, s.sourceCode]));
+            const cycleDepsById = new Map(enhancedCycleSymbols.map((s) => [s.id, s.dependencies]));
 
             // Process symbol annotations
             for (const row of parseResult.symbols) {
@@ -387,7 +388,12 @@ export default class Annotate extends BaseLlmCommand {
               if (!aspects.includes(row.aspect)) continue;
 
               let value = row.value;
-              const validationError = this.validateValue(row.aspect, value, cycleSourceCodeById.get(row.symbolId));
+              const validationError = this.validateValue(
+                row.aspect,
+                value,
+                cycleSourceCodeById.get(row.symbolId),
+                cycleDepsById.get(row.symbolId)
+              );
               if (validationError?.startsWith('overridden')) {
                 if (!isJson && ctx.verbose) {
                   this.log(chalk.yellow(`  Pure override for #${row.symbolId}: ${validationError}`));
@@ -528,8 +534,9 @@ export default class Annotate extends BaseLlmCommand {
       const validSymbolIds = new Set(enhancedSymbols.map((s) => s.id));
       const symbolNameById = new Map(enhancedSymbols.map((s) => [s.id, s.name]));
 
-      // Build source code map for pure validation
+      // Build source code and dependency maps for pure validation
       const sourceCodeById = new Map(symbolContexts.map((s) => [s.id, s.sourceCode]));
+      const depsById = new Map(enhancedSymbols.map((s) => [s.id, s.dependencies]));
 
       // Build valid relationship map (from_id -> Set of valid to_ids)
       const validRelationships = new Map<number, Map<number, string>>();
@@ -583,7 +590,12 @@ export default class Annotate extends BaseLlmCommand {
 
         // Validate value (aspect-specific)
         let value = row.value;
-        const validationError = this.validateValue(row.aspect, value, sourceCodeById.get(symbolId));
+        const validationError = this.validateValue(
+          row.aspect,
+          value,
+          sourceCodeById.get(symbolId),
+          depsById.get(symbolId)
+        );
         if (validationError?.startsWith('overridden')) {
           // Pure gate triggered — override value to false and log
           if (!isJson && ctx.verbose) {
@@ -887,6 +899,7 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
     const { db, isJson, dryRun } = ctx;
     const batchSize = (flags['batch-size'] as number) || 10;
     const maxIterations = (flags['max-iterations'] as number) || 0;
+    const shouldFix = flags.fix as boolean;
 
     if (!isJson) {
       this.log(chalk.bold('Annotation Verification'));
@@ -921,12 +934,42 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
         }
       }
 
+      const warningIssues = phase1.issues.filter((i) => i.severity === 'warning');
+      if (warningIssues.length > 0) {
+        this.log('');
+        this.log(chalk.yellow(`  Warnings (${warningIssues.length}):`));
+        for (const issue of warningIssues.slice(0, 20)) {
+          this.log(`    ${chalk.yellow('WARN')} [${issue.category}] ${issue.message}`);
+        }
+        if (warningIssues.length > 20) {
+          this.log(chalk.gray(`    ... and ${warningIssues.length - 20} more`));
+        }
+      }
+
       if (phase1.passed) {
         this.log(chalk.green('  ✓ All definitions have all aspects annotated'));
       } else {
         this.log(chalk.red('  ✗ Coverage check failed'));
       }
       this.log('');
+    }
+
+    // Auto-fix: correct suspect-pure annotations if --fix
+    if (shouldFix && !dryRun) {
+      const suspectPureIssues = phase1.issues.filter((i) => i.fixData?.action === 'set-pure-false');
+      if (suspectPureIssues.length > 0) {
+        let fixed = 0;
+        for (const issue of suspectPureIssues) {
+          if (issue.definitionId) {
+            db.setDefinitionMetadata(issue.definitionId, 'pure', 'false');
+            fixed++;
+          }
+        }
+        if (!isJson) {
+          this.log(chalk.green(`  Fixed: corrected ${fixed} pure annotations to "false"`));
+          this.log('');
+        }
+      }
     }
 
     // If dry-run or Phase 1 failed, stop here
@@ -1065,7 +1108,12 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
   /**
    * Validate a value for a specific aspect.
    */
-  private validateValue(aspect: string, value: string, sourceCode?: string): string | null {
+  private validateValue(
+    aspect: string,
+    value: string,
+    sourceCode?: string,
+    deps?: DependencyContextEnhanced[]
+  ): string | null {
     switch (aspect) {
       case 'domain':
         try {
@@ -1085,11 +1133,18 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
         if (value !== 'true' && value !== 'false') {
           return 'pure must be "true" or "false"';
         }
-        // Gate: override LLM's "true" if source code contains impure patterns
+        // Gate 1: override LLM's "true" if source code contains impure patterns
         if (value === 'true' && sourceCode) {
           const impureReasons = detectImpurePatterns(sourceCode);
           if (impureReasons.length > 0) {
             return `overridden to false: ${impureReasons[0]}`;
+          }
+        }
+        // Gate 2: transitive impurity — if any dependency is pure:false, this can't be pure:true
+        if (value === 'true' && deps && deps.length > 0) {
+          const impureDep = deps.find((d) => d.pure === false);
+          if (impureDep) {
+            return `overridden to false: calls impure dependency '${impureDep.name}'`;
           }
         }
         break;

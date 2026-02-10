@@ -346,6 +346,14 @@ export class IndexDatabase implements IIndexWriter {
     return this.relationships.remove(fromDefinitionId, toDefinitionId);
   }
 
+  updateRelationshipType(
+    fromDefinitionId: number,
+    toDefinitionId: number,
+    relationshipType: RelationshipType
+  ): boolean {
+    return this.relationships.updateType(fromDefinitionId, toDefinitionId, relationshipType);
+  }
+
   getRelationshipsFrom(fromDefinitionId: number): RelationshipWithDetails[] {
     return this.relationships.getFrom(fromDefinitionId);
   }
