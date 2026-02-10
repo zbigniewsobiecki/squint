@@ -280,6 +280,14 @@ export class IndexDatabase implements IIndexWriter {
     return this.metadata.getAspectCoverage(filters);
   }
 
+  getFullyUnannotatedSymbols(options?: { kind?: string; limit?: number }) {
+    return this.metadata.getDefinitionsWithNoMetadata(options);
+  }
+
+  getFullyUnannotatedSymbolCount(options?: { kind?: string }): number {
+    return this.metadata.getDefinitionsWithNoMetadataCount(options);
+  }
+
   // ============================================================
   // Dependency Operations
   // ============================================================

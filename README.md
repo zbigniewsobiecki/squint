@@ -539,6 +539,61 @@ Flow: CreateSale
 
 ---
 
+### `squint stats` - Database Health Check
+
+Shows aggregate statistics and pipeline progress for the index database: parsed counts, annotation coverage, module assignment, interactions, flows, and features.
+
+```bash
+squint stats [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d, --database` | Path to database (default: `index.db`) |
+| `--json` | Output as JSON |
+
+**Examples:**
+```bash
+squint stats                        # Overview of all pipeline stages
+squint stats -d ./my-index.db      # Specific database
+squint stats --json                 # Machine-readable output
+```
+
+---
+
+### `squint gaps` - Find Unannotated and Unassigned Entities
+
+Lists individual entities that are incomplete across the pipeline: unannotated symbols, unannotated relationships, empty modules, and unassigned symbols. Complements `squint stats` by showing *which* items need attention, not just counts.
+
+```bash
+squint gaps [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d, --database` | Path to database (default: `index.db`) |
+| `-t, --type` | Gap type to show: `symbols`, `relationships`, `modules`, `unassigned` (default: all) |
+| `--limit` | Max items per section (default: 20) |
+| `--kind` | Filter symbols by kind (`function`, `class`, etc.) |
+| `--json` | Output as JSON |
+
+**Examples:**
+```bash
+squint gaps                                 # Show all gap sections
+squint gaps --type symbols                  # Only unannotated symbols
+squint gaps --type unassigned --kind class  # Unassigned classes
+squint gaps --limit 50                      # Show more items per section
+squint gaps --json                          # Machine-readable output
+```
+
+**Sections:**
+- **Unannotated Symbols** — definitions with no metadata annotations at all
+- **Unannotated Relationships** — call edges with no semantic annotation
+- **Empty Modules** — modules with zero symbols assigned
+- **Unassigned Symbols** — definitions not assigned to any module
+
+---
+
 ### `squint files` - Explore File Structure
 
 #### List Files

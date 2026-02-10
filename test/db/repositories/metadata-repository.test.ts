@@ -290,4 +290,101 @@ describe('MetadataRepository', () => {
       expect(impureSymbols[0].name).toBe('func2');
     });
   });
+
+  describe('getDefinitionsWithNoMetadata', () => {
+    it('returns definitions with no metadata at all', () => {
+      repo.set(defId1, 'purpose', 'Purpose 1');
+      // defId2 has no metadata
+
+      const results = repo.getDefinitionsWithNoMetadata();
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe(defId2);
+      expect(results[0].name).toBe('func2');
+      expect(results[0].kind).toBe('function');
+      expect(results[0].filePath).toBe('/test/file.ts');
+      expect(results[0].line).toBe(16); // row 15 + 1
+    });
+
+    it('returns all definitions when none have metadata', () => {
+      const results = repo.getDefinitionsWithNoMetadata();
+      expect(results).toHaveLength(2);
+    });
+
+    it('returns empty array when all definitions have metadata', () => {
+      repo.set(defId1, 'purpose', 'Purpose 1');
+      repo.set(defId2, 'purpose', 'Purpose 2');
+
+      const results = repo.getDefinitionsWithNoMetadata();
+      expect(results).toHaveLength(0);
+    });
+
+    it('respects kind filter', () => {
+      // Add a class definition
+      const classId = fileRepo.insertDefinition(fileId, {
+        name: 'MyClass',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        position: { row: 30, column: 0 },
+        endPosition: { row: 40, column: 1 },
+      });
+      repo.set(defId1, 'purpose', 'Purpose 1');
+      // defId2 (function) and classId (class) have no metadata
+
+      const classResults = repo.getDefinitionsWithNoMetadata({ kind: 'class' });
+      expect(classResults).toHaveLength(1);
+      expect(classResults[0].name).toBe('MyClass');
+
+      const funcResults = repo.getDefinitionsWithNoMetadata({ kind: 'function' });
+      expect(funcResults).toHaveLength(1);
+      expect(funcResults[0].name).toBe('func2');
+    });
+
+    it('respects limit', () => {
+      const results = repo.getDefinitionsWithNoMetadata({ limit: 1 });
+      expect(results).toHaveLength(1);
+    });
+
+    it('orders by file path and line', () => {
+      const results = repo.getDefinitionsWithNoMetadata();
+      expect(results).toHaveLength(2);
+      // Both are in same file, func1 comes before func2
+      expect(results[0].name).toBe('func1');
+      expect(results[1].name).toBe('func2');
+    });
+  });
+
+  describe('getDefinitionsWithNoMetadataCount', () => {
+    it('returns count of definitions with no metadata', () => {
+      repo.set(defId1, 'purpose', 'Purpose 1');
+
+      expect(repo.getDefinitionsWithNoMetadataCount()).toBe(1);
+    });
+
+    it('returns total count when none have metadata', () => {
+      expect(repo.getDefinitionsWithNoMetadataCount()).toBe(2);
+    });
+
+    it('returns zero when all have metadata', () => {
+      repo.set(defId1, 'purpose', 'P1');
+      repo.set(defId2, 'domain', '["core"]');
+
+      expect(repo.getDefinitionsWithNoMetadataCount()).toBe(0);
+    });
+
+    it('respects kind filter', () => {
+      const classId = fileRepo.insertDefinition(fileId, {
+        name: 'MyClass',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        position: { row: 30, column: 0 },
+        endPosition: { row: 40, column: 1 },
+      });
+
+      expect(repo.getDefinitionsWithNoMetadataCount({ kind: 'function' })).toBe(2);
+      expect(repo.getDefinitionsWithNoMetadataCount({ kind: 'class' })).toBe(1);
+      expect(repo.getDefinitionsWithNoMetadataCount({ kind: 'variable' })).toBe(0);
+    });
+  });
 });

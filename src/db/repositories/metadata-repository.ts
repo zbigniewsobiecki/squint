@@ -287,6 +287,64 @@ export class MetadataRepository {
   }
 
   /**
+   * Get definitions that have no metadata at all (not in definition_metadata table).
+   */
+  getDefinitionsWithNoMetadata(options?: { kind?: string; limit?: number }): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    filePath: string;
+    line: number;
+  }> {
+    const limit = options?.limit ?? 20;
+    let sql = `
+      SELECT d.id, d.name, d.kind, f.path as filePath, d.line
+      FROM definitions d
+      JOIN files f ON d.file_id = f.id
+      WHERE d.id NOT IN (SELECT DISTINCT definition_id FROM definition_metadata)
+    `;
+    const params: (string | number)[] = [];
+
+    if (options?.kind) {
+      sql += ' AND d.kind = ?';
+      params.push(options.kind);
+    }
+
+    sql += ' ORDER BY f.path, d.line LIMIT ?';
+    params.push(limit);
+
+    const stmt = this.db.prepare(sql);
+    return stmt.all(...params) as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      line: number;
+    }>;
+  }
+
+  /**
+   * Get count of definitions that have no metadata at all.
+   */
+  getDefinitionsWithNoMetadataCount(options?: { kind?: string }): number {
+    let sql = `
+      SELECT COUNT(*) as count
+      FROM definitions d
+      WHERE d.id NOT IN (SELECT DISTINCT definition_id FROM definition_metadata)
+    `;
+    const params: string[] = [];
+
+    if (options?.kind) {
+      sql += ' AND d.kind = ?';
+      params.push(options.kind);
+    }
+
+    const stmt = this.db.prepare(sql);
+    const row = stmt.get(...params) as { count: number };
+    return row.count;
+  }
+
+  /**
    * Get symbols filtered by purity (pure = no side effects).
    * Returns symbols where 'pure' metadata matches the specified value.
    */
