@@ -2,18 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import Parse from './parse.js';
-import SymbolsAnnotate from './symbols/annotate.js';
-import SymbolsVerify from './symbols/verify.js';
-import RelationshipsAnnotate from './relationships/annotate.js';
-import RelationshipsVerify from './relationships/verify.js';
-import ModulesGenerate from './modules/generate.js';
-import ModulesVerify from './modules/verify.js';
-import InteractionsGenerate from './interactions/generate.js';
-import InteractionsVerify from './interactions/verify.js';
+import FeaturesGenerate from './features/generate.js';
 import FlowsGenerate from './flows/generate.js';
 import FlowsVerify from './flows/verify.js';
-import FeaturesGenerate from './features/generate.js';
+import InteractionsGenerate from './interactions/generate.js';
+import InteractionsVerify from './interactions/verify.js';
+import ModulesGenerate from './modules/generate.js';
+import ModulesVerify from './modules/verify.js';
+import Parse from './parse.js';
+import RelationshipsAnnotate from './relationships/annotate.js';
+import RelationshipsVerify from './relationships/verify.js';
+import SymbolsAnnotate from './symbols/annotate.js';
+import SymbolsVerify from './symbols/verify.js';
 
 interface Stage {
   id: string;
@@ -39,7 +39,8 @@ const STAGE_IDS = [
 type StageId = (typeof STAGE_IDS)[number];
 
 export default class Ingest extends Command {
-  static override description = 'Run the full analysis pipeline: parse, annotate, verify, and generate modules/interactions/flows/features';
+  static override description =
+    'Run the full analysis pipeline: parse, annotate, verify, and generate modules/interactions/flows/features';
 
   static override examples = [
     '<%= config.bin %> ingest ./src',
@@ -68,7 +69,7 @@ export default class Ingest extends Command {
     'batch-size': Flags.integer({
       char: 'b',
       description: 'Batch size for annotation stages',
-      default: 40,
+      default: 80,
     }),
     'max-iterations': Flags.integer({
       description: 'Max iterations for annotation stages',
@@ -133,34 +134,55 @@ export default class Ingest extends Command {
       {
         id: 'symbols',
         label: 'Annotate symbols',
-        run: () => SymbolsAnnotate.run([
-          '--aspect', 'purpose', '--aspect', 'domain', '--aspect', 'pure',
-          '--batch-size', batchSize, '--max-iterations', maxIterations,
-          ...llmFlags, ...debugFlags,
-        ]),
+        run: () =>
+          SymbolsAnnotate.run([
+            '--aspect',
+            'purpose',
+            '--aspect',
+            'domain',
+            '--aspect',
+            'pure',
+            '--batch-size',
+            batchSize,
+            '--max-iterations',
+            maxIterations,
+            ...llmFlags,
+            ...debugFlags,
+          ]),
       },
       {
         id: 'symbols-verify',
         label: 'Verify symbols',
-        run: () => SymbolsVerify.run([
-          '--aspect', 'purpose', '--aspect', 'domain', '--aspect', 'pure',
-          '--fix', ...llmFlags, ...debugFlags,
-        ]),
+        run: () =>
+          SymbolsVerify.run([
+            '--aspect',
+            'purpose',
+            '--aspect',
+            'domain',
+            '--aspect',
+            'pure',
+            '--fix',
+            ...llmFlags,
+            ...debugFlags,
+          ]),
       },
       {
         id: 'relationships',
         label: 'Annotate relationships',
-        run: () => RelationshipsAnnotate.run([
-          '--batch-size', batchSize, '--max-iterations', maxIterations,
-          ...llmFlags, ...debugFlags,
-        ]),
+        run: () =>
+          RelationshipsAnnotate.run([
+            '--batch-size',
+            batchSize,
+            '--max-iterations',
+            maxIterations,
+            ...llmFlags,
+            ...debugFlags,
+          ]),
       },
       {
         id: 'relationships-verify',
         label: 'Verify relationships',
-        run: () => RelationshipsVerify.run([
-          '--fix', ...llmFlags, ...debugFlags,
-        ]),
+        run: () => RelationshipsVerify.run(['--fix', ...llmFlags, ...debugFlags]),
       },
       {
         id: 'modules',
@@ -175,9 +197,7 @@ export default class Ingest extends Command {
       {
         id: 'interactions',
         label: 'Generate interactions',
-        run: () => InteractionsGenerate.run([
-          '--verbose', '--force', ...llmFlags, ...debugFlags,
-        ]),
+        run: () => InteractionsGenerate.run(['--verbose', '--force', ...llmFlags, ...debugFlags]),
       },
       {
         id: 'interactions-verify',
@@ -187,9 +207,7 @@ export default class Ingest extends Command {
       {
         id: 'flows',
         label: 'Generate flows',
-        run: () => FlowsGenerate.run([
-          '--verbose', '--force', ...llmFlags, ...debugFlags,
-        ]),
+        run: () => FlowsGenerate.run(['--verbose', '--force', ...llmFlags, ...debugFlags]),
       },
       {
         id: 'flows-verify',
@@ -199,15 +217,13 @@ export default class Ingest extends Command {
       {
         id: 'features',
         label: 'Generate features',
-        run: () => FeaturesGenerate.run([
-          '--verbose', '--force', ...llmFlags, ...debugFlags,
-        ]),
+        run: () => FeaturesGenerate.run(['--verbose', '--force', ...llmFlags, ...debugFlags]),
       },
     ];
 
     // Filter stages by --from-stage / --to-stage
-    const fromIndex = fromStage ? stages.findIndex(s => s.id === fromStage) : 0;
-    const toIndex = toStage ? stages.findIndex(s => s.id === toStage) : stages.length - 1;
+    const fromIndex = fromStage ? stages.findIndex((s) => s.id === fromStage) : 0;
+    const toIndex = toStage ? stages.findIndex((s) => s.id === toStage) : stages.length - 1;
     const stagesToRun = stages.slice(fromIndex, toIndex + 1);
 
     // Delete existing DB unless resuming from a later stage
@@ -219,18 +235,22 @@ export default class Ingest extends Command {
       }
     }
 
-    this.log(chalk.bold(`\nSquint Ingest Pipeline`));
+    this.log(chalk.bold('\nSquint Ingest Pipeline'));
     this.log(chalk.gray(`Directory: ${directory}`));
     this.log(chalk.gray(`Database:  ${dbPath}`));
     this.log(chalk.gray(`Model:     ${model}`));
-    this.log(chalk.gray(`Stages:    ${stagesToRun[0].id} → ${stagesToRun[stagesToRun.length - 1].id} (${stagesToRun.length} of ${stages.length})`));
+    this.log(
+      chalk.gray(
+        `Stages:    ${stagesToRun[0].id} → ${stagesToRun[stagesToRun.length - 1].id} (${stagesToRun.length} of ${stages.length})`
+      )
+    );
     this.log('');
 
     const pipelineStart = Date.now();
 
     for (let i = 0; i < stagesToRun.length; i++) {
       const stage = stagesToRun[i];
-      const stageNum = stages.findIndex(s => s.id === stage.id) + 1;
+      const stageNum = stages.findIndex((s) => s.id === stage.id) + 1;
 
       this.log(chalk.blue.bold(`[${stageNum}/${stages.length}] ${stage.label}`));
       const stageStart = Date.now();
