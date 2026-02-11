@@ -1,3 +1,9 @@
+## [1.1.2](https://github.com/zbigniewsobiecki/squint/compare/v1.1.1...v1.1.2) (2026-02-11)
+
+### Bug Fixes
+
+* use empty directory for git hooksPath in release workflow ([9c554c6](https://github.com/zbigniewsobiecki/squint/commit/9c554c6b1f61131d00bd0683f75813e2ff4b9fdd))
+
 ## [1.1.1](https://github.com/zbigniewsobiecki/squint/compare/v1.1.0...v1.1.1) (2026-02-11)
 
 ### Bug Fixes
