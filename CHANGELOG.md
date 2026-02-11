@@ -1,3 +1,9 @@
+## [1.1.1](https://github.com/zbigniewsobiecki/squint/compare/v1.1.0...v1.1.1) (2026-02-11)
+
+### Bug Fixes
+
+* disable lefthook during npm publish in CI ([3309c33](https://github.com/zbigniewsobiecki/squint/commit/3309c330e9c8122da50a34e1736fab05c61ab0e1))
+
 ## [1.1.0](https://github.com/zbigniewsobiecki/squint/compare/v1.0.0...v1.1.0) (2026-02-11)
 
 ### Features
