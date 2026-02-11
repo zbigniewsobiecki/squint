@@ -1,3 +1,13 @@
+## [1.2.0](https://github.com/zbigniewsobiecki/squint/compare/v1.1.4...v1.2.0) (2026-02-11)
+
+### Features
+
+* enrich show commands with cross-entity context for AI agent drill-down ([d98d722](https://github.com/zbigniewsobiecki/squint/commit/d98d72218b1bef38e950b2f8d05038daebaf85e0))
+
+### Bug Fixes
+
+* format package.json for biome compliance ([a1747bb](https://github.com/zbigniewsobiecki/squint/commit/a1747bb81bc18a2656b3d15dd3b83fc00f5d950c))
+
 ## [1.1.4](https://github.com/zbigniewsobiecki/squint/compare/v1.1.3...v1.1.4) (2026-02-11)
 
 ### Bug Fixes
