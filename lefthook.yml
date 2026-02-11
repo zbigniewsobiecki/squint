@@ -12,3 +12,8 @@ pre-commit:
       run: cd ui && pnpm run build
     test:
       run: pnpm run test:coverage
+
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm exec commitlint --edit {1}

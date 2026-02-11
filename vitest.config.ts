@@ -6,7 +6,7 @@ export default defineConfig({
     coverage: {
       enabled: false, // Enable via CLI: --coverage
       provider: 'v8',
-      reporter: ['text', 'text-summary', 'html', 'json'],
+      reporter: ['text', 'text-summary', 'html', 'json', 'lcov'],
       reportsDirectory: './coverage',
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.test.ts', 'src/**/*.d.ts', '**/node_modules/**', '**/dist/**'],

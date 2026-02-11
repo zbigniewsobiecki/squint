@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  # Trigger after CI passes on main branch (only way to release)
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  release:
+    name: Semantic Release
+    runs-on: ubuntu-latest
+    environment: CI
+    # Only run if CI succeeded
+    if: github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      released: ${{ steps.semantic.outputs.released == 'true' }}
+      version: ${{ steps.semantic.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history for semantic-release to analyze all commits
+          fetch-depth: 0
+          # Use PAT for authenticated pushes (allows triggering workflows and bypassing branch protection)
+          token: ${{ secrets.GH_PAT }}
+          # Always checkout main branch for releases
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config core.hooksPath /dev/null
+
+      - name: Run semantic-release
+        id: semantic
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Force GITHUB_REF to main for semantic-release branch detection
+          # (workflow_run events incorrectly set GITHUB_REF from triggering workflow)
+          export GITHUB_REF=refs/heads/main
+
+          BEFORE_SHA=$(git rev-parse HEAD)
+
+          npx semantic-release || RELEASE_EXIT_CODE=$?
+
+          AFTER_SHA=$(git rev-parse HEAD)
+          # Check if a release commit was made (HEAD changed)
+          if [ "$BEFORE_SHA" != "$AFTER_SHA" ]; then
+            echo "released=true" >> $GITHUB_OUTPUT
+            VERSION=$(node -p "require('./package.json').version")
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "Release $VERSION created"
+          else
+            echo "released=false" >> $GITHUB_OUTPUT
+            echo "No release commit - skipping publish"
+          fi
+          # Exit with the original exit code if semantic-release failed
+          exit ${RELEASE_EXIT_CODE:-0}
+
+  # Sync dev branch after any successful CI on main
+  sync-dev:
+    name: Sync dev branch
+    runs-on: ubuntu-latest
+    environment: CI
+    needs: release
+    if: always() && needs.release.result == 'success'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Sync dev with main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin
+          git checkout dev
+
+          # Fast-forward if possible, otherwise merge
+          if git merge origin/main --ff-only; then
+            echo "Fast-forwarded dev to main"
+          else
+            echo "Cannot fast-forward, creating merge commit..."
+            git merge origin/main --no-edit -m "chore: sync dev with main [skip ci]"
+          fi
+
+          git push origin dev
+          echo "Sync complete"

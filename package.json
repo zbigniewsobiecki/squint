@@ -1,5 +1,5 @@
 {
-  "name": "squint",
+  "name": "@zbigniewsobiecki/squint",
   "version": "1.0.0",
   "description": "Squint — AST + LLM driven codebase analysis and visualization",
   "main": "dist/index.js",
@@ -13,7 +13,7 @@
     "build:server": "tsc",
     "build:ui": "cd ui && pnpm run build",
     "clean": "rm -rf dist ui/dist",
-    "prepack": "npm run build",
+    "prepack": "pnpm run build",
     "prepare": "lefthook install",
     "start": "node ./bin/run.js",
     "dev": "node ./bin/dev.js",
@@ -24,6 +24,7 @@
     "test:coverage:ui": "cd ui && pnpm run test:coverage",
     "test:coverage:all": "pnpm run test:coverage && pnpm run test:coverage:ui",
     "test:all": "pnpm test && cd ui && pnpm test",
+    "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write ."
@@ -38,6 +39,9 @@
     },
     "default": "parse",
     "topicSeparator": " "
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "files": ["/bin", "/dist", "/ui/dist"],
   "dependencies": {
@@ -55,8 +59,15 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^2.1.9",
+    "@commitlint/cli": "^19.6.0",
+    "@commitlint/config-conventional": "^19.6.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/exec": "^7.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "conventional-changelog-conventionalcommits": "^8.0.0",
     "lefthook": "^1.6.0",
     "typescript": "^5.6.0",
+    "semantic-release": "^24.2.0",
     "vitest": "^2.1.0"
   },
   "engines": {
