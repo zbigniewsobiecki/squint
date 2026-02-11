@@ -134,6 +134,22 @@ export class FeatureRepository {
   }
 
   /**
+   * Get features associated with a specific flow.
+   */
+  getFeaturesForFlow(flowId: number): Feature[] {
+    ensureFeaturesTables(this.db);
+    return this.db
+      .prepare(
+        `SELECT f.id, f.name, f.slug, f.description, f.created_at as createdAt
+        FROM features f
+        JOIN feature_flows ff ON f.id = ff.feature_id
+        WHERE ff.flow_id = ?
+        ORDER BY f.name`
+      )
+      .all(flowId) as Feature[];
+  }
+
+  /**
    * Get count of features.
    */
   getCount(): number {
