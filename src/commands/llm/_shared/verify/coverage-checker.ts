@@ -271,7 +271,7 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
   // Check for PENDING_LLM_ANNOTATION relationships
   try {
     const allRels = db.relationships.getAll({ limit: 100000 });
-    const pendingRels = allRels.filter(r => r.semantic === 'PENDING_LLM_ANNOTATION');
+    const pendingRels = allRels.filter((r) => r.semantic === 'PENDING_LLM_ANNOTATION');
     for (const rel of pendingRels) {
       issues.push({
         definitionId: rel.fromDefinitionId,

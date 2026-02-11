@@ -478,6 +478,63 @@ export class ModuleRepository {
   }
 
   /**
+   * Update a module's name and/or description.
+   */
+  update(id: number, updates: { name?: string; description?: string }): boolean {
+    ensureModulesTables(this.db);
+
+    const sets: string[] = [];
+    const params: (string | null)[] = [];
+
+    if (updates.name !== undefined) {
+      sets.push('name = ?');
+      params.push(updates.name);
+    }
+    if (updates.description !== undefined) {
+      sets.push('description = ?');
+      params.push(updates.description);
+    }
+
+    if (sets.length === 0) return false;
+
+    params.push(String(id));
+    const stmt = this.db.prepare(`UPDATE modules SET ${sets.join(', ')} WHERE id = ?`);
+    const result = stmt.run(...params);
+    return result.changes > 0;
+  }
+
+  /**
+   * Delete a module.
+   * Throws an error if the module has members unless the caller handles that externally.
+   */
+  delete(id: number): boolean {
+    ensureModulesTables(this.db);
+
+    // Check for members
+    const memberCount = (
+      this.db.prepare('SELECT COUNT(*) as count FROM module_members WHERE module_id = ?').get(id) as { count: number }
+    ).count;
+
+    if (memberCount > 0) {
+      throw new Error(`Module ${id} has ${memberCount} member(s). Remove members first or use --force.`);
+    }
+
+    const stmt = this.db.prepare('DELETE FROM modules WHERE id = ?');
+    const result = stmt.run(id);
+    return result.changes > 0;
+  }
+
+  /**
+   * Remove a symbol from its module assignment.
+   */
+  unassignSymbol(definitionId: number): boolean {
+    ensureModulesTables(this.db);
+    const stmt = this.db.prepare('DELETE FROM module_members WHERE definition_id = ?');
+    const result = stmt.run(definitionId);
+    return result.changes > 0;
+  }
+
+  /**
    * Get leaf modules exceeding a member threshold.
    * Leaf = not a parent of any other module. Ordered by member count DESC (largest first).
    */

@@ -161,10 +161,13 @@ export async function verifyAnnotationContent(
           severity,
           category: `wrong-${row.check}`,
           message: `${row.check}: ${row.reason}`,
-          fixData: severity === 'error' ? {
-            action: 'reannotate-definition' as const,
-            reason: row.reason,
-          } : undefined,
+          fixData:
+            severity === 'error'
+              ? {
+                  action: 'reannotate-definition' as const,
+                  reason: row.reason,
+                }
+              : undefined,
         });
       }
     } catch {
@@ -287,11 +290,14 @@ export async function verifyRelationshipContent(
           severity,
           category: 'wrong-relationship',
           message: `${fromDef?.name || row.fromId} → ${toDef?.name || row.toId}: ${row.reason}`,
-          fixData: severity === 'error' ? {
-            action: 'reannotate-relationship' as const,
-            targetDefinitionId: row.toId,
-            reason: row.reason,
-          } : undefined,
+          fixData:
+            severity === 'error'
+              ? {
+                  action: 'reannotate-relationship' as const,
+                  targetDefinitionId: row.toId,
+                  reason: row.reason,
+                }
+              : undefined,
         });
       }
     } catch {

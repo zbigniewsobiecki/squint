@@ -2,12 +2,12 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { SharedFlags, withDatabase } from '../_shared/index.js';
 
-export default class Remove extends Command {
+export default class DomainsDelete extends Command {
   static override description = 'Remove a domain from the registry';
 
   static override examples = [
-    '<%= config.bin %> domains remove deprecated-domain',
-    '<%= config.bin %> domains remove old-domain --force',
+    '<%= config.bin %> domains delete deprecated-domain',
+    '<%= config.bin %> domains delete old-domain --force',
   ];
 
   static override args = {
@@ -24,7 +24,7 @@ export default class Remove extends Command {
   };
 
   public async run(): Promise<void> {
-    const { args, flags } = await this.parse(Remove);
+    const { args, flags } = await this.parse(DomainsDelete);
 
     await withDatabase(flags.database, this, async (db) => {
       // Remove the domain

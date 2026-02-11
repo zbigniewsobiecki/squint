@@ -2,12 +2,12 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { SharedFlags, withDatabase } from '../_shared/index.js';
 
-export default class Add extends Command {
+export default class DomainsCreate extends Command {
   static override description = 'Register a new domain';
 
   static override examples = [
-    '<%= config.bin %> domains add auth "User authentication and authorization"',
-    '<%= config.bin %> domains add payment --description "Payment processing"',
+    '<%= config.bin %> domains create auth "User authentication and authorization"',
+    '<%= config.bin %> domains create payment --description "Payment processing"',
   ];
 
   static override args = {
@@ -23,7 +23,7 @@ export default class Add extends Command {
   };
 
   public async run(): Promise<void> {
-    const { args, flags } = await this.parse(Add);
+    const { args, flags } = await this.parse(DomainsCreate);
 
     await withDatabase(flags.database, this, async (db) => {
       // Use description from args or flags

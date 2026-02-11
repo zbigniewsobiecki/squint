@@ -154,6 +154,56 @@ export class FeatureRepository {
   }
 
   /**
+   * Update a feature's name and/or description.
+   */
+  update(id: number, updates: { name?: string; description?: string }): boolean {
+    ensureFeaturesTables(this.db);
+
+    const sets: string[] = [];
+    const params: (string | null)[] = [];
+
+    if (updates.name !== undefined) {
+      sets.push('name = ?');
+      params.push(updates.name);
+    }
+    if (updates.description !== undefined) {
+      sets.push('description = ?');
+      params.push(updates.description);
+    }
+
+    if (sets.length === 0) return false;
+
+    params.push(String(id));
+    const stmt = this.db.prepare(`UPDATE features SET ${sets.join(', ')} WHERE id = ?`);
+    const result = stmt.run(...params);
+    return result.changes > 0;
+  }
+
+  /**
+   * Delete a feature and cascade delete its flow associations.
+   */
+  delete(id: number): boolean {
+    ensureFeaturesTables(this.db);
+
+    // Delete flow associations first
+    this.db.prepare('DELETE FROM feature_flows WHERE feature_id = ?').run(id);
+
+    const stmt = this.db.prepare('DELETE FROM features WHERE id = ?');
+    const result = stmt.run(id);
+    return result.changes > 0;
+  }
+
+  /**
+   * Remove a flow-feature association.
+   */
+  removeFlow(featureId: number, flowId: number): boolean {
+    ensureFeaturesTables(this.db);
+    const stmt = this.db.prepare('DELETE FROM feature_flows WHERE feature_id = ? AND flow_id = ?');
+    const result = stmt.run(featureId, flowId);
+    return result.changes > 0;
+  }
+
+  /**
    * Delete all features and their flow associations.
    */
   clear(): number {
