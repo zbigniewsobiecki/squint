@@ -161,6 +161,10 @@ export async function verifyAnnotationContent(
           severity,
           category: `wrong-${row.check}`,
           message: `${row.check}: ${row.reason}`,
+          fixData: severity === 'error' ? {
+            action: 'reannotate-definition' as const,
+            reason: row.reason,
+          } : undefined,
         });
       }
     } catch {
@@ -195,10 +199,10 @@ export async function verifyRelationshipContent(
   const maxIterations = flags['max-iterations'];
   const systemPrompt = buildRelationshipVerifySystemPrompt();
 
-  // Get all annotated relationships
+  // Get all annotated relationships (including PENDING — they'll be caught by Phase 1 deterministically
+  // and also verified here if they somehow survive fixing)
   const allRels = db.relationships.getAll({ limit: 100000 });
-  // Filter to those that have real annotations (not PENDING)
-  const annotatedRels = allRels.filter((r) => r.semantic !== 'PENDING_LLM_ANNOTATION');
+  const annotatedRels = allRels;
 
   // Group by source definition
   const byFromId = new Map<number, typeof annotatedRels>();
@@ -283,6 +287,11 @@ export async function verifyRelationshipContent(
           severity,
           category: 'wrong-relationship',
           message: `${fromDef?.name || row.fromId} → ${toDef?.name || row.toId}: ${row.reason}`,
+          fixData: severity === 'error' ? {
+            action: 'reannotate-relationship' as const,
+            targetDefinitionId: row.toId,
+            reason: row.reason,
+          } : undefined,
         });
       }
     } catch {

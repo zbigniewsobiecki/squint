@@ -120,7 +120,8 @@ export default class Relationships extends BaseLlmCommand {
 
     // Check initial state
     const initialUnannotated = db.relationships.getUnannotatedCount();
-    if (initialUnannotated === 0) {
+    const initialPending = db.relationships.getUnannotatedInheritanceCount();
+    if (initialUnannotated === 0 && initialPending === 0) {
       if (isJson) {
         this.log(JSON.stringify({ message: 'All relationships are already annotated' }));
       } else {
@@ -289,9 +290,111 @@ export default class Relationships extends BaseLlmCommand {
       }
     }
 
+    // Phase 2: Annotate PENDING inheritance relationships
+    const pendingInheritance = db.relationships.getUnannotatedInheritance(500);
+    if (pendingInheritance.length > 0) {
+      if (!isJson) {
+        this.log('');
+        this.log(chalk.bold(`Annotating ${pendingInheritance.length} PENDING inheritance relationships...`));
+      }
+
+      // Group by fromId
+      const inheritGrouped = new Map<number, typeof pendingInheritance>();
+      for (const rel of pendingInheritance) {
+        if (!inheritGrouped.has(rel.fromId)) inheritGrouped.set(rel.fromId, []);
+        inheritGrouped.get(rel.fromId)!.push(rel);
+      }
+
+      const inheritSourceIds = [...inheritGrouped.keys()];
+
+      // Process in batches
+      for (let offset = 0; offset < inheritSourceIds.length; offset += batchSize) {
+        const batchIds = inheritSourceIds.slice(offset, offset + batchSize);
+
+        // Build source groups from PENDING inheritance relationships
+        const inheritGroups = await this.buildInheritanceSourceGroups(db, batchIds, inheritGrouped);
+        if (inheritGroups.length === 0) continue;
+
+        const totalRelsInBatch = inheritGroups.reduce((sum, g) => sum + g.relationships.length, 0);
+        iteration++;
+
+        if (!isJson && ctx.verbose) {
+          this.log(
+            chalk.gray(`  Inheritance batch: ${inheritGroups.length} source symbols, ${totalRelsInBatch} relationships`)
+          );
+        }
+
+        const userPrompt = buildRelationshipUserPrompt(inheritGroups);
+        logLlmRequest(this, `relationships-inherit-${offset}`, systemPrompt, userPrompt, llmLogOptions);
+
+        let response: string;
+        try {
+          response = await completeWithLogging({
+            model,
+            systemPrompt,
+            userPrompt,
+            temperature: 0,
+            command: this,
+            isJson,
+            iteration: { current: iteration, max: maxIterations },
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!isJson) {
+            this.log(chalk.red(`  LLM API error: ${message}`));
+          }
+          totalErrors++;
+          continue;
+        }
+
+        logLlmResponse(this, `relationships-inherit-${offset}`, response, llmLogOptions);
+
+        const parseResult = parseCombinedCsv(response);
+        for (const error of parseResult.errors) {
+          if (!isJson) {
+            this.log(chalk.yellow(`  Warning: ${error}`));
+          }
+          totalErrors++;
+        }
+
+        // Build valid relationship map for this batch
+        const validRelationships = new Map<number, Set<number>>();
+        for (const group of inheritGroups) {
+          const toIds = new Set(group.relationships.map((r) => r.toId));
+          validRelationships.set(group.id, toIds);
+        }
+
+        const validSourceIds = new Set(batchIds);
+        let batchAnnotations = 0;
+
+        for (const row of parseResult.relationships) {
+          const { fromId, toId, value } = row;
+          if (!validSourceIds.has(fromId)) { totalErrors++; continue; }
+          const toIds = validRelationships.get(fromId);
+          if (!toIds || !toIds.has(toId)) { totalErrors++; continue; }
+          if (!value || value.length < 5) { totalErrors++; continue; }
+
+          if (!dryRun) {
+            db.relationships.set(fromId, toId, value);
+          }
+          batchAnnotations++;
+          totalAnnotations++;
+        }
+
+        if (!isJson) {
+          const remaining = db.relationships.getUnannotatedInheritanceCount();
+          this.log(
+            chalk.green(`  ✓ Annotated ${batchAnnotations} inheritance relationships`) +
+              chalk.gray(` (${remaining} PENDING remaining)`)
+          );
+        }
+      }
+    }
+
     // Final summary
     const finalAnnotated = db.relationships.getCount();
     const finalUnannotated = db.relationships.getUnannotatedCount();
+    const finalPending = db.relationships.getUnannotatedInheritanceCount();
     const finalTotal = finalAnnotated + finalUnannotated;
     const finalCoverage: RelationshipCoverageInfo = {
       annotated: finalAnnotated,
@@ -317,6 +420,9 @@ export default class Relationships extends BaseLlmCommand {
       this.log(`Annotations created: ${chalk.green(totalAnnotations)}`);
       if (totalErrors > 0) {
         this.log(`Errors: ${chalk.red(totalErrors)}`);
+      }
+      if (finalPending > 0) {
+        this.log(`PENDING inheritance: ${chalk.yellow(finalPending)}`);
       }
       this.log('');
       const pctColor =
@@ -482,6 +588,144 @@ export default class Relationships extends BaseLlmCommand {
       }
     }
 
+    // LLM-based fixes (PENDING, missing, wrong relationships)
+    if (shouldFix && !dryRun && ctx.model) {
+      const llmFixIssues: import('./_shared/verify/verify-types.js').VerificationIssue[] = [];
+
+      // Collect from Phase 1: pending-annotation and missing-relationship
+      llmFixIssues.push(
+        ...phase1.issues.filter(
+          (i) =>
+            i.fixData?.action === 'reannotate-relationship' ||
+            i.fixData?.action === 'annotate-missing-relationship'
+        )
+      );
+
+      // Collect from Phase 2: wrong relationships
+      if (phase2) {
+        llmFixIssues.push(
+          ...phase2.issues.filter((i) => i.fixData?.action === 'reannotate-relationship')
+        );
+      }
+
+      if (llmFixIssues.length > 0) {
+        if (!isJson) {
+          this.log('');
+          this.log(chalk.bold(`Fixing ${llmFixIssues.length} relationship issues via LLM...`));
+        }
+
+        // Group by fromId (definitionId)
+        const byFromId = new Map<number, typeof llmFixIssues>();
+        for (const issue of llmFixIssues) {
+          if (!issue.definitionId) continue;
+          if (!byFromId.has(issue.definitionId)) byFromId.set(issue.definitionId, []);
+          byFromId.get(issue.definitionId)!.push(issue);
+        }
+
+        const fromIds = [...byFromId.keys()];
+        let fixedCount = 0;
+
+        for (let offset = 0; offset < fromIds.length; offset += batchSize) {
+          const batchFromIds = fromIds.slice(offset, offset + batchSize);
+
+          // Build source groups for these definitions
+          const fixGrouped = new Map<number, Array<{
+            fromDefinitionId: number;
+            fromName: string;
+            fromKind: string;
+            fromFilePath: string;
+            fromLine: number;
+            toDefinitionId: number;
+            toName: string;
+            toKind: string;
+            toFilePath: string;
+            toLine: number;
+          }>>();
+
+          for (const fromId of batchFromIds) {
+            const issues = byFromId.get(fromId) || [];
+            const rels: Array<{
+              fromDefinitionId: number;
+              fromName: string;
+              fromKind: string;
+              fromFilePath: string;
+              fromLine: number;
+              toDefinitionId: number;
+              toName: string;
+              toKind: string;
+              toFilePath: string;
+              toLine: number;
+            }> = [];
+
+            const fromDef = db.definitions.getById(fromId);
+            if (!fromDef) continue;
+
+            for (const issue of issues) {
+              const toId = issue.fixData?.targetDefinitionId;
+              if (!toId) continue;
+              const toDef = db.definitions.getById(toId);
+              if (!toDef) continue;
+
+              rels.push({
+                fromDefinitionId: fromId,
+                fromName: fromDef.name,
+                fromKind: fromDef.kind,
+                fromFilePath: fromDef.filePath,
+                fromLine: fromDef.line,
+                toDefinitionId: toId,
+                toName: toDef.name,
+                toKind: toDef.kind,
+                toFilePath: toDef.filePath,
+                toLine: toDef.line,
+              });
+            }
+
+            if (rels.length > 0) {
+              fixGrouped.set(fromId, rels);
+            }
+          }
+
+          const fixGroups = await this.buildSourceGroups(db, [...fixGrouped.keys()], fixGrouped);
+          if (fixGroups.length === 0) continue;
+
+          const systemPrompt = buildRelationshipSystemPrompt();
+          const userPrompt = buildRelationshipUserPrompt(fixGroups);
+
+          try {
+            const response = await completeWithLogging({
+              model: ctx.model,
+              systemPrompt,
+              userPrompt,
+              temperature: 0,
+              command: this,
+              isJson,
+            });
+
+            const parseResult = parseCombinedCsv(response);
+
+            const validRels = new Map<number, Set<number>>();
+            for (const group of fixGroups) {
+              validRels.set(group.id, new Set(group.relationships.map((r) => r.toId)));
+            }
+
+            for (const row of parseResult.relationships) {
+              const toIds = validRels.get(row.fromId);
+              if (!toIds || !toIds.has(row.toId)) continue;
+              if (!row.value || row.value.length < 5) continue;
+              db.relationships.set(row.fromId, row.toId, row.value);
+              fixedCount++;
+            }
+          } catch {
+            // LLM error, continue
+          }
+        }
+
+        if (fixedCount > 0 && !isJson) {
+          this.log(chalk.green(`  Fixed: re-annotated ${fixedCount} relationships via LLM`));
+        }
+      }
+    }
+
     if (isJson) {
       this.log(JSON.stringify(report, null, 2));
     }
@@ -543,6 +787,72 @@ export default class Relationships extends BaseLlmCommand {
           toLine: rel.toLine,
           usageLine: rel.fromLine,
           relationshipType: 'uses',
+          toPurpose: targetMeta.purpose || null,
+          toDomains: null,
+          toRole: targetMeta.role || null,
+        });
+      }
+
+      groups.push({
+        id: sourceId,
+        name: def.name,
+        kind: def.kind,
+        filePath: def.filePath,
+        line: def.line,
+        endLine: def.endLine,
+        sourceCode,
+        purpose: sourceMeta.purpose || null,
+        domains: sourceDomains,
+        role: sourceMeta.role || null,
+        relationships,
+      });
+    }
+
+    return groups;
+  }
+
+  /**
+   * Build RelationshipSourceGroup[] for PENDING inheritance relationships.
+   */
+  private async buildInheritanceSourceGroups(
+    db: IndexDatabase,
+    sourceIds: number[],
+    grouped: Map<number, import('../../db/repositories/relationship-repository.js').UnannotatedInheritance[]>
+  ): Promise<RelationshipSourceGroup[]> {
+    const groups: RelationshipSourceGroup[] = [];
+
+    for (const sourceId of sourceIds) {
+      const rels = grouped.get(sourceId);
+      if (!rels || rels.length === 0) continue;
+
+      const def = db.definitions.getById(sourceId);
+      if (!def) continue;
+
+      const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
+      const sourceMeta = db.metadata.get(sourceId);
+
+      let sourceDomains: string[] | null = null;
+      try {
+        if (sourceMeta.domain) {
+          sourceDomains = JSON.parse(sourceMeta.domain) as string[];
+        }
+      } catch {
+        /* ignore */
+      }
+
+      const relationships: RelationshipTarget[] = [];
+      for (const rel of rels) {
+        const targetDef = db.definitions.getById(rel.toId);
+        const targetMeta = db.metadata.get(rel.toId);
+
+        relationships.push({
+          toId: rel.toId,
+          toName: rel.toName,
+          toKind: rel.toKind,
+          toFilePath: rel.toFilePath,
+          toLine: targetDef?.line ?? 1,
+          usageLine: def.line,
+          relationshipType: rel.relationshipType,
           toPurpose: targetMeta.purpose || null,
           toDomains: null,
           toRole: targetMeta.role || null,

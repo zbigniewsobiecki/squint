@@ -20,7 +20,11 @@ export interface VerificationIssue {
       | 'remove-inferred-to-module'
       | 'rebuild-symbols'
       | 'set-direction-uni'
-      | 'null-entry-point';
+      | 'null-entry-point'
+      | 'reannotate-relationship'
+      | 'annotate-missing-relationship'
+      | 'reannotate-definition'
+      | 'harmonize-domain';
     targetDefinitionId?: number;
     expectedType?: string;
     interactionId?: number;
@@ -28,6 +32,7 @@ export interface VerificationIssue {
     flowId?: number;
     ghostTable?: string;
     ghostRowId?: number;
+    reason?: string;
   };
 }
 

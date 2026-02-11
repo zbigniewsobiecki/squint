@@ -69,6 +69,12 @@ export function checkAnnotationCoverage(db: IndexDatabase, aspects: string[]): C
     issues.push(...pureIssues);
   }
 
+  // Check for inconsistent domain tags across same-named definitions
+  if (aspects.includes('domain')) {
+    const domainIssues = checkDomainConsistency(db);
+    issues.push(...domainIssues);
+  }
+
   // Get relationship counts
   let totalRelationships = 0;
   let annotatedRelationships = 0;
@@ -93,6 +99,63 @@ export function checkAnnotationCoverage(db: IndexDatabase, aspects: string[]): C
       structuralIssueCount: 0,
     },
   };
+}
+
+/**
+ * Check for inconsistent domain tags across definitions with the same name and kind.
+ */
+function checkDomainConsistency(db: IndexDatabase): VerificationIssue[] {
+  const issues: VerificationIssue[] = [];
+
+  const allDefs = db.definitions.getAll();
+
+  // Group definitions by (name, kind)
+  const groups = new Map<string, Array<{ id: number; name: string; kind: string; line: number }>>();
+  for (const def of allDefs) {
+    const key = `${def.name}::${def.kind}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push({ id: def.id, name: def.name, kind: def.kind, line: def.line });
+  }
+
+  for (const [, defs] of groups) {
+    if (defs.length < 2) continue;
+
+    // Get domain metadata for each definition
+    const domainVariants = new Map<string, number[]>(); // normalized domain string → def IDs
+    for (const def of defs) {
+      const domainValue = db.metadata.getValue(def.id, 'domain');
+      if (!domainValue) continue;
+      try {
+        const parsed = JSON.parse(domainValue) as string[];
+        const normalized = JSON.stringify([...parsed].sort());
+        if (!domainVariants.has(normalized)) domainVariants.set(normalized, []);
+        domainVariants.get(normalized)!.push(def.id);
+      } catch {
+        // Skip unparseable domain values
+      }
+    }
+
+    // If there are multiple distinct domain variants, flag inconsistency
+    if (domainVariants.size > 1) {
+      for (const def of defs) {
+        const domainValue = db.metadata.getValue(def.id, 'domain');
+        if (!domainValue) continue;
+        const fullDef = db.definitions.getById(def.id);
+        issues.push({
+          definitionId: def.id,
+          definitionName: def.name,
+          filePath: fullDef?.filePath,
+          line: def.line,
+          severity: 'warning',
+          category: 'inconsistent-domain',
+          message: `'${def.name}' (${def.kind}) has domain ${domainValue} — other definitions with same name have different domains`,
+          fixData: { action: 'harmonize-domain' },
+        });
+      }
+    }
+  }
+
+  return issues;
 }
 
 /**
@@ -184,11 +247,44 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
   const totalRelationships = annotatedRelationships + unannotatedCount;
 
   if (unannotatedCount > 0) {
-    issues.push({
-      severity: 'error',
-      category: 'unannotated-relationship',
-      message: `${unannotatedCount} relationships have no annotation`,
-    });
+    const unannotated = db.relationships.getUnannotated({ limit: 50 });
+    for (const rel of unannotated) {
+      issues.push({
+        definitionId: rel.fromDefinitionId,
+        definitionName: rel.fromName,
+        severity: 'error',
+        category: 'missing-relationship',
+        message: `Missing: ${rel.fromName} → ${rel.toName}`,
+        fixData: { action: 'annotate-missing-relationship', targetDefinitionId: rel.toDefinitionId },
+      });
+    }
+    if (unannotatedCount > 50) {
+      issues.push({
+        severity: 'error',
+        category: 'missing-relationship',
+        message: `... and ${unannotatedCount - 50} more missing relationships`,
+      });
+    }
+    structuralIssueCount += unannotatedCount;
+  }
+
+  // Check for PENDING_LLM_ANNOTATION relationships
+  try {
+    const allRels = db.relationships.getAll({ limit: 100000 });
+    const pendingRels = allRels.filter(r => r.semantic === 'PENDING_LLM_ANNOTATION');
+    for (const rel of pendingRels) {
+      issues.push({
+        definitionId: rel.fromDefinitionId,
+        definitionName: rel.fromName,
+        severity: 'error',
+        category: 'pending-annotation',
+        message: `${rel.fromName} → ${rel.toName} (${rel.relationshipType}) has placeholder PENDING_LLM_ANNOTATION`,
+        fixData: { action: 'reannotate-relationship', targetDefinitionId: rel.toDefinitionId },
+      });
+      structuralIssueCount++;
+    }
+  } catch {
+    // Table doesn't exist
   }
 
   // Duplicate target detection: extends/implements where same (from_id, type) links to multiple to_ids with same name

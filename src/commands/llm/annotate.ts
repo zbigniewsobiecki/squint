@@ -970,6 +970,65 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
           this.log('');
         }
       }
+
+      // Auto-fix: harmonize inconsistent domain tags (deterministic — pick most common)
+      const domainIssues = phase1.issues.filter((i) => i.fixData?.action === 'harmonize-domain');
+      if (domainIssues.length > 0) {
+        // Group by (name, kind) to find the most common domain variant
+        const defIds = domainIssues.map((i) => i.definitionId).filter((id): id is number => id !== undefined);
+        const groups = new Map<string, Array<{ id: number; domain: string }>>();
+        for (const defId of defIds) {
+          const def = db.definitions.getById(defId);
+          if (!def) continue;
+          const domain = db.metadata.getValue(defId, 'domain');
+          if (!domain) continue;
+          const key = `${def.name}::${def.kind}`;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key)!.push({ id: defId, domain });
+        }
+
+        let harmonized = 0;
+        for (const [, defs] of groups) {
+          // Find the most common domain variant
+          const counts = new Map<string, number>();
+          for (const { domain } of defs) {
+            try {
+              const parsed = JSON.parse(domain) as string[];
+              const normalized = JSON.stringify([...parsed].sort());
+              counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+            } catch {
+              // Skip
+            }
+          }
+          let bestDomain = '';
+          let bestCount = 0;
+          for (const [domain, count] of counts) {
+            if (count > bestCount) {
+              bestCount = count;
+              bestDomain = domain;
+            }
+          }
+          if (!bestDomain) continue;
+
+          // Apply the most common domain to all definitions in the group
+          for (const { id, domain } of defs) {
+            try {
+              const normalized = JSON.stringify([...JSON.parse(domain) as string[]].sort());
+              if (normalized !== bestDomain) {
+                db.metadata.set(id, 'domain', bestDomain);
+                harmonized++;
+              }
+            } catch {
+              // Skip
+            }
+          }
+        }
+
+        if (harmonized > 0 && !isJson) {
+          this.log(chalk.green(`  Fixed: harmonized ${harmonized} inconsistent domain annotations`));
+          this.log('');
+        }
+      }
     }
 
     // If dry-run or Phase 1 failed, stop here
@@ -1009,6 +1068,93 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
         for (const issue of phase2.issues) {
           const severity = issue.severity === 'error' ? chalk.red('ERR') : chalk.yellow('WARN');
           this.log(`  ${severity} ${issue.definitionName || '?'}: ${issue.message}`);
+        }
+      }
+    }
+
+    // LLM-based fix: reannotate definitions flagged as wrong
+    if (shouldFix && !dryRun && ctx.model && phase2) {
+      const reannotateIssues = phase2.issues.filter((i) => i.fixData?.action === 'reannotate-definition');
+      if (reannotateIssues.length > 0) {
+        if (!isJson) {
+          this.log('');
+          this.log(chalk.bold(`Fixing ${reannotateIssues.length} wrong annotations via LLM...`));
+        }
+
+        // Collect definition IDs to re-annotate
+        const defIdsToFix = reannotateIssues
+          .map((i) => i.definitionId)
+          .filter((id): id is number => id !== undefined);
+        const uniqueDefIds = [...new Set(defIdsToFix)];
+
+        // Build symbols for re-annotation (set() will overwrite existing values)
+        const symbolsToFix = uniqueDefIds
+          .map((id) => db.definitions.getById(id))
+          .filter((d): d is NonNullable<typeof d> => d !== null)
+          .map((d) => ({
+            id: d.id,
+            name: d.name,
+            kind: d.kind,
+            filePath: d.filePath,
+            line: d.line,
+            endLine: d.endLine,
+            dependencyCount: 0,
+          }));
+
+        if (symbolsToFix.length > 0) {
+          const enhancedSymbols = await this.enhanceSymbols(db, symbolsToFix, aspects, 50);
+          const systemPrompt = buildSystemPrompt(aspects);
+
+          const symbolContexts: SymbolContextEnhanced[] = enhancedSymbols.map((s) => ({
+            id: s.id,
+            name: s.name,
+            kind: s.kind,
+            filePath: s.filePath,
+            line: s.line,
+            endLine: s.endLine,
+            sourceCode: s.sourceCode,
+            isExported: s.isExported,
+            dependencies: s.dependencies,
+            relationshipsToAnnotate: [],
+            incomingDependencies: s.incomingDependencies,
+            incomingDependencyCount: s.incomingDependencyCount,
+          }));
+
+          const allCoverage = db.metadata.getAspectCoverage({});
+          const totalSymbols = db.metadata.getFilteredCount({});
+          const coverage = filterCoverageForAspects(allCoverage, aspects, totalSymbols);
+
+          const userPrompt = buildUserPromptEnhanced(symbolContexts, aspects, coverage);
+
+          try {
+            const response = await completeWithLogging({
+              model: ctx.model,
+              systemPrompt,
+              userPrompt,
+              temperature: 0,
+              command: this,
+              isJson: ctx.isJson,
+            });
+
+            const parseResult = parseCombinedCsv(response);
+            const validIds = new Set(uniqueDefIds);
+            let fixedCount = 0;
+
+            for (const row of parseResult.symbols) {
+              if (!validIds.has(row.symbolId)) continue;
+              if (!aspects.includes(row.aspect)) continue;
+              if (!row.value || row.value.length < 2) continue;
+
+              db.metadata.set(row.symbolId, row.aspect, row.value);
+              fixedCount++;
+            }
+
+            if (fixedCount > 0 && !isJson) {
+              this.log(chalk.green(`  Fixed: re-annotated ${fixedCount} definition aspects via LLM`));
+            }
+          } catch {
+            // LLM error
+          }
         }
       }
     }

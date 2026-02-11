@@ -4,6 +4,7 @@ import {
   parseRelationshipVerifyCsv,
   verdictToSeverity,
 } from '../../../src/commands/llm/_shared/verify/content-verifier.js';
+import type { VerificationIssue } from '../../../src/commands/llm/_shared/verify/verify-types.js';
 
 describe('content-verifier parse functions', () => {
   // ============================================================
@@ -106,6 +107,68 @@ abc,2,wrong,Bad
 
     it('"correct" → null', () => {
       expect(verdictToSeverity('correct')).toBeNull();
+    });
+  });
+
+  // ============================================================
+  // New fix action types compile correctly
+  // ============================================================
+
+  describe('fix action types', () => {
+    it('reannotate-relationship action compiles and is valid', () => {
+      const issue: VerificationIssue = {
+        definitionId: 1,
+        definitionName: 'TestDef',
+        severity: 'error',
+        category: 'wrong-relationship',
+        message: 'Test',
+        fixData: {
+          action: 'reannotate-relationship',
+          targetDefinitionId: 2,
+          reason: 'Factually wrong description',
+        },
+      };
+      expect(issue.fixData?.action).toBe('reannotate-relationship');
+      expect(issue.fixData?.reason).toBe('Factually wrong description');
+    });
+
+    it('annotate-missing-relationship action compiles and is valid', () => {
+      const issue: VerificationIssue = {
+        severity: 'error',
+        category: 'missing-relationship',
+        message: 'Missing: A → B',
+        fixData: {
+          action: 'annotate-missing-relationship',
+          targetDefinitionId: 3,
+        },
+      };
+      expect(issue.fixData?.action).toBe('annotate-missing-relationship');
+    });
+
+    it('reannotate-definition action compiles and is valid', () => {
+      const issue: VerificationIssue = {
+        definitionId: 5,
+        severity: 'error',
+        category: 'wrong-purpose',
+        message: 'purpose: Incorrect',
+        fixData: {
+          action: 'reannotate-definition',
+          reason: 'Purpose is factually wrong',
+        },
+      };
+      expect(issue.fixData?.action).toBe('reannotate-definition');
+    });
+
+    it('harmonize-domain action compiles and is valid', () => {
+      const issue: VerificationIssue = {
+        definitionId: 7,
+        definitionName: 'helper',
+        severity: 'warning',
+        category: 'inconsistent-domain',
+        message: 'Different domains',
+        fixData: { action: 'harmonize-domain' },
+      };
+      expect(issue.fixData?.action).toBe('harmonize-domain');
     });
   });
 });
