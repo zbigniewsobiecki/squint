@@ -318,6 +318,48 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
     // Ignore errors
   }
 
+  // Missing implements: definitions where implements_names is set but no implements relationship exists
+  try {
+    const BUILTIN_INTERFACES = new Set([
+      'Iterable',
+      'Iterator',
+      'AsyncIterable',
+      'AsyncIterator',
+      'PromiseLike',
+      'ArrayLike',
+      'Disposable',
+      'AsyncDisposable',
+    ]);
+
+    const allDefs2 = db.definitions.getAll();
+    for (const def of allDefs2) {
+      const fullDef = db.definitions.getById(def.id);
+      if (!fullDef?.implementsNames || fullDef.implementsNames.length === 0) continue;
+
+      const relsFrom = db.relationships.getFrom(def.id);
+      const implementsRels = new Set(relsFrom.filter((r) => r.relationshipType === 'implements').map((r) => r.toName));
+
+      for (const ifaceName of fullDef.implementsNames) {
+        if (BUILTIN_INTERFACES.has(ifaceName)) continue;
+        if (implementsRels.has(ifaceName)) continue;
+
+        issues.push({
+          definitionId: def.id,
+          definitionName: def.name,
+          filePath: fullDef.filePath,
+          line: def.line,
+          severity: 'warning',
+          category: 'missing-implements',
+          message: `Definition '${def.name}' implements '${ifaceName}' but no 'implements' relationship annotation exists`,
+          suggestion: 'The target interface may not be indexed, or the implements clause uses unsupported syntax',
+        });
+        structuralIssueCount++;
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+
   const totalDefinitions = db.definitions.getCount();
   const passed = unannotatedCount === 0 && structuralIssueCount === 0;
 
@@ -522,6 +564,66 @@ export function checkFlowQuality(db: IndexDatabase): CoverageCheckResult {
     }
   }
 
+  // Check 6 — broken-chain: consecutive steps where toModuleId doesn't connect to next step
+  for (const flow of allFlows) {
+    const steps = db.flows.getSteps(flow.id);
+    if (steps.length < 2) continue;
+
+    for (let i = 0; i < steps.length - 1; i++) {
+      const currentInteraction = db.interactions.getById(steps[i].interactionId);
+      const nextInteraction = db.interactions.getById(steps[i + 1].interactionId);
+      if (!currentInteraction || !nextInteraction) continue; // Skip nulls (caught by dangling-interaction)
+
+      const currentTo = currentInteraction.toModuleId;
+      const nextFrom = nextInteraction.fromModuleId;
+      const nextTo = nextInteraction.toModuleId;
+
+      if (currentTo !== nextFrom && currentTo !== nextTo) {
+        issues.push({
+          severity: 'warning',
+          category: 'broken-chain',
+          message: `Flow '${flow.name}' (id=${flow.id}) has broken chain at step ${steps[i].stepOrder}→${steps[i + 1].stepOrder}: module #${currentTo} doesn't connect to next step`,
+        });
+      }
+    }
+  }
+
+  // Check 7 — entry-mismatch: entry point module != first step's from module
+  for (const flow of allFlows) {
+    if (!flow.entryPointModuleId) continue;
+    const steps = db.flows.getSteps(flow.id);
+    if (steps.length === 0) continue;
+
+    const firstInteraction = db.interactions.getById(steps[0].interactionId);
+    if (!firstInteraction) continue;
+
+    if (flow.entryPointModuleId !== firstInteraction.fromModuleId) {
+      issues.push({
+        severity: 'warning',
+        category: 'entry-mismatch',
+        message: `Flow '${flow.name}' (id=${flow.id}) entry module #${flow.entryPointModuleId} doesn't match first step's from module #${firstInteraction.fromModuleId}`,
+      });
+    }
+  }
+
+  // Check 8 — entry-not-in-module: entry point definition not a member of entry module
+  for (const flow of allFlows) {
+    if (!flow.entryPointId || !flow.entryPointModuleId) continue;
+    const mod = moduleMap.get(flow.entryPointModuleId);
+    if (!mod) continue;
+
+    const isMember = mod.members.some((m) => m.definitionId === flow.entryPointId);
+    if (!isMember) {
+      issues.push({
+        severity: 'error',
+        category: 'entry-not-in-module',
+        message: `Flow '${flow.name}' (id=${flow.id}) entry point definition #${flow.entryPointId} is not a member of entry module #${flow.entryPointModuleId}`,
+        fixData: { action: 'null-entry-point', flowId: flow.id },
+      });
+      structuralIssueCount++;
+    }
+  }
+
   const passed = structuralIssueCount === 0;
   return {
     passed,
@@ -610,6 +712,38 @@ export function checkModuleAssignments(db: IndexDatabase): CoverageCheckResult {
     }
   }
 
+  // Check 3: unassigned-definition — definitions not assigned to any module (informational)
+  try {
+    const unassigned = db.modules.getUnassigned();
+    if (unassigned.length > 0) {
+      issues.push({
+        severity: 'info',
+        category: 'unassigned-definition',
+        message: `${unassigned.length} definitions are not assigned to any module`,
+      });
+      for (const sym of unassigned.slice(0, 20)) {
+        issues.push({
+          definitionId: sym.id,
+          definitionName: sym.name,
+          filePath: sym.filePath,
+          line: sym.line,
+          severity: 'info',
+          category: 'unassigned-definition',
+          message: `  ${sym.name} (${sym.kind}) in ${sym.filePath}:${sym.line}`,
+        });
+      }
+      if (unassigned.length > 20) {
+        issues.push({
+          severity: 'info',
+          category: 'unassigned-definition',
+          message: `  ... and ${unassigned.length - 20} more`,
+        });
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+
   const totalDefinitions = db.definitions.getCount();
   const passed = structuralIssueCount === 0;
 
@@ -619,6 +753,233 @@ export function checkModuleAssignments(db: IndexDatabase): CoverageCheckResult {
     stats: {
       totalDefinitions,
       annotatedDefinitions: totalDefinitions,
+      totalRelationships: 0,
+      annotatedRelationships: 0,
+      missingCount: 0,
+      structuralIssueCount,
+    },
+  };
+}
+
+/**
+ * Check referential integrity: detect ghost rows referencing deleted entities.
+ */
+export function checkReferentialIntegrity(db: IndexDatabase): CoverageCheckResult {
+  const issues: VerificationIssue[] = [];
+  let structuralIssueCount = 0;
+
+  const ghosts = db.findGhostRows();
+
+  for (const g of ghosts.ghostRelationships) {
+    issues.push({
+      severity: 'error',
+      category: 'ghost-relationship',
+      message: `Relationship annotation #${g.id} references a deleted definition`,
+      fixData: { action: 'remove-ghost', ghostTable: g.table, ghostRowId: g.id },
+    });
+    structuralIssueCount++;
+  }
+
+  for (const g of ghosts.ghostMembers) {
+    issues.push({
+      severity: 'error',
+      category: 'ghost-member',
+      message: `Module member for definition #${g.definitionId} references a deleted definition or module`,
+      fixData: { action: 'remove-ghost', ghostTable: g.table, ghostRowId: g.definitionId },
+    });
+    structuralIssueCount++;
+  }
+
+  for (const g of ghosts.ghostEntryPoints) {
+    issues.push({
+      severity: 'error',
+      category: 'ghost-entry-point',
+      message: `Flow #${g.id} references a deleted entry point definition`,
+      fixData: { action: 'remove-ghost', ghostTable: g.table, ghostRowId: g.id },
+    });
+    structuralIssueCount++;
+  }
+
+  for (const g of ghosts.ghostEntryModules) {
+    issues.push({
+      severity: 'error',
+      category: 'ghost-entry-module',
+      message: `Flow #${g.id} references a deleted entry point module`,
+      fixData: { action: 'remove-ghost', ghostTable: g.table, ghostRowId: g.id },
+    });
+    structuralIssueCount++;
+  }
+
+  for (const g of ghosts.ghostInteractions) {
+    issues.push({
+      severity: 'error',
+      category: 'ghost-interaction',
+      message: `Interaction #${g.id} references a deleted module`,
+      fixData: { action: 'remove-ghost', ghostTable: g.table, ghostRowId: g.id },
+    });
+    structuralIssueCount++;
+  }
+
+  for (const g of ghosts.ghostSubflows) {
+    issues.push({
+      severity: 'error',
+      category: 'ghost-subflow',
+      message: `Subflow step (rowid=${g.rowid}) references a deleted flow`,
+      fixData: { action: 'remove-ghost', ghostTable: g.table, ghostRowId: g.rowid },
+    });
+    structuralIssueCount++;
+  }
+
+  const passed = structuralIssueCount === 0;
+  return {
+    passed,
+    issues,
+    stats: {
+      totalDefinitions: 0,
+      annotatedDefinitions: 0,
+      totalRelationships: 0,
+      annotatedRelationships: 0,
+      missingCount: 0,
+      structuralIssueCount,
+    },
+  };
+}
+
+/**
+ * Check interaction quality: self-loops, missing import paths, symbol mismatches,
+ * false bidirectionals, and ungrounded inferred interactions.
+ */
+export function checkInteractionQuality(db: IndexDatabase): CoverageCheckResult {
+  const issues: VerificationIssue[] = [];
+  let structuralIssueCount = 0;
+
+  const allInteractions = db.interactions.getAll();
+  if (allInteractions.length === 0) {
+    return {
+      passed: true,
+      issues: [],
+      stats: {
+        totalDefinitions: 0,
+        annotatedDefinitions: 0,
+        totalRelationships: 0,
+        annotatedRelationships: 0,
+        missingCount: 0,
+        structuralIssueCount: 0,
+      },
+    };
+  }
+
+  // Build call graph edge set for O(1) lookups
+  const callGraphEdges = new Set<string>();
+  try {
+    const moduleCallGraph = db.callGraph.getModuleCallGraph();
+    for (const edge of moduleCallGraph) {
+      callGraphEdges.add(`${edge.fromModuleId}->${edge.toModuleId}`);
+    }
+  } catch {
+    // Call graph may not be available
+  }
+
+  // Build module members lookup for symbol mismatch checks
+  const allModulesWithMembers = db.modules.getAllWithMembers();
+  const moduleMemberNames = new Map<number, Set<string>>();
+  for (const mod of allModulesWithMembers) {
+    moduleMemberNames.set(mod.id, new Set(mod.members.map((m) => m.name)));
+  }
+
+  for (const interaction of allInteractions) {
+    // Check 1: self-loop-interaction
+    if (interaction.fromModuleId === interaction.toModuleId) {
+      issues.push({
+        severity: 'error',
+        category: 'self-loop-interaction',
+        message: `Interaction #${interaction.id} is a self-loop: ${interaction.fromModulePath} → ${interaction.toModulePath}`,
+        fixData: { action: 'remove-interaction', interactionId: interaction.id },
+      });
+      structuralIssueCount++;
+      continue; // Skip other checks for self-loops
+    }
+
+    // Check 2: no-import-path (for AST/import-based interactions)
+    if (interaction.source === 'ast' || interaction.source === 'ast-import') {
+      try {
+        const hasImport = db.interactions.hasModuleImportPath(interaction.fromModuleId, interaction.toModuleId);
+        if (!hasImport) {
+          issues.push({
+            severity: 'warning',
+            category: 'no-import-path',
+            message: `Interaction #${interaction.id} (${interaction.fromModulePath} → ${interaction.toModulePath}) has source '${interaction.source}' but no import path exists`,
+          });
+        }
+      } catch {
+        // Skip if query fails
+      }
+    }
+
+    // Check 3: interaction-symbol-mismatch
+    if (interaction.symbols) {
+      try {
+        const symbolNames: string[] =
+          typeof interaction.symbols === 'string' ? JSON.parse(interaction.symbols) : interaction.symbols;
+        const targetMembers = moduleMemberNames.get(interaction.toModuleId);
+        if (targetMembers && symbolNames.length > 0) {
+          const mismatched = symbolNames.filter((s) => !targetMembers.has(s));
+          if (mismatched.length > 0 && mismatched.length === symbolNames.length) {
+            issues.push({
+              severity: 'warning',
+              category: 'interaction-symbol-mismatch',
+              message: `Interaction #${interaction.id} (${interaction.fromModulePath} → ${interaction.toModulePath}): all ${symbolNames.length} symbols not found in target module`,
+              fixData: { action: 'rebuild-symbols', interactionId: interaction.id },
+            });
+          }
+        }
+      } catch {
+        // JSON parse error — skip
+      }
+    }
+
+    // Check 4: false-bidirectional
+    if (interaction.direction === 'bi') {
+      const reverseKey = `${interaction.toModuleId}->${interaction.fromModuleId}`;
+      if (!callGraphEdges.has(reverseKey)) {
+        issues.push({
+          severity: 'warning',
+          category: 'false-bidirectional',
+          message: `Interaction #${interaction.id} (${interaction.fromModulePath} → ${interaction.toModulePath}) is 'bi' but no reverse call graph edge exists`,
+          fixData: { action: 'set-direction-uni', interactionId: interaction.id },
+        });
+      }
+    }
+
+    // Check 5: ungrounded-inferred
+    if (interaction.source === 'llm-inferred') {
+      const forwardKey = `${interaction.fromModuleId}->${interaction.toModuleId}`;
+      const hasCallEdge = callGraphEdges.has(forwardKey);
+      let hasImport = false;
+      try {
+        hasImport = db.interactions.hasModuleImportPath(interaction.fromModuleId, interaction.toModuleId);
+      } catch {
+        // Skip
+      }
+
+      if (!hasCallEdge && !hasImport) {
+        issues.push({
+          severity: 'warning',
+          category: 'ungrounded-inferred',
+          message: `Interaction #${interaction.id} (${interaction.fromModulePath} → ${interaction.toModulePath}) is 'llm-inferred' with no import path and no call graph edge`,
+          fixData: { action: 'remove-interaction', interactionId: interaction.id },
+        });
+      }
+    }
+  }
+
+  const passed = structuralIssueCount === 0;
+  return {
+    passed,
+    issues,
+    stats: {
+      totalDefinitions: allInteractions.length,
+      annotatedDefinitions: allInteractions.length - structuralIssueCount,
       totalRelationships: 0,
       annotatedRelationships: 0,
       missingCount: 0,

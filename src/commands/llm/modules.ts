@@ -33,7 +33,7 @@ import {
   isTestFile,
   toSymbolForAssignment,
 } from './_shared/module-prompts.js';
-import { checkModuleAssignments } from './_shared/verify/coverage-checker.js';
+import { checkModuleAssignments, checkReferentialIntegrity } from './_shared/verify/coverage-checker.js';
 
 export default class Modules extends BaseLlmCommand {
   static override description = 'Create module tree structure and assign symbols using LLM';
@@ -1462,7 +1462,14 @@ assignment,42,project.frontend.screens.login
       this.log('');
     }
 
+    // Run referential integrity check first
+    const ghostResult = checkReferentialIntegrity(db);
     const result = checkModuleAssignments(db);
+
+    // Merge ghost issues
+    result.issues.unshift(...ghostResult.issues);
+    result.stats.structuralIssueCount += ghostResult.stats.structuralIssueCount;
+    if (!ghostResult.passed) result.passed = false;
 
     if (!isJson) {
       const warningIssues = result.issues.filter((i) => i.severity === 'warning');
@@ -1497,8 +1504,22 @@ assignment,42,project.frontend.screens.login
       }
     }
 
-    // Auto-fix: move test symbols to nearest test module
+    // Auto-fix: ghost rows
     if (shouldFix && !dryRun) {
+      const ghostIssues = result.issues.filter((i) => i.fixData?.action === 'remove-ghost');
+      if (ghostIssues.length > 0) {
+        let ghostFixed = 0;
+        for (const issue of ghostIssues) {
+          if (issue.fixData?.ghostTable && issue.fixData?.ghostRowId) {
+            const deleted = db.deleteGhostRow(issue.fixData.ghostTable, issue.fixData.ghostRowId);
+            if (deleted) ghostFixed++;
+          }
+        }
+        if (ghostFixed > 0 && !isJson) {
+          this.log(chalk.green(`  Fixed: removed ${ghostFixed} ghost rows`));
+        }
+      }
+
       const testInProdIssues = result.issues.filter((i) => i.fixData?.action === 'move-to-test-module');
       if (testInProdIssues.length > 0) {
         // Find a test module to move symbols to

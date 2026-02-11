@@ -208,6 +208,141 @@ export class IndexDatabase implements IIndexWriter {
   }
 
   /**
+   * Find ghost rows: rows referencing entities that no longer exist.
+   * Each query is wrapped in try/catch since tables may not exist.
+   */
+  findGhostRows(): {
+    ghostRelationships: Array<{ id: number; table: string }>;
+    ghostMembers: Array<{ definitionId: number; table: string }>;
+    ghostEntryPoints: Array<{ id: number; table: string }>;
+    ghostEntryModules: Array<{ id: number; table: string }>;
+    ghostInteractions: Array<{ id: number; table: string }>;
+    ghostSubflows: Array<{ rowid: number; table: string }>;
+  } {
+    const result = {
+      ghostRelationships: [] as Array<{ id: number; table: string }>,
+      ghostMembers: [] as Array<{ definitionId: number; table: string }>,
+      ghostEntryPoints: [] as Array<{ id: number; table: string }>,
+      ghostEntryModules: [] as Array<{ id: number; table: string }>,
+      ghostInteractions: [] as Array<{ id: number; table: string }>,
+      ghostSubflows: [] as Array<{ rowid: number; table: string }>,
+    };
+
+    // ghost-relationship: relationship_annotations where definition_id NOT IN definitions
+    try {
+      const rows = this.conn
+        .prepare(
+          `SELECT ra.id FROM relationship_annotations ra
+           LEFT JOIN definitions d1 ON ra.from_definition_id = d1.id
+           LEFT JOIN definitions d2 ON ra.to_definition_id = d2.id
+           WHERE d1.id IS NULL OR d2.id IS NULL`
+        )
+        .all() as Array<{ id: number }>;
+      result.ghostRelationships = rows.map((r) => ({ id: r.id, table: 'relationship_annotations' }));
+    } catch {
+      // Table doesn't exist
+    }
+
+    // ghost-member: module_members where definition_id NOT IN definitions OR module_id NOT IN modules
+    try {
+      const rows = this.conn
+        .prepare(
+          `SELECT mm.definition_id as definitionId FROM module_members mm
+           LEFT JOIN definitions d ON mm.definition_id = d.id
+           LEFT JOIN modules m ON mm.module_id = m.id
+           WHERE d.id IS NULL OR m.id IS NULL`
+        )
+        .all() as Array<{ definitionId: number }>;
+      result.ghostMembers = rows.map((r) => ({ definitionId: r.definitionId, table: 'module_members' }));
+    } catch {
+      // Table doesn't exist
+    }
+
+    // ghost-entry-point: flows where entry_point_id IS NOT NULL AND NOT IN definitions
+    try {
+      const rows = this.conn
+        .prepare(
+          `SELECT f.id FROM flows f
+           LEFT JOIN definitions d ON f.entry_point_id = d.id
+           WHERE f.entry_point_id IS NOT NULL AND d.id IS NULL`
+        )
+        .all() as Array<{ id: number }>;
+      result.ghostEntryPoints = rows.map((r) => ({ id: r.id, table: 'flows' }));
+    } catch {
+      // Table doesn't exist
+    }
+
+    // ghost-entry-module: flows where entry_point_module_id IS NOT NULL AND NOT IN modules
+    try {
+      const rows = this.conn
+        .prepare(
+          `SELECT f.id FROM flows f
+           LEFT JOIN modules m ON f.entry_point_module_id = m.id
+           WHERE f.entry_point_module_id IS NOT NULL AND m.id IS NULL`
+        )
+        .all() as Array<{ id: number }>;
+      result.ghostEntryModules = rows.map((r) => ({ id: r.id, table: 'flows' }));
+    } catch {
+      // Table doesn't exist
+    }
+
+    // ghost-interaction: interactions where from_module_id or to_module_id NOT IN modules
+    try {
+      const rows = this.conn
+        .prepare(
+          `SELECT i.id FROM interactions i
+           LEFT JOIN modules m1 ON i.from_module_id = m1.id
+           LEFT JOIN modules m2 ON i.to_module_id = m2.id
+           WHERE m1.id IS NULL OR m2.id IS NULL`
+        )
+        .all() as Array<{ id: number }>;
+      result.ghostInteractions = rows.map((r) => ({ id: r.id, table: 'interactions' }));
+    } catch {
+      // Table doesn't exist
+    }
+
+    // ghost-subflow: flow_subflow_steps where subflow_id NOT IN flows
+    try {
+      const rows = this.conn
+        .prepare(
+          `SELECT fss.rowid FROM flow_subflow_steps fss
+           LEFT JOIN flows f ON fss.subflow_id = f.id
+           WHERE f.id IS NULL`
+        )
+        .all() as Array<{ rowid: number }>;
+      result.ghostSubflows = rows.map((r) => ({ rowid: r.rowid, table: 'flow_subflow_steps' }));
+    } catch {
+      // Table doesn't exist
+    }
+
+    return result;
+  }
+
+  /**
+   * Delete a ghost row by table and primary key.
+   * Uses an allowlist of table names to prevent injection.
+   */
+  deleteGhostRow(table: string, id: number): boolean {
+    const ALLOWED_TABLES: Record<string, string> = {
+      relationship_annotations: 'DELETE FROM relationship_annotations WHERE id = ?',
+      module_members: 'DELETE FROM module_members WHERE definition_id = ?',
+      flows: 'UPDATE flows SET entry_point_id = NULL, entry_point_module_id = NULL WHERE id = ?',
+      interactions: 'DELETE FROM interactions WHERE id = ?',
+      flow_subflow_steps: 'DELETE FROM flow_subflow_steps WHERE rowid = ?',
+    };
+
+    const sql = ALLOWED_TABLES[table];
+    if (!sql) return false;
+
+    try {
+      const result = this.conn.prepare(sql).run(id);
+      return result.changes > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Remove stale file entries (files that no longer exist on disk).
    */
   cleanStaleFiles(): { removed: number; paths: string[] } {

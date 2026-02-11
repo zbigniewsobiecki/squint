@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   checkAnnotationCoverage,
   checkFlowQuality,
+  checkInteractionQuality,
   checkModuleAssignments,
+  checkReferentialIntegrity,
   checkRelationshipCoverage,
 } from '../../../src/commands/llm/_shared/verify/coverage-checker.js';
 import { IndexDatabase } from '../../../src/db/database.js';
@@ -37,7 +39,13 @@ describe('coverage-checker', () => {
     fileId: number,
     name: string,
     kind = 'function',
-    opts?: { line?: number; endLine?: number; isExported?: boolean; extends?: string }
+    opts?: {
+      line?: number;
+      endLine?: number;
+      isExported?: boolean;
+      extends?: string;
+      implements?: string[];
+    }
   ) {
     return db.files.insertDefinition(fileId, {
       name,
@@ -47,6 +55,7 @@ describe('coverage-checker', () => {
       position: { row: (opts?.line ?? 1) - 1, column: 0 },
       endPosition: { row: (opts?.endLine ?? 10) - 1, column: 1 },
       extends: opts?.extends,
+      implements: opts?.implements,
     });
   }
 
@@ -225,6 +234,29 @@ describe('coverage-checker', () => {
       const missingExtends = result.issues.filter((i) => i.category === 'missing-extends');
       expect(missingExtends).toHaveLength(0);
     });
+
+    it('missing implements detected', () => {
+      const fileId = insertFile('/src/a.ts');
+      insertDefinition(fileId, 'MyClass', 'class', {
+        implements: ['CustomInterface'],
+      });
+
+      const result = checkRelationshipCoverage(db);
+      const missingImpl = result.issues.filter((i) => i.category === 'missing-implements');
+      expect(missingImpl.length).toBeGreaterThanOrEqual(1);
+      expect(missingImpl[0].message).toContain("implements 'CustomInterface'");
+    });
+
+    it('builtin interface skipped for missing-implements', () => {
+      const fileId = insertFile('/src/a.ts');
+      insertDefinition(fileId, 'MyClass', 'class', {
+        implements: ['Iterable', 'Iterator', 'PromiseLike'],
+      });
+
+      const result = checkRelationshipCoverage(db);
+      const missingImpl = result.issues.filter((i) => i.category === 'missing-implements');
+      expect(missingImpl).toHaveLength(0);
+    });
   });
 
   // ============================================================
@@ -317,6 +349,85 @@ describe('coverage-checker', () => {
       expect(result.passed).toBe(true);
       expect(result.stats.totalDefinitions).toBe(2);
     });
+
+    it('broken chain: disconnected steps detected', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+      const modC = db.modules.insert(rootId, 'c', 'C');
+      const modD = db.modules.insert(rootId, 'd', 'D');
+
+      // A→B then C→D (no connection between B and C/D)
+      const int1 = db.interactions.insert(modA, modB);
+      const int2 = db.interactions.insert(modC, modD);
+
+      const flowId = db.flows.insert('Broken Flow', 'broken-flow');
+      db.flows.addStep(flowId, int1);
+      db.flows.addStep(flowId, int2);
+
+      const result = checkFlowQuality(db);
+      const brokenChain = result.issues.filter((i) => i.category === 'broken-chain');
+      expect(brokenChain.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('connected chain: no broken-chain issue', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+      const modC = db.modules.insert(rootId, 'c', 'C');
+
+      // A→B then B→C (connected)
+      const int1 = db.interactions.insert(modA, modB);
+      const int2 = db.interactions.insert(modB, modC);
+
+      const flowId = db.flows.insert('Connected Flow', 'connected-flow');
+      db.flows.addStep(flowId, int1);
+      db.flows.addStep(flowId, int2);
+
+      const result = checkFlowQuality(db);
+      const brokenChain = result.issues.filter((i) => i.category === 'broken-chain');
+      expect(brokenChain).toHaveLength(0);
+    });
+
+    it('entry mismatch: entry module != first step from_module', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+      const modC = db.modules.insert(rootId, 'c', 'C');
+
+      const int1 = db.interactions.insert(modB, modC);
+
+      // Entry point is modA but first step starts from modB
+      const flowId = db.flows.insert('Mismatch Flow', 'mismatch-flow', { entryPointModuleId: modA });
+      db.flows.addStep(flowId, int1);
+
+      const result = checkFlowQuality(db);
+      const mismatch = result.issues.filter((i) => i.category === 'entry-mismatch');
+      expect(mismatch.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('entry not in module: entry_point_id not member of entry module', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+      const fileA = insertFile('/src/a.ts');
+      const fileB = insertFile('/src/b.ts');
+      const defA = insertDefinition(fileA, 'funcA');
+      const defB = insertDefinition(fileB, 'funcB', 'function', { line: 1 });
+      db.modules.assignSymbol(defA, modA);
+      db.modules.assignSymbol(defB, modB);
+
+      // Flow's entry point is defB but entry module is modA (defB is not in modA)
+      db.flows.insert('Wrong Entry', 'wrong-entry', {
+        entryPointModuleId: modA,
+        entryPointId: defB,
+      });
+
+      const result = checkFlowQuality(db);
+      const entryNotInModule = result.issues.filter((i) => i.category === 'entry-not-in-module');
+      expect(entryNotInModule.length).toBeGreaterThanOrEqual(1);
+      expect(entryNotInModule[0].fixData?.action).toBe('null-entry-point');
+    });
   });
 
   // ============================================================
@@ -380,6 +491,249 @@ describe('coverage-checker', () => {
       const result = checkModuleAssignments(db);
       const nonExported = result.issues.filter((i) => i.category === 'non-exported-in-shared');
       expect(nonExported).toHaveLength(0);
+    });
+
+    it('unassigned definitions reported as info', () => {
+      const rootId = db.modules.ensureRoot();
+      db.modules.insert(rootId, 'mod', 'Mod');
+      const fileId = insertFile('/src/a.ts');
+      insertDefinition(fileId, 'unassignedFunc');
+
+      const result = checkModuleAssignments(db);
+      const unassigned = result.issues.filter((i) => i.category === 'unassigned-definition');
+      expect(unassigned.length).toBeGreaterThanOrEqual(1);
+      expect(unassigned[0].severity).toBe('info');
+    });
+
+    it('all assigned → no unassigned issues', () => {
+      const rootId = db.modules.ensureRoot();
+      const modId = db.modules.insert(rootId, 'mod', 'Mod');
+      const fileId = insertFile('/src/a.ts');
+      const defId = insertDefinition(fileId, 'assignedFunc');
+      db.modules.assignSymbol(defId, modId);
+
+      const result = checkModuleAssignments(db);
+      const unassigned = result.issues.filter((i) => i.category === 'unassigned-definition');
+      expect(unassigned).toHaveLength(0);
+    });
+  });
+
+  // ============================================================
+  // checkReferentialIntegrity
+  // ============================================================
+
+  describe('checkReferentialIntegrity', () => {
+    it('clean state passes', () => {
+      const result = checkReferentialIntegrity(db);
+      expect(result.passed).toBe(true);
+      expect(result.issues).toHaveLength(0);
+    });
+
+    it('ghost relationship detected (delete definition after creating relationship)', () => {
+      const fileId = insertFile('/src/a.ts');
+      const def1 = insertDefinition(fileId, 'funcA');
+      const def2 = insertDefinition(fileId, 'funcB', 'function', { line: 20, endLine: 30 });
+      db.relationships.set(def1, def2, 'calls', 'uses');
+
+      // Delete def2 to create orphan — disable FK enforcement
+      (db as any).conn.pragma('foreign_keys = OFF');
+      (db as any).conn.prepare('DELETE FROM definitions WHERE id = ?').run(def2);
+      (db as any).conn.pragma('foreign_keys = ON');
+
+      const result = checkReferentialIntegrity(db);
+      expect(result.passed).toBe(false);
+      const ghostRels = result.issues.filter((i) => i.category === 'ghost-relationship');
+      expect(ghostRels.length).toBeGreaterThanOrEqual(1);
+      expect(ghostRels[0].fixData?.action).toBe('remove-ghost');
+    });
+
+    it('ghost member detected (delete definition after module assignment)', () => {
+      const rootId = db.modules.ensureRoot();
+      const modId = db.modules.insert(rootId, 'mod', 'Mod');
+      const fileId = insertFile('/src/a.ts');
+      const defId = insertDefinition(fileId, 'funcA');
+      db.modules.assignSymbol(defId, modId);
+
+      // Delete definition to create orphan member
+      (db as any).conn.pragma('foreign_keys = OFF');
+      (db as any).conn.prepare('DELETE FROM definitions WHERE id = ?').run(defId);
+      (db as any).conn.pragma('foreign_keys = ON');
+
+      const result = checkReferentialIntegrity(db);
+      expect(result.passed).toBe(false);
+      const ghostMembers = result.issues.filter((i) => i.category === 'ghost-member');
+      expect(ghostMembers.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('ghost entry point detected (flow references deleted definition)', () => {
+      const rootId = db.modules.ensureRoot();
+      const modId = db.modules.insert(rootId, 'mod', 'Mod');
+      const fileId = insertFile('/src/a.ts');
+      const defId = insertDefinition(fileId, 'funcA');
+      db.modules.assignSymbol(defId, modId);
+
+      db.flows.insert('Flow', 'flow', { entryPointModuleId: modId, entryPointId: defId });
+
+      // Delete definition to create ghost entry point
+      (db as any).conn.pragma('foreign_keys = OFF');
+      (db as any).conn.prepare('DELETE FROM definitions WHERE id = ?').run(defId);
+      (db as any).conn.pragma('foreign_keys = ON');
+
+      const result = checkReferentialIntegrity(db);
+      expect(result.passed).toBe(false);
+      const ghostEntries = result.issues.filter((i) => i.category === 'ghost-entry-point');
+      expect(ghostEntries.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('ghost interaction detected (interaction references deleted module)', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+      db.interactions.insert(modA, modB);
+
+      // Delete modB to create ghost interaction
+      (db as any).conn.pragma('foreign_keys = OFF');
+      (db as any).conn.prepare('DELETE FROM modules WHERE id = ?').run(modB);
+      (db as any).conn.pragma('foreign_keys = ON');
+
+      const result = checkReferentialIntegrity(db);
+      expect(result.passed).toBe(false);
+      const ghostInteractions = result.issues.filter((i) => i.category === 'ghost-interaction');
+      expect(ghostInteractions.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('ghost subflow detected (subflow step references deleted flow)', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+
+      const flow1 = db.flows.insert('Parent', 'parent', { entryPointModuleId: modA });
+      const flow2 = db.flows.insert('Child', 'child', { entryPointModuleId: modA });
+      db.flows.addSubflowSteps(flow1, [flow2]);
+
+      // Delete child flow to create ghost subflow
+      (db as any).conn.pragma('foreign_keys = OFF');
+      (db as any).conn.prepare('DELETE FROM flows WHERE id = ?').run(flow2);
+      (db as any).conn.pragma('foreign_keys = ON');
+
+      const result = checkReferentialIntegrity(db);
+      expect(result.passed).toBe(false);
+      const ghostSubflows = result.issues.filter((i) => i.category === 'ghost-subflow');
+      expect(ghostSubflows.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('ghost entry module detected (flow references deleted module)', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+
+      db.flows.insert('Flow', 'flow', { entryPointModuleId: modA });
+
+      // Delete module to create ghost entry module
+      (db as any).conn.pragma('foreign_keys = OFF');
+      (db as any).conn.prepare('DELETE FROM modules WHERE id = ?').run(modA);
+      (db as any).conn.pragma('foreign_keys = ON');
+
+      const result = checkReferentialIntegrity(db);
+      expect(result.passed).toBe(false);
+      const ghostEntryModules = result.issues.filter((i) => i.category === 'ghost-entry-module');
+      expect(ghostEntryModules.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ============================================================
+  // checkInteractionQuality
+  // ============================================================
+
+  describe('checkInteractionQuality', () => {
+    it('no interactions → passes', () => {
+      const result = checkInteractionQuality(db);
+      expect(result.passed).toBe(true);
+      expect(result.issues).toHaveLength(0);
+    });
+
+    it('self-loop detected and fixable', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      db.interactions.insert(modA, modA);
+
+      const result = checkInteractionQuality(db);
+      const selfLoops = result.issues.filter((i) => i.category === 'self-loop-interaction');
+      expect(selfLoops.length).toBeGreaterThanOrEqual(1);
+      expect(selfLoops[0].fixData?.action).toBe('remove-interaction');
+      expect(result.passed).toBe(false);
+    });
+
+    it('false bidirectional detected when no reverse call edge', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+
+      // Create a bidirectional interaction but no reverse call graph edge exists
+      db.interactions.insert(modA, modB, { direction: 'bi' });
+
+      const result = checkInteractionQuality(db);
+      const falseBidi = result.issues.filter((i) => i.category === 'false-bidirectional');
+      expect(falseBidi.length).toBeGreaterThanOrEqual(1);
+      expect(falseBidi[0].fixData?.action).toBe('set-direction-uni');
+    });
+
+    it('ungrounded inferred detected when no import and no call edge', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+
+      // Create an inferred interaction with no static evidence
+      db.interactions.insert(modA, modB, { source: 'llm-inferred' });
+
+      const result = checkInteractionQuality(db);
+      const ungrounded = result.issues.filter((i) => i.category === 'ungrounded-inferred');
+      expect(ungrounded.length).toBeGreaterThanOrEqual(1);
+      expect(ungrounded[0].fixData?.action).toBe('remove-interaction');
+    });
+
+    it('symbol mismatch detected when symbols list has wrong names', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+
+      // Assign a member to modB
+      const fileB = insertFile('/src/b.ts');
+      const defB = insertDefinition(fileB, 'realFunc');
+      db.modules.assignSymbol(defB, modB);
+
+      // Create interaction with wrong symbol names
+      db.interactions.insert(modA, modB, { symbols: ['nonExistentFunc', 'anotherFake'] });
+
+      const result = checkInteractionQuality(db);
+      const mismatch = result.issues.filter((i) => i.category === 'interaction-symbol-mismatch');
+      expect(mismatch.length).toBeGreaterThanOrEqual(1);
+      expect(mismatch[0].fixData?.action).toBe('rebuild-symbols');
+    });
+
+    it('clean interactions → passes', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+
+      // Create a simple clean interaction
+      db.interactions.insert(modA, modB);
+
+      const result = checkInteractionQuality(db);
+      expect(result.passed).toBe(true);
+      const selfLoops = result.issues.filter((i) => i.category === 'self-loop-interaction');
+      expect(selfLoops).toHaveLength(0);
+    });
+
+    it('no-import-path detected for AST interaction', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+
+      // Create AST interaction between modules with no import path
+      db.interactions.insert(modA, modB, { source: 'ast' });
+
+      const result = checkInteractionQuality(db);
+      const noImport = result.issues.filter((i) => i.category === 'no-import-path');
+      expect(noImport.length).toBeGreaterThanOrEqual(1);
     });
   });
 });

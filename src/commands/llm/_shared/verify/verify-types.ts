@@ -10,9 +10,22 @@ export interface VerificationIssue {
   message: string;
   suggestion?: string;
   fixData?: {
-    action: 'set-pure-false' | 'change-relationship-type' | 'move-to-test-module' | 'remove-flow';
+    action:
+      | 'set-pure-false'
+      | 'change-relationship-type'
+      | 'move-to-test-module'
+      | 'remove-flow'
+      | 'remove-ghost'
+      | 'remove-interaction'
+      | 'rebuild-symbols'
+      | 'set-direction-uni'
+      | 'null-entry-point';
     targetDefinitionId?: number;
     expectedType?: string;
+    interactionId?: number;
+    flowId?: number;
+    ghostTable?: string;
+    ghostRowId?: number;
   };
 }
 

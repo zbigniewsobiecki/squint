@@ -22,7 +22,7 @@ import {
   logVerbose,
   logWarning,
 } from './_shared/llm-utils.js';
-import { checkFlowQuality } from './_shared/verify/coverage-checker.js';
+import { checkFlowQuality, checkReferentialIntegrity } from './_shared/verify/coverage-checker.js';
 import {
   AtomicFlowBuilder,
   EntryPointDetector,
@@ -618,7 +618,14 @@ export default class Flows extends BaseLlmCommand {
       this.log('');
     }
 
+    // Run referential integrity check first
+    const ghostResult = checkReferentialIntegrity(db);
     const result = checkFlowQuality(db);
+
+    // Merge ghost issues
+    result.issues.unshift(...ghostResult.issues);
+    result.stats.structuralIssueCount += ghostResult.stats.structuralIssueCount;
+    if (!ghostResult.passed) result.passed = false;
 
     if (!isJson) {
       const errorIssues = result.issues.filter((i) => i.severity === 'error');
@@ -665,20 +672,41 @@ export default class Flows extends BaseLlmCommand {
       }
     }
 
-    // Auto-fix: remove orphan-entry-point and empty flows
+    // Auto-fix
     if (shouldFix && !dryRun) {
+      let fixed = 0;
+
+      // Fix remove-flow issues
       const removableIssues = result.issues.filter((i) => i.fixData?.action === 'remove-flow');
-      if (removableIssues.length > 0) {
-        let fixed = 0;
-        for (const issue of removableIssues) {
-          if (issue.fixData?.targetDefinitionId) {
-            const deleted = db.flows.delete(issue.fixData.targetDefinitionId);
-            if (deleted) fixed++;
-          }
+      for (const issue of removableIssues) {
+        if (issue.fixData?.targetDefinitionId) {
+          const deleted = db.flows.delete(issue.fixData.targetDefinitionId);
+          if (deleted) fixed++;
         }
-        if (!isJson) {
-          this.log(chalk.green(`  Fixed: removed ${fixed} problematic flows`));
+      }
+
+      // Fix null-entry-point issues
+      const entryPointIssues = result.issues.filter((i) => i.fixData?.action === 'null-entry-point');
+      for (const issue of entryPointIssues) {
+        if (issue.fixData?.flowId) {
+          const updated = db.flows.update(issue.fixData.flowId, {
+            entryPointId: undefined,
+          });
+          if (updated) fixed++;
         }
+      }
+
+      // Fix ghost row issues
+      const ghostIssues = result.issues.filter((i) => i.fixData?.action === 'remove-ghost');
+      for (const issue of ghostIssues) {
+        if (issue.fixData?.ghostTable && issue.fixData?.ghostRowId) {
+          const deleted = db.deleteGhostRow(issue.fixData.ghostTable, issue.fixData.ghostRowId);
+          if (deleted) fixed++;
+        }
+      }
+
+      if (fixed > 0 && !isJson) {
+        this.log(chalk.green(`  Fixed: ${fixed} issues auto-corrected`));
       }
     }
 

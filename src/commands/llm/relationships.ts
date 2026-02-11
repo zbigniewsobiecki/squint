@@ -20,7 +20,7 @@ import {
   buildRelationshipUserPrompt,
 } from './_shared/prompts.js';
 import { verifyRelationshipContent } from './_shared/verify/content-verifier.js';
-import { checkRelationshipCoverage } from './_shared/verify/coverage-checker.js';
+import { checkReferentialIntegrity, checkRelationshipCoverage } from './_shared/verify/coverage-checker.js';
 import type { VerifyReport } from './_shared/verify/verify-types.js';
 
 interface JsonIterationOutput {
@@ -341,12 +341,21 @@ export default class Relationships extends BaseLlmCommand {
       this.log('');
     }
 
+    // Referential integrity preamble
+    const ghostResult = checkReferentialIntegrity(db);
+
     // Phase 1: Coverage + structural checks
     if (!isJson) {
       this.log(chalk.bold('Phase 1: Coverage & Structural Check'));
     }
 
     const phase1 = checkRelationshipCoverage(db);
+
+    // Merge ghost issues into phase1
+    phase1.issues.unshift(...ghostResult.issues);
+    phase1.stats.structuralIssueCount += ghostResult.stats.structuralIssueCount;
+    if (!ghostResult.passed) phase1.passed = false;
+
     const report: VerifyReport = { phase1 };
 
     if (!isJson) {
@@ -387,6 +396,24 @@ export default class Relationships extends BaseLlmCommand {
         this.log(chalk.red(`  ✗ ${phase1.stats.structuralIssueCount} structural issues found`));
       }
       this.log('');
+    }
+
+    // Auto-fix: ghost rows
+    if (shouldFix && !dryRun) {
+      const ghostIssues = phase1.issues.filter((i) => i.fixData?.action === 'remove-ghost');
+      if (ghostIssues.length > 0) {
+        let ghostFixed = 0;
+        for (const issue of ghostIssues) {
+          if (issue.fixData?.ghostTable && issue.fixData?.ghostRowId) {
+            const deleted = db.deleteGhostRow(issue.fixData.ghostTable, issue.fixData.ghostRowId);
+            if (deleted) ghostFixed++;
+          }
+        }
+        if (ghostFixed > 0 && !isJson) {
+          this.log(chalk.green(`  Fixed: removed ${ghostFixed} ghost rows`));
+          this.log('');
+        }
+      }
     }
 
     // Auto-fix: clean stale files if --fix
