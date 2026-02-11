@@ -83,6 +83,7 @@ infrastructure,"Internal Infrastructure","Internal plumbing","internal-db-connec
       expect(result.features[2].flowSlugs).toEqual(['admin-views-dashboard']);
 
       expect(result.features[3].slug).toBe('infrastructure');
+      expect(result.orphanedSlugs).toHaveLength(0);
     });
 
     it('handles pipe-delimited flow_slugs correctly', () => {
@@ -168,40 +169,45 @@ rest,"Rest","Everything else","user-views-vehicle|user-creates-vehicle|admin-vie
   // parseFeatureCSV — validation errors
   // ============================================
   describe('parseFeatureCSV validation', () => {
-    it('rejects hallucinated flow slugs', () => {
+    it('filters hallucinated flow slugs but keeps feature with valid ones', () => {
       const csv = `feature_slug,feature_name,feature_description,flow_slugs
 customer-management,"Customer Management","CRUD","user-views-customer|user-creates-customer|user-updates-customer|user-deletes-customer|user-teleports-customer"
 rest,"Rest","Everything else","user-views-vehicle|user-creates-vehicle|admin-views-dashboard|internal-db-connection"`;
 
       const result = FeatureGrouper.parseFeatureCSV(csv, VALID_SLUGS);
 
-      expect(result.errors.length).toBeGreaterThan(0);
-      expect(result.errors.some((e) => e.includes('Unknown flow slugs') && e.includes('user-teleports-customer'))).toBe(
-        true
-      );
+      // Feature is kept with valid slugs only
+      expect(result.features).toHaveLength(2);
+      expect(result.features[0].flowSlugs).not.toContain('user-teleports-customer');
+      expect(result.features[0].flowSlugs).toHaveLength(4);
+      // Error notes the filtering
+      expect(result.errors.some((e) => e.includes('Filtered 1 unknown flow slugs'))).toBe(true);
     });
 
-    it('rejects multiple hallucinated slugs in single feature', () => {
+    it('skips feature when all slugs are hallucinated', () => {
       const csv = `feature_slug,feature_name,feature_description,flow_slugs
 bad,"Bad","Bogus","fake-flow-a|fake-flow-b"
 good,"Good","Real","user-views-customer|user-creates-customer|user-updates-customer|user-deletes-customer|user-views-vehicle|user-creates-vehicle|admin-views-dashboard|internal-db-connection"`;
 
       const result = FeatureGrouper.parseFeatureCSV(csv, VALID_SLUGS);
 
-      expect(result.errors.some((e) => e.includes('fake-flow-a') && e.includes('fake-flow-b'))).toBe(true);
+      // "bad" feature skipped (no valid slugs), "good" feature kept
+      expect(result.features).toHaveLength(1);
+      expect(result.features[0].slug).toBe('good');
+      expect(result.errors.some((e) => e.includes('No valid flow slugs after filtering'))).toBe(true);
     });
 
-    it('detects orphaned flows (not assigned to any feature)', () => {
+    it('returns orphaned flows in orphanedSlugs (not as errors)', () => {
       const csv = `feature_slug,feature_name,feature_description,flow_slugs
 customer-management,"Customer Management","CRUD","user-views-customer|user-creates-customer"`;
 
       const result = FeatureGrouper.parseFeatureCSV(csv, VALID_SLUGS);
 
-      expect(result.errors.length).toBeGreaterThan(0);
-      expect(result.errors.some((e) => e.includes('Orphaned flows'))).toBe(true);
-      // Should mention specific orphaned slugs
-      expect(result.errors.some((e) => e.includes('user-updates-customer'))).toBe(true);
-      expect(result.errors.some((e) => e.includes('user-deletes-customer'))).toBe(true);
+      // Orphans are returned as orphanedSlugs, not errors
+      expect(result.orphanedSlugs).toContain('user-updates-customer');
+      expect(result.orphanedSlugs).toContain('user-deletes-customer');
+      expect(result.orphanedSlugs).toContain('user-views-vehicle');
+      expect(result.errors.some((e) => e.includes('Orphaned'))).toBe(false);
     });
 
     it('detects duplicate flow assignments across features', () => {
@@ -288,7 +294,8 @@ feat,"Feature","desc","flow-a"`;
 
       const result = FeatureGrouper.parseFeatureCSV(csv, new Set());
 
-      expect(result.errors.some((e) => e.includes('Unknown flow slugs'))).toBe(true);
+      expect(result.errors.some((e) => e.includes('No valid flow slugs after filtering'))).toBe(true);
+      expect(result.features).toHaveLength(0);
     });
   });
 

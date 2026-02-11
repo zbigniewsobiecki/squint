@@ -452,6 +452,35 @@ assignment,87,project.frontend.hooks.sales
 }
 
 /**
+ * Build the system prompt for aggressive branch pushdown.
+ * Unlike rebalance (conservative), this pushes ALL direct members to children.
+ */
+export function buildBranchPushdownSystemPrompt(): string {
+  return `You are a software architect pushing symbols from a parent module down to its children.
+
+## Your Task
+A module has both direct members AND child modules. Every symbol should be moved to
+the most appropriate child module. Only leave a symbol in the parent if NONE of the
+children are even remotely relevant.
+
+## Output Format
+Respond with **only** a CSV table. Include a row for EVERY symbol you want to move.
+
+\`\`\`csv
+type,symbol_id,module_path
+assignment,42,project.frontend.hooks.customers
+\`\`\`
+
+## Guidelines
+- Move EVERY symbol to the most appropriate child module
+- When choosing between children, prefer the child whose members share the same file or directory
+- Consider symbol name, kind, and file path
+- Module paths must match one of the child modules listed below
+- Only leave a symbol in the parent if absolutely none of the children fit
+- CRITICAL: Output a row for every symbol. Do not skip any.`;
+}
+
+/**
  * Build the user prompt for ancestor rebalancing.
  */
 export function buildRebalanceUserPrompt(

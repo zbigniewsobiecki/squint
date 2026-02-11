@@ -23,6 +23,7 @@ import {
   type TreeGenerationContext,
   buildAssignmentSystemPrompt,
   buildAssignmentUserPrompt,
+  buildBranchPushdownSystemPrompt,
   buildDeepenSystemPrompt,
   buildDeepenUserPrompt,
   buildRebalanceSystemPrompt,
@@ -84,6 +85,10 @@ export default class Modules extends BaseLlmCommand {
     'max-unassigned-pct': Flags.integer({
       default: 5,
       description: 'Maximum % of symbols allowed to remain unassigned',
+    }),
+    'max-depth': Flags.integer({
+      default: 7,
+      description: 'Maximum module tree depth (prevents over-nesting during deepening)',
     }),
     'max-modules': Flags.integer({
       default: 0,
@@ -736,7 +741,8 @@ assignment,42,project.frontend.screens.login
             flags,
             isJson,
             verbose,
-            llmLogOptions
+            llmLogOptions,
+            true // includeSelf: push branch's own members to children
           );
           totalRebalanced += rebalanced;
         } catch (error) {
@@ -750,6 +756,7 @@ assignment,42,project.frontend.screens.login
 
     // Step 2: Split leaf modules (budget consumed)
     const maxIterations = 5; // Safety limit to prevent infinite loops
+    const maxDepth = flags['max-depth'] as number;
     let iteration = 0;
     let hitModuleLimit = false;
 
@@ -757,13 +764,21 @@ assignment,42,project.frontend.screens.login
       iteration++;
 
       // Query leaf modules exceeding threshold (largest first)
-      const largeLeaves = dryRun
+      const allLargeLeaves = dryRun
         ? db.modules.getModulesExceedingThreshold(threshold)
         : db.modules.getLeafModulesExceedingThreshold(threshold);
 
+      // Filter out modules already at max depth
+      const largeLeaves = allLargeLeaves.filter((m) => m.depth < maxDepth);
+      if (largeLeaves.length < allLargeLeaves.length && verbose && !isJson) {
+        this.log(
+          chalk.gray(`  Skipped ${allLargeLeaves.length - largeLeaves.length} modules at max depth ${maxDepth}`)
+        );
+      }
+
       if (largeLeaves.length === 0) {
         if (verbose && !isJson) {
-          this.log(chalk.gray(`  Iteration ${iteration}: All leaf modules under threshold`));
+          this.log(chalk.gray(`  Iteration ${iteration}: All leaf modules under threshold or at max depth`));
         }
         break;
       }
@@ -911,6 +926,14 @@ assignment,42,project.frontend.screens.login
       this.log(chalk.yellow(`  Warning: Reached max iterations (${maxIterations})`));
     }
 
+    // Deterministic fallback: push remaining branch members to children by file/directory cohort
+    if (!dryRun) {
+      const fallbackPushed = this.pushdownBranchMembersFallback(db, isJson, verbose);
+      if (fallbackPushed > 0) {
+        totalRebalanced += fallbackPushed;
+      }
+    }
+
     if (dryRun) {
       if (isJson) {
         this.log(
@@ -947,11 +970,18 @@ assignment,42,project.frontend.screens.login
     flags: Record<string, unknown>,
     isJson: boolean,
     verbose: boolean,
-    llmLogOptions: LlmLogOptions
+    llmLogOptions: LlmLogOptions,
+    includeSelf = false
   ): Promise<number> {
     // Walk up from the deepened module to collect ancestor paths (excluding root "project")
     const segments = deepenedModulePath.split('.');
     const ancestorPaths: string[] = [];
+
+    // Include the module's own path for branch pushdown
+    if (includeSelf) {
+      ancestorPaths.push(deepenedModulePath);
+    }
+
     for (let i = segments.length - 1; i >= 1; i--) {
       const ancestorPath = segments.slice(0, i).join('.');
       if (ancestorPath === 'project') break; // don't rebalance from root
@@ -989,8 +1019,8 @@ assignment,42,project.frontend.screens.login
 
     if (newSubModules.length === 0) return 0;
 
-    // Call LLM for rebalancing
-    const systemPrompt = buildRebalanceSystemPrompt();
+    // Call LLM for rebalancing — use aggressive prompt for branch pushdown
+    const systemPrompt = includeSelf ? buildBranchPushdownSystemPrompt() : buildRebalanceSystemPrompt();
     const userPrompt = buildRebalanceUserPrompt(ancestorSymbols, newSubModules);
 
     logLlmRequest(this, `rebalance-${deepenedModulePath}`, systemPrompt, userPrompt, llmLogOptions);
@@ -1286,6 +1316,138 @@ assignment,42,project.frontend.screens.login
     }
 
     return tier1Count + tier2Count;
+  }
+
+  /**
+   * Deterministic fallback: push direct members of branch modules to their children
+   * using file/directory cohort voting. Loops until no more progress.
+   */
+  private pushdownBranchMembersFallback(
+    db: ReturnType<typeof import('../_shared/index.js').openDatabase> extends Promise<infer T> ? T : never,
+    isJson: boolean,
+    verbose: boolean
+  ): number {
+    let totalPushed = 0;
+    let progress = true;
+
+    while (progress) {
+      progress = false;
+      const branchModules = db.modules.getBranchModulesWithDirectMembers(0);
+      if (branchModules.length === 0) break;
+
+      for (const branch of branchModules) {
+        const children = db.modules.getChildren(branch.id);
+        if (children.length === 0) continue;
+
+        // Build file/directory vote maps from children's members
+        const fileVotes = new Map<string, Map<number, number>>();
+        const dirVotes = new Map<string, Map<number, number>>();
+
+        for (const child of children) {
+          const childMembers = db.modules.getMemberInfo(child.id);
+          for (const member of childMembers) {
+            // File votes
+            let fv = fileVotes.get(member.filePath);
+            if (!fv) {
+              fv = new Map();
+              fileVotes.set(member.filePath, fv);
+            }
+            fv.set(child.id, (fv.get(child.id) ?? 0) + 1);
+
+            // Directory votes
+            const dir = path.dirname(member.filePath);
+            if (dir) {
+              let dv = dirVotes.get(dir);
+              if (!dv) {
+                dv = new Map();
+                dirVotes.set(dir, dv);
+              }
+              dv.set(child.id, (dv.get(child.id) ?? 0) + 1);
+            }
+          }
+        }
+
+        // Resolve majority child per file
+        const fileMajority = new Map<string, number>();
+        for (const [filePath, votes] of fileVotes) {
+          let bestId = -1;
+          let bestCount = 0;
+          for (const [childId, count] of votes) {
+            if (count > bestCount) {
+              bestId = childId;
+              bestCount = count;
+            }
+          }
+          if (bestId >= 0) fileMajority.set(filePath, bestId);
+        }
+
+        // Resolve majority child per directory
+        const dirMajority = new Map<string, number>();
+        for (const [dir, votes] of dirVotes) {
+          let bestId = -1;
+          let bestCount = 0;
+          for (const [childId, count] of votes) {
+            if (count > bestCount) {
+              bestId = childId;
+              bestCount = count;
+            }
+          }
+          if (bestId >= 0) dirMajority.set(dir, bestId);
+        }
+
+        const childById = new Map(children.map((c) => [c.id, c]));
+
+        for (const member of branch.members) {
+          const symIsTest = isTestFile(member.filePath);
+          let targetChildId: number | undefined;
+
+          // Tier 1: Same-file majority
+          const fileTarget = fileMajority.get(member.filePath);
+          if (fileTarget !== undefined) {
+            const child = childById.get(fileTarget);
+            if (child && (!symIsTest || child.isTest)) {
+              targetChildId = fileTarget;
+            }
+          }
+
+          // Tier 2: Same-directory majority (walk up)
+          if (targetChildId === undefined) {
+            let dir = path.dirname(member.filePath);
+            while (dir && dir !== '.' && dir !== '/') {
+              const dirTarget = dirMajority.get(dir);
+              if (dirTarget !== undefined) {
+                const child = childById.get(dirTarget);
+                if (child && (!symIsTest || child.isTest)) {
+                  targetChildId = dirTarget;
+                  break;
+                }
+              }
+              dir = path.dirname(dir);
+            }
+          }
+
+          // Tier 3: Single child — move unconditionally
+          if (targetChildId === undefined && children.length === 1) {
+            const child = children[0];
+            if (!symIsTest || child.isTest) {
+              targetChildId = child.id;
+            }
+          }
+
+          if (targetChildId !== undefined) {
+            db.modules.assignSymbol(member.definitionId, targetChildId);
+            totalPushed++;
+            progress = true;
+          }
+        }
+      }
+    }
+
+    if (totalPushed > 0 && verbose && !isJson) {
+      this.log(chalk.gray(`  Branch pushdown fallback: ${totalPushed} symbols pushed to children`));
+    }
+
+    return totalPushed;
   }
 
   /**

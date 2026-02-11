@@ -7,8 +7,10 @@ import {
   type TreeGenerationContext,
   buildAssignmentSystemPrompt,
   buildAssignmentUserPrompt,
+  buildBranchPushdownSystemPrompt,
   buildDeepenSystemPrompt,
   buildDeepenUserPrompt,
+  buildRebalanceSystemPrompt,
   buildTreeSystemPrompt,
   buildTreeUserPrompt,
   formatModuleTreeForPrompt,
@@ -377,6 +379,66 @@ describe('module-prompts', () => {
       expect(prompt).toContain('Members (2):');
       expect(prompt).toContain('#42: useCustomers (function) from /src/hooks/customers.ts');
       expect(prompt).toContain('#43: useSales (function) from /src/hooks/sales.ts');
+    });
+  });
+
+  // ============================================
+  // Ancestor Rebalancing
+  // ============================================
+  describe('buildRebalanceSystemPrompt', () => {
+    it('returns a non-empty prompt', () => {
+      const prompt = buildRebalanceSystemPrompt();
+      expect(prompt.length).toBeGreaterThan(100);
+    });
+
+    it('includes CSV format instructions', () => {
+      const prompt = buildRebalanceSystemPrompt();
+      expect(prompt).toContain('type,symbol_id,module_path');
+    });
+
+    it('is conservative — advises leaving ambiguous symbols in place', () => {
+      const prompt = buildRebalanceSystemPrompt();
+      expect(prompt).toContain('Only move a symbol if the new sub-module is a clearly better fit');
+      expect(prompt).toContain('When in doubt, leave the symbol where it is');
+    });
+  });
+
+  // ============================================
+  // Branch Pushdown
+  // ============================================
+  describe('buildBranchPushdownSystemPrompt', () => {
+    it('returns a non-empty prompt', () => {
+      const prompt = buildBranchPushdownSystemPrompt();
+      expect(prompt.length).toBeGreaterThan(100);
+    });
+
+    it('includes CSV format instructions', () => {
+      const prompt = buildBranchPushdownSystemPrompt();
+      expect(prompt).toContain('type,symbol_id,module_path');
+    });
+
+    it('is aggressive — instructs moving every symbol', () => {
+      const prompt = buildBranchPushdownSystemPrompt();
+      expect(prompt).toContain('Move EVERY symbol');
+      expect(prompt).toContain('Output a row for every symbol');
+    });
+
+    it('instructs preferring file/directory cohort for child selection', () => {
+      const prompt = buildBranchPushdownSystemPrompt();
+      expect(prompt).toContain('prefer the child whose members share the same file or directory');
+    });
+
+    it('allows leaving symbols only when no child fits', () => {
+      const prompt = buildBranchPushdownSystemPrompt();
+      expect(prompt).toContain('Only leave a symbol in the parent if absolutely none of the children fit');
+    });
+
+    it('differs from the conservative rebalance prompt', () => {
+      const aggressive = buildBranchPushdownSystemPrompt();
+      const conservative = buildRebalanceSystemPrompt();
+      expect(aggressive).not.toEqual(conservative);
+      // Aggressive should NOT contain the conservative hedging
+      expect(aggressive).not.toContain('When in doubt, leave the symbol where it is');
     });
   });
 });

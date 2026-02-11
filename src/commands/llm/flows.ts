@@ -80,6 +80,10 @@ export default class Flows extends BaseLlmCommand {
       description: 'Auto-fix structural issues found during verification',
       default: false,
     }),
+    'max-validator-flows': Flags.integer({
+      description: 'Maximum new flows the validator can add per pass',
+      default: 30,
+    }),
   };
 
   protected async execute(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
@@ -221,12 +225,31 @@ export default class Flows extends BaseLlmCommand {
         );
 
         // Post-validation gate: reject flows whose actionType doesn't exist in entry point definitions
-        const verifiedFlows = this.filterUnverifiedFlows(validatorFlows, entryPointModules);
+        let verifiedFlows = this.filterUnverifiedFlows(validatorFlows, entryPointModules);
         const gateRejects = validatorFlows.length - verifiedFlows.length;
         if (gateRejects > 0) {
           logVerbose(
             this,
             `  Rejected ${gateRejects} flows: actionType not found in entry point definitions`,
+            verbose,
+            isJson
+          );
+        }
+
+        // Cap validator output to prevent flow explosion
+        const maxValidatorFlows = flags['max-validator-flows'] as number;
+        if (verifiedFlows.length > maxValidatorFlows) {
+          // Rank by quality: grounded flows (with actionType+targetEntity) first, then by interaction count
+          verifiedFlows.sort((a, b) => {
+            const aScore = (a.actionType ? 2 : 0) + (a.targetEntity ? 1 : 0) + Math.min(a.interactionIds.length, 5);
+            const bScore = (b.actionType ? 2 : 0) + (b.targetEntity ? 1 : 0) + Math.min(b.interactionIds.length, 5);
+            return bScore - aScore;
+          });
+          const dropped = verifiedFlows.length - maxValidatorFlows;
+          verifiedFlows = verifiedFlows.slice(0, maxValidatorFlows);
+          logVerbose(
+            this,
+            `  Capped validator flows: kept ${maxValidatorFlows}, dropped ${dropped} lowest-quality`,
             verbose,
             isJson
           );

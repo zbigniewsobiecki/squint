@@ -357,6 +357,55 @@ export class InteractionRepository {
   }
 
   // ============================================================
+  // Import-Based Module Pair Detection
+  // ============================================================
+
+  /**
+   * Get module pairs connected by imports but with no existing interaction.
+   * Fills the gap between call-graph detection (calls only) and the full import graph.
+   */
+  getImportOnlyModulePairs(): Array<{
+    fromModuleId: number;
+    toModuleId: number;
+    symbols: string[];
+    weight: number;
+    isTypeOnly: boolean;
+  }> {
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+
+    const stmt = this.db.prepare(`
+      SELECT
+        from_mm.module_id as fromModuleId,
+        to_mm.module_id as toModuleId,
+        GROUP_CONCAT(DISTINCT to_d.name) as symbolNames,
+        COUNT(DISTINCT s.id) as weight,
+        MIN(i.is_type_only) as isTypeOnly
+      FROM module_members from_mm
+      JOIN definitions from_d ON from_mm.definition_id = from_d.id
+      JOIN imports i ON i.from_file_id = from_d.file_id
+      JOIN symbols s ON s.reference_id = i.id AND s.definition_id IS NOT NULL
+      JOIN definitions to_d ON s.definition_id = to_d.id
+      JOIN module_members to_mm ON to_mm.definition_id = to_d.id
+      WHERE from_mm.module_id != to_mm.module_id
+        AND NOT EXISTS (
+          SELECT 1 FROM interactions
+          WHERE from_module_id = from_mm.module_id
+            AND to_module_id = to_mm.module_id
+        )
+      GROUP BY from_mm.module_id, to_mm.module_id
+    `);
+
+    return (stmt.all() as any[]).map((row) => ({
+      fromModuleId: row.fromModuleId,
+      toModuleId: row.toModuleId,
+      symbols: row.symbolNames ? row.symbolNames.split(',') : [],
+      weight: row.weight,
+      isTypeOnly: row.isTypeOnly === 1,
+    }));
+  }
+
+  // ============================================================
   // Import Path & Validation Methods
   // ============================================================
 

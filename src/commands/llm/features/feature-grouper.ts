@@ -6,7 +6,13 @@
 import type { Command } from '@oclif/core';
 import type { Flow, Module } from '../../../db/schema.js';
 import { extractCsvContent, parseRow, splitCsvLines } from '../_shared/csv-utils.js';
-import { type LlmLogOptions, completeWithLogging, logLlmRequest, logLlmResponse } from '../_shared/llm-utils.js';
+import {
+  type LlmLogOptions,
+  completeWithLogging,
+  logLlmRequest,
+  logLlmResponse,
+  logWarning,
+} from '../_shared/llm-utils.js';
 import type { LlmOptions } from '../flows/types.js';
 import type { FeatureSuggestion } from './types.js';
 
@@ -69,11 +75,47 @@ export class FeatureGrouper {
 
       const retryResult = FeatureGrouper.parseFeatureCSV(retryResponse, flowSlugs);
       if (retryResult.errors.length > 0) {
-        throw new Error(`Feature grouping validation failed after retry: ${retryResult.errors.join('; ')}`);
+        // Accept partial results if we got any features
+        if (retryResult.features.length > 0) {
+          logWarning(
+            this.command,
+            `Feature grouping had issues after retry: ${retryResult.errors.join('; ')}`,
+            this.isJson
+          );
+          if (retryResult.orphanedSlugs.length > 0) {
+            retryResult.features.push({
+              name: 'Uncategorized',
+              slug: 'uncategorized',
+              description: 'Flows not assigned to a specific feature by the LLM',
+              flowSlugs: retryResult.orphanedSlugs,
+            });
+          }
+          return retryResult.features;
+        }
+        // Only throw if we got zero usable features
+        throw new Error(`Feature grouping produced no usable results: ${retryResult.errors.join('; ')}`);
+      }
+      // Retry succeeded but may have orphans
+      if (retryResult.orphanedSlugs.length > 0) {
+        retryResult.features.push({
+          name: 'Uncategorized',
+          slug: 'uncategorized',
+          description: 'Flows not assigned to a specific feature by the LLM',
+          flowSlugs: retryResult.orphanedSlugs,
+        });
       }
       return retryResult.features;
     }
 
+    // Success path — handle orphans with catch-all
+    if (result.orphanedSlugs.length > 0) {
+      result.features.push({
+        name: 'Uncategorized',
+        slug: 'uncategorized',
+        description: 'Flows not assigned to a specific feature by the LLM',
+        flowSlugs: result.orphanedSlugs,
+      });
+    }
     return result.features;
   }
 
@@ -156,7 +198,7 @@ Output the corrected CSV only.`;
   static parseFeatureCSV(
     response: string,
     validFlowSlugs: Set<string>
-  ): { features: FeatureSuggestion[]; errors: string[] } {
+  ): { features: FeatureSuggestion[]; errors: string[]; orphanedSlugs: string[] } {
     const errors: string[] = [];
     const features: FeatureSuggestion[] = [];
     const assignedSlugs = new Set<string>();
@@ -166,7 +208,7 @@ Output the corrected CSV only.`;
 
     if (lines.length === 0) {
       errors.push('Empty CSV content');
-      return { features, errors };
+      return { features, errors, orphanedSlugs: [] };
     }
 
     // Skip header row
@@ -202,33 +244,34 @@ Output the corrected CSV only.`;
         continue;
       }
 
-      // Check for hallucinated flow slugs
+      // Filter out hallucinated flow slugs but keep the feature
+      const validSlugs = flowSlugs.filter((s) => validFlowSlugs.has(s));
       const hallucinated = flowSlugs.filter((s) => !validFlowSlugs.has(s));
       if (hallucinated.length > 0) {
-        errors.push(`Feature "${name}": Unknown flow slugs: ${hallucinated.join(', ')}`);
+        errors.push(`Feature "${name}": Filtered ${hallucinated.length} unknown flow slugs`);
+      }
+      if (validSlugs.length === 0) {
+        errors.push(`Feature "${name}": No valid flow slugs after filtering`);
         continue;
       }
 
       // Check for duplicate assignments
-      const duplicates = flowSlugs.filter((s) => assignedSlugs.has(s));
+      const duplicates = validSlugs.filter((s) => assignedSlugs.has(s));
       if (duplicates.length > 0) {
         errors.push(`Feature "${name}": Flow slugs already assigned to another feature: ${duplicates.join(', ')}`);
         continue;
       }
 
-      for (const s of flowSlugs) {
+      for (const s of validSlugs) {
         assignedSlugs.add(s);
       }
 
-      features.push({ name, slug, description, flowSlugs });
+      features.push({ name, slug, description, flowSlugs: validSlugs });
     }
 
-    // Check for orphaned flows
-    const orphaned = [...validFlowSlugs].filter((s) => !assignedSlugs.has(s));
-    if (orphaned.length > 0) {
-      errors.push(`Orphaned flows not assigned to any feature: ${orphaned.join(', ')}`);
-    }
+    // Check for orphaned flows — soft issue, caller will handle
+    const orphanedSlugs = [...validFlowSlugs].filter((s) => !assignedSlugs.has(s));
 
-    return { features, errors };
+    return { features, errors, orphanedSlugs };
   }
 }

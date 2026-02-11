@@ -11,6 +11,7 @@
 
 import chalk from 'chalk';
 import type { IndexDatabase } from '../../db/database.js';
+import type { Flow } from '../../db/schema.js';
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from './_shared/base-llm-command.js';
 import { logSection, logStep, logVerbose, logWarning } from './_shared/llm-utils.js';
@@ -54,8 +55,8 @@ export default class Features extends BaseLlmCommand {
     // Step 1: Read all persisted flows from DB
     logStep(this, 1, 'Reading Flows from Database', isJson);
 
-    const flows = db.flows.getAll();
-    if (flows.length === 0) {
+    const allFlows = db.flows.getAll();
+    if (allFlows.length === 0) {
       if (isJson) {
         this.log(JSON.stringify({ error: 'No flows found', hint: 'Run llm flows first' }));
       } else {
@@ -65,7 +66,16 @@ export default class Features extends BaseLlmCommand {
       return;
     }
 
-    logVerbose(this, `Found ${flows.length} flows`, verbose, isJson);
+    // Only send tier-1+ flows to LLM — tier-0 atomics are assigned post-hoc
+    const llmFlows = allFlows.filter((f) => f.tier >= 1);
+    const atomicFlows = allFlows.filter((f) => f.tier === 0);
+
+    logVerbose(
+      this,
+      `Found ${allFlows.length} flows: ${llmFlows.length} for LLM grouping, ${atomicFlows.length} atomic for post-hoc assignment`,
+      verbose,
+      isJson
+    );
 
     // Step 2: Read module tree from DB for architectural context
     logStep(this, 2, 'Reading Module Tree for Context', isJson);
@@ -77,7 +87,7 @@ export default class Features extends BaseLlmCommand {
     logStep(this, 3, 'Grouping Flows into Features (LLM)', isJson);
 
     const featureGrouper = new FeatureGrouper(this, isJson);
-    const featureSuggestions = await featureGrouper.groupFlowsIntoFeatures(flows, modules, model, llmOptions);
+    const featureSuggestions = await featureGrouper.groupFlowsIntoFeatures(llmFlows, modules, model, llmOptions);
 
     logVerbose(this, `LLM grouped flows into ${featureSuggestions.length} features`, verbose, isJson);
 
@@ -85,7 +95,12 @@ export default class Features extends BaseLlmCommand {
     logStep(this, 4, 'Persisting Features', isJson);
 
     if (!dryRun) {
-      this.persistFeatures(db, featureSuggestions, flows, verbose, isJson);
+      this.persistFeatures(db, featureSuggestions, llmFlows, verbose, isJson);
+
+      // Auto-assign tier-0 flows to features based on entry point module overlap
+      if (atomicFlows.length > 0) {
+        this.assignAtomicFlows(db, featureSuggestions, atomicFlows, llmFlows, verbose, isJson);
+      }
     }
 
     // Output results
@@ -120,6 +135,78 @@ export default class Features extends BaseLlmCommand {
         logWarning(this, `Skipping feature: ${feature.name}`, isJson);
       }
     }
+  }
+
+  /**
+   * Auto-assign tier-0 (atomic) flows to features based on shared entry point modules.
+   * Unmatched atomics go to an "Internal Infrastructure" catch-all feature.
+   */
+  private assignAtomicFlows(
+    db: IndexDatabase,
+    features: FeatureSuggestion[],
+    atomicFlows: Flow[],
+    llmFlows: Flow[],
+    verbose: boolean,
+    isJson: boolean
+  ): void {
+    // Build: flow slug -> feature slug (from LLM-assigned flows)
+    const flowSlugToFeature = new Map<string, string>();
+    for (const feat of features) {
+      for (const slug of feat.flowSlugs) {
+        flowSlugToFeature.set(slug, feat.slug);
+      }
+    }
+
+    // Build: entryPointModuleId -> feature slug (first feature wins)
+    const moduleToFeature = new Map<number, string>();
+    for (const flow of llmFlows) {
+      if (flow.entryPointModuleId && flowSlugToFeature.has(flow.slug)) {
+        const featSlug = flowSlugToFeature.get(flow.slug)!;
+        if (!moduleToFeature.has(flow.entryPointModuleId)) {
+          moduleToFeature.set(flow.entryPointModuleId, featSlug);
+        }
+      }
+    }
+
+    // Resolve feature slug -> feature DB ID
+    const allFeatures = db.features.getAll();
+    const featureSlugToId = new Map(allFeatures.map((f) => [f.slug, f.id]));
+
+    let assigned = 0;
+    const unassigned: Flow[] = [];
+
+    for (const flow of atomicFlows) {
+      const featSlug = flow.entryPointModuleId ? moduleToFeature.get(flow.entryPointModuleId) : undefined;
+      const featId = featSlug ? featureSlugToId.get(featSlug) : undefined;
+      if (featId) {
+        db.features.addFlows(featId, [flow.id]);
+        assigned++;
+      } else {
+        unassigned.push(flow);
+      }
+    }
+
+    // Create catch-all for remaining atomics
+    if (unassigned.length > 0) {
+      let infraId = featureSlugToId.get('internal-infrastructure');
+      if (!infraId) {
+        infraId = db.features.insert('Internal Infrastructure', 'internal-infrastructure', {
+          description: 'Atomic internal flows not associated with a specific product feature',
+        });
+      }
+      db.features.addFlows(
+        infraId,
+        unassigned.map((f) => f.id)
+      );
+      assigned += unassigned.length;
+    }
+
+    logVerbose(
+      this,
+      `  Assigned ${assigned} atomic flows to features (${unassigned.length} to Internal Infrastructure)`,
+      verbose,
+      isJson
+    );
   }
 
   private outputResults(features: FeatureSuggestion[], dryRun: boolean, isJson: boolean): void {

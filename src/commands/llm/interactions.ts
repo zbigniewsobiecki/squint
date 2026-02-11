@@ -180,6 +180,41 @@ export default class Interactions extends BaseLlmCommand {
       }
     }
 
+    // Step 2: Import-based interactions (deterministic — no LLM)
+    let importBasedCount = 0;
+    if (!dryRun) {
+      const importPairs = db.interactions.getImportOnlyModulePairs();
+      if (importPairs.length > 0) {
+        if (!isJson) {
+          this.log('');
+          this.log(chalk.bold('Step 2: Import-Based Interactions (Deterministic)'));
+        }
+
+        for (const pair of importPairs) {
+          const pattern =
+            testModuleIds.has(pair.fromModuleId) || testModuleIds.has(pair.toModuleId) ? 'test-internal' : 'business';
+          try {
+            db.interactions.upsert(pair.fromModuleId, pair.toModuleId, {
+              weight: pair.weight,
+              pattern,
+              symbols: pair.symbols.length > 0 ? pair.symbols.slice(0, 20) : undefined,
+              semantic: pair.isTypeOnly
+                ? `Type/interface dependency (${pair.symbols.slice(0, 3).join(', ')}${pair.symbols.length > 3 ? '...' : ''})`
+                : `Imports ${pair.symbols.slice(0, 3).join(', ')}${pair.symbols.length > 3 ? ` (+${pair.symbols.length - 3} more)` : ''}`,
+              source: 'ast-import',
+            });
+            importBasedCount++;
+          } catch {
+            // Skip if already exists
+          }
+        }
+
+        if (!isJson) {
+          this.log(chalk.green(`  Added ${importBasedCount} import-based interactions`));
+        }
+      }
+    }
+
     // Compute process groups for Steps 3 and 4
     const processGroups = computeProcessGroups(db);
 
@@ -395,6 +430,7 @@ export default class Interactions extends BaseLlmCommand {
     const result = {
       totalEdges: enrichedEdges.length,
       interactions: interactions.length,
+      importBasedInteractions: importBasedCount,
       inferredInteractions: inferredCount,
       businessCount,
       utilityCount,
@@ -410,6 +446,7 @@ export default class Interactions extends BaseLlmCommand {
       this.log(`AST interactions created: ${result.interactions}`);
       this.log(`  Business: ${businessCount}`);
       this.log(`  Utility: ${utilityCount}`);
+      this.log(`Import-based interactions: ${result.importBasedInteractions}`);
       this.log(`LLM-inferred interactions: ${result.inferredInteractions}`);
 
       // Display relationship coverage

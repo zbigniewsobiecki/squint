@@ -155,7 +155,7 @@ export interface CallGraphEdge {
 /**
  * Interaction source type: how the interaction was detected.
  */
-export type InteractionSource = 'ast' | 'llm-inferred';
+export type InteractionSource = 'ast' | 'ast-import' | 'llm-inferred';
 
 /**
  * Interaction: Point-to-point module connection.
