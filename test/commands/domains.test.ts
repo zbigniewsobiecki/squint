@@ -133,9 +133,9 @@ describe('domains commands', () => {
     });
   });
 
-  describe('domains add', () => {
-    it('adds a new domain', () => {
-      const output = runCommand(`domains add customer -d ${dbPath} --description "Customer management"`);
+  describe('domains create', () => {
+    it('creates a new domain', () => {
+      const output = runCommand(`domains create customer -d ${dbPath} --description "Customer management"`);
       expect(output).toContain('Registered domain customer');
 
       const verifyDb = new IndexDatabase(dbPath);
@@ -146,7 +146,7 @@ describe('domains commands', () => {
     });
 
     it('supports --description flag', () => {
-      const output = runCommand(`domains add billing -d ${dbPath} --description "Billing system"`);
+      const output = runCommand(`domains create billing -d ${dbPath} --description "Billing system"`);
       expect(output).toContain('Registered domain billing');
 
       const verifyDb = new IndexDatabase(dbPath);
@@ -156,8 +156,8 @@ describe('domains commands', () => {
     });
 
     it('reports error for duplicate domain', () => {
-      runCommand(`domains add auth -d ${dbPath} --description First`);
-      const output = runCommand(`domains add auth -d ${dbPath} --description Second`);
+      runCommand(`domains create auth -d ${dbPath} --description First`);
+      const output = runCommand(`domains create auth -d ${dbPath} --description Second`);
       expect(output).toContain('already exists');
     });
   });
@@ -191,7 +191,7 @@ describe('domains commands', () => {
     });
 
     it('reports error if new name exists', () => {
-      runCommand(`domains add payment -d ${dbPath} --description Payment`);
+      runCommand(`domains create payment -d ${dbPath} --description Payment`);
       const output = runCommand(`domains rename -d ${dbPath} auth payment`);
       expect(output).toContain('already exists');
     });
@@ -223,7 +223,7 @@ describe('domains commands', () => {
     });
   });
 
-  describe('domains remove', () => {
+  describe('domains delete', () => {
     beforeEach(() => {
       const setupDb = new IndexDatabase(dbPath);
       setupDb.domains.add('deprecated', 'Old domain');
@@ -231,8 +231,8 @@ describe('domains commands', () => {
       setupDb.close();
     });
 
-    it('removes an unused domain', () => {
-      const output = runCommand(`domains remove -d ${dbPath} deprecated`);
+    it('deletes an unused domain', () => {
+      const output = runCommand(`domains delete -d ${dbPath} deprecated`);
       expect(output).toContain('Removed domain deprecated');
 
       const verifyDb = new IndexDatabase(dbPath);
@@ -240,14 +240,14 @@ describe('domains commands', () => {
       verifyDb.close();
     });
 
-    it('refuses to remove domain in use without --force', () => {
-      const output = runCommand(`domains remove -d ${dbPath} auth`);
+    it('refuses to delete domain in use without --force', () => {
+      const output = runCommand(`domains delete -d ${dbPath} auth`);
       expect(output).toContain('Cannot remove domain');
       expect(output).toContain('still use it');
     });
 
-    it('removes domain in use with --force', () => {
-      const output = runCommand(`domains remove -d ${dbPath} auth --force`);
+    it('deletes domain in use with --force', () => {
+      const output = runCommand(`domains delete -d ${dbPath} auth --force`);
       expect(output).toContain('Removed domain auth');
       expect(output).toContain('Warning');
       expect(output).toContain('symbol');
