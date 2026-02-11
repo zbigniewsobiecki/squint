@@ -7,7 +7,7 @@
     [
       "@semantic-release/exec",
       {
-        "publishCmd": "LEFTHOOK=0 pnpm publish --access public --no-git-checks"
+        "publishCmd": "pnpm publish --access public --no-git-checks"
       }
     ],
     [
