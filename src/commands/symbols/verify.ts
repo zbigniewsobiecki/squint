@@ -342,7 +342,7 @@ export default class Verify extends BaseLlmCommand {
     const enhanced: EnhancedSymbol[] = [];
 
     for (const symbol of symbols) {
-      const sourceCode = await readSourceAsString(symbol.filePath, symbol.line, symbol.endLine);
+      const sourceCode = await readSourceAsString(db.resolveFilePath(symbol.filePath), symbol.line, symbol.endLine);
 
       // Get dependencies with all their metadata
       const deps = db.dependencies.getWithMetadata(symbol.id, aspects[0]);

@@ -1,9 +1,8 @@
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import type { IndexDatabase } from '../../db/database.js';
-import { SharedFlags, SymbolResolver, openDatabase, withDatabase } from '../_shared/index.js';
+import { SharedFlags, SymbolResolver, openDatabase, resolveDbPath, withDatabase } from '../_shared/index.js';
 
 interface BatchEntry {
   name?: string;
@@ -99,9 +98,9 @@ export default class Set extends Command {
 
   private async runBatchMode(
     key: string,
-    flags: { database: string; json: boolean; 'input-file'?: string; batch?: boolean }
+    flags: { database: string | undefined; json: boolean; 'input-file'?: string; batch?: boolean }
   ): Promise<void> {
-    const dbPath = path.resolve(flags.database);
+    const dbPath = resolveDbPath(flags.database, this);
 
     // Read input from file or stdin
     let input = '';

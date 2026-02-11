@@ -456,7 +456,7 @@ export default class RelationshipsAnnotate extends BaseLlmCommand {
       const def = db.definitions.getById(sourceId);
       if (!def) continue;
 
-      const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
+      const sourceCode = await readSourceAsString(db.resolveFilePath(def.filePath), def.line, def.endLine);
       const sourceMeta = db.metadata.get(sourceId);
 
       let sourceDomains: string[] | null = null;
@@ -522,7 +522,7 @@ export default class RelationshipsAnnotate extends BaseLlmCommand {
       const def = db.definitions.getById(sourceId);
       if (!def) continue;
 
-      const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
+      const sourceCode = await readSourceAsString(db.resolveFilePath(def.filePath), def.line, def.endLine);
       const sourceMeta = db.metadata.get(sourceId);
 
       let sourceDomains: string[] | null = null;

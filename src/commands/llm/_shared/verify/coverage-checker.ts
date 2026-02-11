@@ -178,7 +178,7 @@ function checkPureAnnotations(db: IndexDatabase): VerificationIssue[] {
     if (def.kind === 'interface' || def.kind === 'type' || def.kind === 'enum') continue;
 
     try {
-      const source = readSourceSync(def.filePath, def.line, def.endLine);
+      const source = readSourceSync(db.resolveFilePath(def.filePath), def.line, def.endLine);
       if (!source) continue;
       const impureReasons = detectImpurePatterns(source);
       if (impureReasons.length > 0) {
@@ -339,7 +339,7 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
     const allFiles = db.files.getAll();
     for (const file of allFiles) {
       try {
-        fs.accessSync(file.path);
+        fs.accessSync(db.resolveFilePath(file.path));
       } catch {
         issues.push({
           filePath: file.path,

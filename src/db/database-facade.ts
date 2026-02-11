@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import Database from 'better-sqlite3';
 import type { Definition } from '../parser/definition-extractor.js';
 import type { FileReference, ImportedSymbol, SymbolUsage } from '../parser/reference-extractor.js';
@@ -24,6 +25,7 @@ import { RelationshipRepository } from './repositories/relationship-repository.j
  */
 export class IndexDatabase implements IIndexWriter {
   private conn: Database.Database;
+  private _sourceDirectory: string | null = null;
 
   // Repositories
   public readonly files: FileRepository;
@@ -84,6 +86,33 @@ export class IndexDatabase implements IIndexWriter {
 
   close(): void {
     this.conn.close();
+  }
+
+  // ============================================================
+  // Path Helpers
+  // ============================================================
+
+  getSourceDirectory(): string {
+    if (!this._sourceDirectory) {
+      try {
+        const row = this.conn.prepare('SELECT value FROM metadata WHERE key = ?').get('source_directory') as
+          | { value: string }
+          | undefined;
+        this._sourceDirectory = row?.value ?? process.cwd();
+      } catch {
+        this._sourceDirectory = process.cwd();
+      }
+    }
+    return this._sourceDirectory;
+  }
+
+  resolveFilePath(dbPath: string): string {
+    if (path.isAbsolute(dbPath)) return dbPath; // backward compat for old DBs
+    return path.resolve(this.getSourceDirectory(), dbPath);
+  }
+
+  toRelativePath(absolutePath: string): string {
+    return path.relative(this.getSourceDirectory(), absolutePath);
   }
 
   // ============================================================
@@ -351,7 +380,7 @@ export class IndexDatabase implements IIndexWriter {
 
     for (const file of allFiles) {
       try {
-        fs.accessSync(file.path);
+        fs.accessSync(this.resolveFilePath(file.path));
       } catch {
         stalePaths.push(file.path);
       }

@@ -38,7 +38,7 @@ export function indexParsedFiles(
 
   for (const [filePath, parsed] of parsedFiles) {
     const fileId = db.insertFile({
-      path: filePath,
+      path: path.relative(sourceDirectory, filePath),
       language: parsed.language,
       contentHash: computeHash(parsed.content),
       sizeBytes: parsed.sizeBytes,
@@ -150,8 +150,8 @@ export default class Parse extends Command {
 
   static override examples = [
     '<%= config.bin %> ./src',
-    '<%= config.bin %> ./src --output ./index.db',
-    '<%= config.bin %> ./src -o ./index.db',
+    '<%= config.bin %> ./src --output ./.squint.db',
+    '<%= config.bin %> ./src -o ./.squint.db',
   ];
 
   static override args = {
@@ -164,8 +164,7 @@ export default class Parse extends Command {
   static override flags = {
     output: Flags.string({
       char: 'o',
-      description: 'Output database file path',
-      default: 'index.db',
+      description: 'Output database file path (default: <directory>/.squint.db)',
     }),
   };
 
@@ -173,7 +172,7 @@ export default class Parse extends Command {
     const { args, flags } = await this.parse(Parse);
 
     const directory = path.resolve(args.directory);
-    const outputPath = path.resolve(flags.output);
+    const outputPath = flags.output ? path.resolve(flags.output) : path.join(directory, '.squint.db');
 
     // Check if directory exists
     try {

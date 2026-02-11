@@ -30,7 +30,7 @@ export abstract class BaseLlmCommand extends Command {
   public async run(): Promise<void> {
     const { flags } = await this.parse(this.constructor as typeof BaseLlmCommand);
 
-    const db = await openDatabase(flags.database as string, this);
+    const db = await openDatabase(flags.database as string | undefined, this);
     const ctx: LlmContext = {
       db,
       isJson: flags.json as boolean,

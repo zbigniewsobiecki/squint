@@ -79,8 +79,12 @@ export default class Next extends Command {
       // Enhance with source code
       const enhancedRelationships: EnhancedRelationshipWithSource[] = [];
       for (const rel of relationships) {
-        const fromSourceCode = await readSourceAsString(rel.fromFilePath, rel.fromLine, rel.fromEndLine);
-        const toSourceCode = await readSourceAsString(rel.toFilePath, rel.toLine, rel.toEndLine);
+        const fromSourceCode = await readSourceAsString(
+          db.resolveFilePath(rel.fromFilePath),
+          rel.fromLine,
+          rel.fromEndLine
+        );
+        const toSourceCode = await readSourceAsString(db.resolveFilePath(rel.toFilePath), rel.toLine, rel.toEndLine);
 
         enhancedRelationships.push({
           ...rel,

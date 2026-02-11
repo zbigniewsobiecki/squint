@@ -117,7 +117,7 @@ export async function verifyAnnotationContent(
       const def = db.definitions.getById(defId);
       if (!def) continue;
 
-      const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
+      const sourceCode = await readSourceAsString(db.resolveFilePath(def.filePath), def.line, def.endLine);
       const annotations = db.metadata.get(defId);
 
       symbolsForPrompt.push({
@@ -241,7 +241,7 @@ export async function verifyRelationshipContent(
       const def = db.definitions.getById(fromId);
       if (!def) continue;
 
-      const sourceCode = await readSourceAsString(def.filePath, def.line, def.endLine);
+      const sourceCode = await readSourceAsString(db.resolveFilePath(def.filePath), def.line, def.endLine);
       const rels = byFromId.get(fromId) || [];
 
       groupsForPrompt.push({

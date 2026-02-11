@@ -16,7 +16,6 @@ export const SharedFlags = {
   database: Flags.string({
     char: 'd',
     description: 'Path to the index database',
-    default: 'index.db',
   }),
 
   symbolName: Flags.string({

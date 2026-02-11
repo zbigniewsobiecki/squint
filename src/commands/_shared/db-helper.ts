@@ -1,19 +1,55 @@
-import fs from 'node:fs/promises';
+import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import type { Command } from '@oclif/core';
 import chalk from 'chalk';
 import { IndexDatabase } from '../../db/database.js';
 
+const DB_NAME = '.squint.db';
+
+/**
+ * Walk up from CWD looking for a .squint.db file.
+ * Returns the absolute path if found, null otherwise.
+ */
+function findDatabase(): string | null {
+  let dir = process.cwd();
+  while (true) {
+    const candidate = path.join(dir, DB_NAME);
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null; // reached filesystem root
+    dir = parent;
+  }
+}
+
+/**
+ * Resolve the database path from the flag value.
+ * If no explicit path is given, walk up from CWD to find .squint.db.
+ */
+export function resolveDbPath(dbPath: string | undefined, command: Command): string {
+  if (dbPath) return path.resolve(dbPath);
+  const found = findDatabase();
+  if (!found) {
+    command.error(
+      chalk.red(
+        'No .squint.db found in current directory or any parent.\n' +
+          "Run 'squint parse <directory>' first, or specify -d <path>."
+      )
+    );
+  }
+  return found;
+}
+
 /**
  * Open a database, checking that it exists first.
  * Throws Command.error() if the database doesn't exist or can't be opened.
  */
-export async function openDatabase(dbPath: string, command: Command): Promise<IndexDatabase> {
-  const resolvedPath = path.resolve(dbPath);
+export async function openDatabase(dbPath: string | undefined, command: Command): Promise<IndexDatabase> {
+  const resolvedPath = resolveDbPath(dbPath, command);
 
   // Check if database exists
   try {
-    await fs.access(resolvedPath);
+    await fsPromises.access(resolvedPath);
   } catch {
     command.error(
       chalk.red(
@@ -36,7 +72,7 @@ export async function openDatabase(dbPath: string, command: Command): Promise<In
  * Combines database opening and try/finally pattern.
  */
 export async function withDatabase<T>(
-  dbPath: string,
+  dbPath: string | undefined,
   command: Command,
   fn: (db: IndexDatabase) => Promise<T>
 ): Promise<T> {

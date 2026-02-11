@@ -80,7 +80,11 @@ export default class Show extends Command {
       }
 
       // Read source code
-      const sourceCode = await readSourceLines(defDetails.filePath, defDetails.line, defDetails.endLine);
+      const sourceCode = await readSourceLines(
+        db.resolveFilePath(defDetails.filePath),
+        defDetails.line,
+        defDetails.endLine
+      );
 
       // Get call sites with context
       const callSites = await this.getCallSitesWithContext(db, definition.id, flags['context-lines']);
@@ -129,7 +133,7 @@ export default class Show extends Command {
 
     for (const [filePath, fileCallsites] of byFile) {
       // Read file content once using shared utility
-      const fileLines = await readAllLines(filePath);
+      const fileLines = await readAllLines(db.resolveFilePath(filePath));
 
       if (fileLines.length === 0) {
         // File not readable, add callsites without context

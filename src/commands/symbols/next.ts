@@ -74,7 +74,7 @@ export default class Next extends Command {
       const symbols: NextSymbolInfo[] = [];
 
       for (const symbol of result.symbols) {
-        const sourceCode = await readSourceAsString(symbol.filePath, symbol.line, symbol.endLine);
+        const sourceCode = await readSourceAsString(db.resolveFilePath(symbol.filePath), symbol.line, symbol.endLine);
         const dependencies = db.dependencies.getWithMetadata(symbol.id, flags.aspect);
         const unannotatedRels = db.relationships.getUnannotated({ fromDefinitionId: symbol.id, limit: 10 });
         const unannotatedRelationships: UnannotatedRelationship[] = unannotatedRels.map((rel) => ({

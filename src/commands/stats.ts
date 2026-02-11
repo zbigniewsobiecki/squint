@@ -1,7 +1,6 @@
-import path from 'node:path';
 import { Command } from '@oclif/core';
 import chalk from 'chalk';
-import { SharedFlags, outputJsonOrPlain, withDatabase } from './_shared/index.js';
+import { SharedFlags, outputJsonOrPlain, resolveDbPath, withDatabase } from './_shared/index.js';
 import { computeProcessGroups } from './llm/_shared/process-utils.js';
 
 function fmt(n: number): string {
@@ -50,7 +49,7 @@ export default class Stats extends Command {
     const { flags } = await this.parse(Stats);
 
     await withDatabase(flags.database, this, async (db) => {
-      const resolvedPath = path.resolve(flags.database);
+      const resolvedPath = resolveDbPath(flags.database, this);
 
       // ── Parsed ──
       const fileCount = db.files.getCount();

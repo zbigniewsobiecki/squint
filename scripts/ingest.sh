@@ -16,7 +16,7 @@ done
 shift $((OPTIND - 1))
 
 CODEBASE_PATH="${1:?Usage: $0 [-y] [-d] <codebase_path>}"
-DB=$CODEBASE_PATH/index.db
+DB=$CODEBASE_PATH/.squint.db
 
 DEBUG_FLAGS=""
 if $DEBUG; then
@@ -39,24 +39,24 @@ rm -f $DB
 ./bin/run.js parse $CODEBASE_PATH -o $DB 2>&1 | tee -a "$LOG"
 wait_for_enter "parsing done"
 
-./bin/dev.js llm annotate --aspect purpose --aspect domain --aspect pure --model $MODEL -d $DB --batch-size 40 --max-iterations 80 $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
-./bin/dev.js llm annotate --aspect purpose --aspect domain --aspect pure --verify --fix --model $MODEL -d $DB 2>&1 | tee -a "$LOG"
+./bin/dev.js symbols annotate --aspect purpose --aspect domain --aspect pure --model $MODEL -d $DB --batch-size 40 --max-iterations 80 $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+./bin/dev.js symbols verify --fix --model $MODEL -d $DB 2>&1 | tee -a "$LOG"
 wait_for_enter "annotate done"
 
-./bin/dev.js llm relationships --model $MODEL -d $DB --batch-size 40 --max-iterations 80 $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
-./bin/dev.js llm relationships --verify --fix --model $MODEL -d $DB 2>&1 | tee -a "$LOG"
+./bin/dev.js relationships annotate --model $MODEL -d $DB --batch-size 40 --max-iterations 80 $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+./bin/dev.js relationships verify --fix --model $MODEL -d $DB 2>&1 | tee -a "$LOG"
 wait_for_enter "relationships done"
 
-./bin/dev.js llm modules --model $MODEL -d $DB $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
-./bin/dev.js llm modules --verify --fix --model $MODEL -d $DB 2>&1 | tee -a "$LOG"
+./bin/dev.js modules generate --model $MODEL -d $DB $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+./bin/dev.js modules verify --fix --model $MODEL -d $DB 2>&1 | tee -a "$LOG"
 wait_for_enter "modules done"
 
-./bin/dev.js llm interactions -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
-./bin/dev.js llm interactions -d $DB --verify --fix 2>&1 | tee -a "$LOG"
+./bin/dev.js interactions generate -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+./bin/dev.js interactions verify --fix -d $DB 2>&1 | tee -a "$LOG"
 wait_for_enter "interactions done"
 
-./bin/dev.js llm flows -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
-./bin/dev.js llm flows --verify --fix --model $MODEL -d $DB 2>&1 | tee -a "$LOG"
+./bin/dev.js flows generate -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+./bin/dev.js flows verify --fix --model $MODEL -d $DB 2>&1 | tee -a "$LOG"
 wait_for_enter "flows done"
 
-./bin/dev.js llm features -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"
+./bin/dev.js features generate -d $DB --verbose --force --model $MODEL $DEBUG_FLAGS 2>&1 | tee -a "$LOG"

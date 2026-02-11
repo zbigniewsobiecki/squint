@@ -1,8 +1,6 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { Args, Command, Flags } from '@oclif/core';
+import { Args, Command } from '@oclif/core';
 import chalk from 'chalk';
-import { IndexDatabase } from '../../db/database.js';
+import { SharedFlags, withDatabase } from '../_shared/index.js';
 
 export default class Merge extends Command {
   static override description = 'Merge one domain into another (replaces source domain with target in all symbols)';
@@ -18,37 +16,13 @@ export default class Merge extends Command {
   };
 
   static override flags = {
-    database: Flags.string({
-      char: 'd',
-      description: 'Path to the index database',
-      default: 'index.db',
-    }),
+    database: SharedFlags.database,
   };
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(Merge);
 
-    const dbPath = path.resolve(flags.database);
-
-    // Check if database exists
-    try {
-      await fs.access(dbPath);
-    } catch {
-      this.error(
-        chalk.red(`Database file "${dbPath}" does not exist.\nRun 'squint parse <directory>' first to create an index.`)
-      );
-    }
-
-    // Open database
-    let db: IndexDatabase;
-    try {
-      db = new IndexDatabase(dbPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.error(chalk.red(`Failed to open database: ${message}`));
-    }
-
-    try {
+    await withDatabase(flags.database, this, async (db) => {
       // Count symbols before merge
       const symbolsWithFrom = db.domains.getSymbolsByDomain(args.fromName).length;
 
@@ -69,8 +43,6 @@ export default class Merge extends Command {
       if (result.registryRemoved) {
         this.log(chalk.gray(`Removed "${args.fromName}" from registry`));
       }
-    } finally {
-      db.close();
-    }
+    });
   }
 }

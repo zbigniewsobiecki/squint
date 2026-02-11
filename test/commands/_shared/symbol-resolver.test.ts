@@ -54,6 +54,7 @@ describe('SymbolResolver', () => {
           return mockDefinitions.filter((d) => d.name === name);
         }),
       },
+      toRelativePath: vi.fn((absolutePath: string) => absolutePath),
     } as unknown as IndexDatabase;
 
     mockCommand = {

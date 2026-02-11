@@ -102,7 +102,7 @@ describe('indexParsedFiles', () => {
 
     expect(mockDb.insertFile).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: '/project/utils.ts',
+        path: 'utils.ts',
         language: 'typescript',
         sizeBytes: 25,
         modifiedAt: '2024-01-01T00:00:00.000Z',

@@ -61,7 +61,10 @@ export class SymbolResolver {
     // Filter by file if specified
     if (filePath) {
       const resolvedPath = path.resolve(filePath);
-      matches = matches.filter((m) => m.filePath === resolvedPath || m.filePath.endsWith(filePath));
+      const relativePath = this.db.toRelativePath(resolvedPath);
+      matches = matches.filter(
+        (m) => m.filePath === relativePath || m.filePath === resolvedPath || m.filePath.endsWith(filePath)
+      );
 
       if (matches.length === 0) {
         this.command.error(chalk.red(`No symbol "${name}" found in file "${filePath}"`));
@@ -112,7 +115,10 @@ export class SymbolResolver {
     // Filter by file if specified
     if (filePath) {
       const resolvedPath = path.resolve(filePath);
-      matches = matches.filter((m) => m.filePath === resolvedPath || m.filePath.endsWith(filePath));
+      const relativePath = this.db.toRelativePath(resolvedPath);
+      matches = matches.filter(
+        (m) => m.filePath === relativePath || m.filePath === resolvedPath || m.filePath.endsWith(filePath)
+      );
       if (matches.length === 0) return null;
     }
 

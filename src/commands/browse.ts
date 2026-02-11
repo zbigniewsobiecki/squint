@@ -2,7 +2,7 @@ import { exec } from 'node:child_process';
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { createServer, startServer } from '../web/server.js';
-import { SharedFlags, openDatabase } from './_shared/index.js';
+import { SharedFlags, openDatabase, resolveDbPath } from './_shared/index.js';
 
 export default class Browse extends Command {
   static override description = 'Launch interactive code browser for indexed database';
@@ -31,7 +31,8 @@ export default class Browse extends Command {
     const { flags } = await this.parse(Browse);
 
     // Open database
-    this.log(chalk.blue(`Opening database: ${flags.database}`));
+    const dbPathResolved = resolveDbPath(flags.database, this);
+    this.log(chalk.blue(`Opening database: ${dbPathResolved}`));
     const db = await openDatabase(flags.database, this);
 
     // Get stats to verify database is valid

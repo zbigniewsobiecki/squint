@@ -111,7 +111,7 @@ export default class SymbolsList extends Command {
       let fileId: number | null = null;
       if (flags.file) {
         const filePath = path.resolve(flags.file);
-        fileId = db.files.getIdByPath(filePath);
+        fileId = db.files.getIdByPath(db.toRelativePath(filePath)) ?? db.files.getIdByPath(filePath);
         if (fileId === null) {
           this.error(chalk.red(`File "${filePath}" not found in the index.`));
         }
