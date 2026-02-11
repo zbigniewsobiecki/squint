@@ -1,7 +1,15 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import type { IndexDatabase } from '../../db/database.js';
-import { SharedFlags, SymbolResolver, readAllLines, readSourceLines, withDatabase } from '../_shared/index.js';
+import {
+  SharedFlags,
+  SymbolResolver,
+  formatModuleRef,
+  outputJsonOrPlain,
+  readAllLines,
+  readSourceLines,
+  withDatabase,
+} from '../_shared/index.js';
 
 interface CallSiteWithContext {
   filePath: string;
@@ -10,19 +18,6 @@ interface CallSiteWithContext {
   containingFunction: string | null;
   contextLines: string[];
   contextStartLine: number;
-}
-
-interface SymbolInfo {
-  id: number;
-  name: string;
-  kind: string;
-  filePath: string;
-  line: number;
-  endLine: number;
-  isExported: boolean;
-  sourceCode: string[];
-  callSites: CallSiteWithContext[];
-  metadata: Record<string, string>;
 }
 
 export default class Show extends Command {
@@ -92,7 +87,22 @@ export default class Show extends Command {
       // Get metadata
       const metadata = db.metadata.get(definition.id);
 
-      const symbolInfo: SymbolInfo = {
+      // Get module membership
+      const moduleResult = db.modules.getDefinitionModule(definition.id);
+
+      // Get relationships (outgoing and incoming)
+      const outgoingRelationships = db.relationships.getFrom(definition.id);
+      const incomingRelationships = db.relationships.getTo(definition.id);
+
+      // Get dependencies and dependents
+      const dependencies = db.dependencies.getForDefinition(definition.id);
+      const dependents = db.dependencies.getIncoming(definition.id, 10);
+      const dependentCount = db.dependencies.getIncomingCount(definition.id);
+
+      // Get flows involving this definition
+      const flows = db.flows.getFlowsWithDefinition(definition.id);
+
+      const jsonData = {
         id: defDetails.id,
         name: defDetails.name,
         kind: defDetails.kind,
@@ -100,16 +110,65 @@ export default class Show extends Command {
         line: defDetails.line,
         endLine: defDetails.endLine,
         isExported: defDetails.isExported,
+        metadata,
+        module: formatModuleRef(moduleResult),
+        relationships: outgoingRelationships.map((r) => ({
+          toDefinitionId: r.toDefinitionId,
+          toName: r.toName,
+          toKind: r.toKind,
+          relationshipType: r.relationshipType,
+          semantic: r.semantic,
+          toFilePath: r.toFilePath,
+          toLine: r.toLine,
+        })),
+        incomingRelationships: incomingRelationships.map((r) => ({
+          fromDefinitionId: r.fromDefinitionId,
+          fromName: r.fromName,
+          fromKind: r.fromKind,
+          relationshipType: r.relationshipType,
+          semantic: r.semantic,
+          fromFilePath: r.fromFilePath,
+          fromLine: r.fromLine,
+        })),
+        dependencies: dependencies.map((d) => ({
+          id: d.dependencyId,
+          name: d.name,
+          kind: d.kind,
+          filePath: d.filePath,
+          line: d.line,
+        })),
+        dependents: {
+          count: dependentCount,
+          sample: dependents.map((d) => ({
+            id: d.id,
+            name: d.name,
+            kind: d.kind,
+            filePath: d.filePath,
+            line: d.line,
+          })),
+        },
+        flows: flows.map((f) => ({
+          id: f.id,
+          name: f.name,
+          slug: f.slug,
+          stakeholder: f.stakeholder,
+        })),
         sourceCode,
         callSites,
-        metadata,
       };
 
-      if (flags.json) {
-        this.log(JSON.stringify(symbolInfo, null, 2));
-      } else {
-        this.outputPlainText(symbolInfo);
-      }
+      outputJsonOrPlain(this, flags.json, jsonData, () => {
+        this.outputPlainText(
+          jsonData,
+          outgoingRelationships,
+          incomingRelationships,
+          dependencies,
+          dependents,
+          dependentCount,
+          flows,
+          moduleResult
+        );
+      });
     });
   }
 
@@ -181,7 +240,41 @@ export default class Show extends Command {
     return result;
   }
 
-  private outputPlainText(info: SymbolInfo): void {
+  private outputPlainText(
+    info: {
+      id: number;
+      name: string;
+      kind: string;
+      filePath: string;
+      line: number;
+      endLine: number;
+      isExported: boolean;
+      metadata: Record<string, string>;
+      sourceCode: string[];
+      callSites: CallSiteWithContext[];
+    },
+    outgoing: Array<{
+      toName: string;
+      toKind: string;
+      relationshipType: string;
+      semantic: string;
+      toFilePath: string;
+      toLine: number;
+    }>,
+    incoming: Array<{
+      fromName: string;
+      fromKind: string;
+      relationshipType: string;
+      semantic: string;
+      fromFilePath: string;
+      fromLine: number;
+    }>,
+    dependencies: Array<{ name: string; kind: string; filePath: string; line: number }>,
+    dependents: Array<{ name: string; kind: string; filePath: string; line: number }>,
+    dependentCount: number,
+    flows: Array<{ name: string; slug: string; stakeholder: string | null }>,
+    moduleResult: { module: { name: string; fullPath: string } } | null
+  ): void {
     // Definition section
     this.log(chalk.bold('=== Definition ==='));
     this.log('');
@@ -199,6 +292,74 @@ export default class Show extends Command {
       this.log('');
       for (const key of metadataKeys.sort()) {
         this.log(`${key}:`.padEnd(12) + info.metadata[key]);
+      }
+    }
+
+    // Module section
+    if (moduleResult) {
+      this.log('');
+      this.log(chalk.bold('=== Module ==='));
+      this.log('');
+      this.log(`${chalk.cyan(moduleResult.module.name)} ${chalk.gray(`(${moduleResult.module.fullPath})`)}`);
+    }
+
+    // Relationships (outgoing)
+    if (outgoing.length > 0) {
+      this.log('');
+      this.log(chalk.bold(`=== Relationships Outgoing (${outgoing.length}) ===`));
+      this.log('');
+      for (const r of outgoing) {
+        const semantic = r.semantic ? ` "${r.semantic}"` : '';
+        this.log(
+          `  -> ${chalk.cyan(r.toName)} (${r.toKind}) [${r.relationshipType}]${chalk.gray(semantic)} ${chalk.gray(`${r.toFilePath}:${r.toLine}`)}`
+        );
+      }
+    }
+
+    // Relationships (incoming)
+    if (incoming.length > 0) {
+      this.log('');
+      this.log(chalk.bold(`=== Relationships Incoming (${incoming.length}) ===`));
+      this.log('');
+      for (const r of incoming) {
+        const semantic = r.semantic ? ` "${r.semantic}"` : '';
+        this.log(
+          `  <- ${chalk.cyan(r.fromName)} (${r.fromKind}) [${r.relationshipType}]${chalk.gray(semantic)} ${chalk.gray(`${r.fromFilePath}:${r.fromLine}`)}`
+        );
+      }
+    }
+
+    // Dependencies
+    if (dependencies.length > 0) {
+      this.log('');
+      this.log(chalk.bold(`=== Dependencies (${dependencies.length}) ===`));
+      this.log('');
+      for (const d of dependencies) {
+        this.log(`  ${chalk.cyan(d.name)} (${d.kind}) ${chalk.gray(`${d.filePath}:${d.line}`)}`);
+      }
+    }
+
+    // Dependents
+    if (dependentCount > 0) {
+      this.log('');
+      this.log(chalk.bold(`=== Dependents (${dependents.length} of ${dependentCount}) ===`));
+      this.log('');
+      for (const d of dependents) {
+        this.log(`  ${chalk.cyan(d.name)} (${d.kind}) ${chalk.gray(`${d.filePath}:${d.line}`)}`);
+      }
+      if (dependentCount > dependents.length) {
+        this.log(chalk.gray(`  ... and ${dependentCount - dependents.length} more`));
+      }
+    }
+
+    // Flows
+    if (flows.length > 0) {
+      this.log('');
+      this.log(chalk.bold(`=== Flows (${flows.length}) ===`));
+      this.log('');
+      for (const f of flows) {
+        const stakeholder = f.stakeholder ? ` [${f.stakeholder}]` : '';
+        this.log(`  ${chalk.cyan(f.name)} (${f.slug})${chalk.gray(stakeholder)}`);
       }
     }
 

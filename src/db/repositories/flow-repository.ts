@@ -696,6 +696,31 @@ export class FlowRepository {
   }
 
   /**
+   * Get flows that involve a specific definition (as from or to in definition steps).
+   */
+  getFlowsWithDefinition(definitionId: number): Flow[] {
+    ensureFlowsTables(this.db);
+    return this.db
+      .prepare(
+        `SELECT DISTINCT
+          f.id, f.name, f.slug,
+          f.entry_point_module_id as entryPointModuleId,
+          f.entry_point_id as entryPointId,
+          f.entry_path as entryPath,
+          f.stakeholder, f.description,
+          f.action_type as actionType,
+          f.target_entity as targetEntity,
+          f.tier,
+          f.created_at as createdAt
+        FROM flows f
+        JOIN flow_definition_steps fds ON f.id = fds.flow_id
+        WHERE fds.from_definition_id = ? OR fds.to_definition_id = ?
+        ORDER BY f.name`
+      )
+      .all(definitionId, definitionId) as Flow[];
+  }
+
+  /**
    * Get uncovered interactions (not part of any flow).
    */
   getUncoveredInteractions(): InteractionWithPaths[] {

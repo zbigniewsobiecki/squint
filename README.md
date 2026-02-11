@@ -26,6 +26,10 @@ Squint indexes TypeScript and JavaScript source code into an SQLite database, th
   - [files](#files)
   - [hierarchy](#hierarchy)
   - [process-groups](#process-groups)
+- [AI Agent Usage](#ai-agent-usage)
+  - [Exploration Strategy](#exploration-strategy)
+  - [Show Command JSON Schemas](#show-command-json-schemas)
+  - [Example Drill-Down Session](#example-drill-down-session)
 - [Understanding Workflow](#understanding-workflow)
 - [Database Schema](#database-schema)
 - [Development](#development)
@@ -850,6 +854,186 @@ Lists process groups (connected components in the import graph).
 
 ```bash
 squint process-groups
+```
+
+---
+
+## AI Agent Usage
+
+Squint is designed for both human and AI-driven codebase exploration. Every `show` and `list` command supports the `--json` flag, which produces structured JSON output suitable for programmatic consumption by AI agents, scripts, and tooling.
+
+### Exploration Strategy
+
+The recommended approach is a **top-down drill-down**: start with the highest-level overview and progressively narrow focus into specific entities.
+
+1. **Start with overview**: `squint overview --json` returns aggregate stats, the features list, the module tree, and the file tree. This gives the big picture.
+2. **Drill into features**: `squint features show <slug> --json` returns enriched flows (with `stepCount`, `stakeholder`, `entryPath`), modules involved, interactions, and stats.
+3. **Drill into flows**: `squint flows show <slug> --json` returns features, an entry point (with definition details and metadata), ordered interaction steps, modules involved, and the definition trace (function-level call chain).
+4. **Drill into interactions**: `squint interactions show <id> --json` returns module descriptions, resolved symbols (matched to definitions), related interactions from the same source module, flows using this interaction, and features.
+5. **Drill into modules**: `squint modules show <path> --json` returns parent, children, outgoing/incoming interactions, flows, features, and all member symbols.
+6. **Drill into symbols**: `squint symbols show <name> --json` returns module, outgoing/incoming relationships, dependencies, dependents (with count), flows, source code, and call sites.
+7. **Drill into files**: `squint files show <path> --json` returns definitions (enriched with module and metadata), imports, imported-by, and relationships.
+8. **Drill into relationships**: `squint relationships show --from <id> --to <id> --json` returns metadata for both symbols, module context, the module interaction, and flows.
+9. **Drill into domains**: `squint domains show <name> --json` returns symbols, module distribution, and intra-domain relationships.
+
+### Show Command JSON Schemas
+
+Each `show` command returns a JSON object. The schemas below document the top-level keys and their types.
+
+#### `squint features show <id-or-slug> --json`
+
+```json
+{
+  "id": 1,
+  "name": "Authentication",
+  "slug": "authentication",
+  "description": "...",
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "flows": [
+    { "id": 1, "name": "UserLoginFlow", "slug": "user-login", "description": "...", "stakeholder": "user", "entryPath": "POST /api/login", "stepCount": 3 }
+  ],
+  "modulesInvolved": [
+    { "id": 2, "name": "Controllers", "fullPath": "project.api.controllers" }
+  ],
+  "interactions": [
+    { "id": 1, "fromModulePath": "project.api.controllers", "toModulePath": "project.services", "pattern": "business", "semantic": "..." }
+  ],
+  "stats": { "flowCount": 2, "byStakeholder": { "user": 2 } }
+}
+```
+
+#### `squint flows show <identifier> --json`
+
+```json
+{
+  "id": 1, "name": "UserLoginFlow", "slug": "user-login",
+  "stakeholder": "user", "entryPath": "POST /api/login", "description": "...",
+  "steps": [
+    { "stepOrder": 1, "interaction": { "id": 1, "fromModulePath": "...", "toModulePath": "...", "pattern": "business", "semantic": "..." } }
+  ],
+  "features": [{ "id": 1, "name": "Authentication", "slug": "authentication" }],
+  "entryPoint": { "id": 10, "name": "handleLogin", "kind": "function", "filePath": "src/controller.ts", "line": 5, "metadata": { "purpose": "..." } },
+  "modulesInvolved": [{ "id": 2, "name": "Controllers", "fullPath": "project.api.controllers" }],
+  "definitionSteps": [
+    { "stepOrder": 1, "fromDefinitionName": "handleLogin", "toDefinitionName": "authenticate", "fromFilePath": "...", "toFilePath": "..." }
+  ]
+}
+```
+
+#### `squint interactions show <id> --json`
+
+```json
+{
+  "interaction": { "id": 1, "fromModuleId": 2, "toModuleId": 3, "fromModulePath": "...", "toModulePath": "...", "direction": "uni", "pattern": "business", "semantic": "...", "weight": 5, "symbols": ["createUser"] },
+  "fromModuleDescription": "Request handlers",
+  "toModuleDescription": "Business logic",
+  "resolvedSymbols": [{ "name": "createUser", "kind": "function", "filePath": "...", "line": 10 }],
+  "relatedInteractions": [{ "id": 2, "toModulePath": "...", "pattern": "...", "semantic": "...", "weight": 1 }],
+  "flows": [{ "id": 1, "name": "UserLoginFlow", "slug": "user-login" }],
+  "features": [{ "id": 1, "name": "Authentication", "slug": "authentication" }]
+}
+```
+
+#### `squint modules show <name> --json`
+
+```json
+{
+  "id": 2, "name": "Controllers", "fullPath": "project.api.controllers", "description": "...", "depth": 2,
+  "parent": { "id": 1, "name": "API", "fullPath": "project.api" },
+  "children": [{ "id": 5, "name": "Auth", "fullPath": "project.api.controllers.auth", "description": "..." }],
+  "outgoingInteractions": [{ "id": 1, "toModulePath": "...", "pattern": "business", "semantic": "...", "weight": 5 }],
+  "incomingInteractions": [{ "id": 3, "fromModulePath": "...", "pattern": "...", "semantic": "...", "weight": 2 }],
+  "flows": [{ "id": 1, "name": "UserLoginFlow", "slug": "user-login", "stakeholder": "user" }],
+  "features": [{ "id": 1, "name": "Authentication", "slug": "authentication" }],
+  "members": [{ "id": 10, "name": "handleLogin", "kind": "function", "filePath": "...", "line": 5 }]
+}
+```
+
+#### `squint symbols show <name> --json`
+
+```json
+{
+  "id": 10, "name": "handleLogin", "kind": "function", "filePath": "...", "line": 5, "endLine": 15, "isExported": true,
+  "metadata": { "purpose": "...", "domain": "[\"auth\"]", "role": "controller" },
+  "module": { "id": 2, "name": "Controllers", "fullPath": "project.api.controllers" },
+  "relationships": [{ "toDefinitionId": 20, "toName": "authenticate", "toKind": "function", "relationshipType": "calls", "semantic": "...", "toFilePath": "...", "toLine": 10 }],
+  "incomingRelationships": [{ "fromDefinitionId": 5, "fromName": "router", "fromKind": "variable", "relationshipType": "calls", "semantic": "...", "fromFilePath": "...", "fromLine": 3 }],
+  "dependencies": [{ "id": 20, "name": "authenticate", "kind": "function", "filePath": "...", "line": 10 }],
+  "dependents": { "count": 3, "sample": [{ "id": 5, "name": "router", "kind": "variable", "filePath": "...", "line": 3 }] },
+  "flows": [{ "id": 1, "name": "UserLoginFlow", "slug": "user-login", "stakeholder": "user" }],
+  "sourceCode": ["export async function handleLogin(req) {", "  ..."],
+  "callSites": [{ "filePath": "...", "line": 20, "containingFunction": "router", "contextLines": ["..."], "contextStartLine": 18 }]
+}
+```
+
+#### `squint files show <path> --json`
+
+```json
+{
+  "file": { "id": 1, "path": "...", "language": "typescript", "sizeBytes": 1234 },
+  "definitions": [
+    { "id": 10, "name": "handleLogin", "kind": "function", "isExported": true, "line": 5, "endLine": 15, "module": { "id": 2, "name": "Controllers", "fullPath": "..." }, "metadata": { "purpose": "..." } }
+  ],
+  "imports": [{ "source": "./service", "toFilePath": "src/service.ts", "isExternal": false, "isTypeOnly": false }],
+  "importedBy": [{ "id": 2, "path": "src/router.ts", "line": 1 }],
+  "relationships": [{ "fromName": "handleLogin", "toName": "authenticate", "toFilePath": "...", "toLine": 10, "relationshipType": "calls", "semantic": "..." }]
+}
+```
+
+#### `squint relationships show --from <id> --to <id> --json`
+
+```json
+{
+  "relationship": { "id": 1, "fromDefinitionId": 10, "toDefinitionId": 20, "relationshipType": "calls", "semantic": "delegates authentication" },
+  "from": { "id": 10, "name": "handleLogin", "kind": "function", "filePath": "...", "line": 5 },
+  "to": { "id": 20, "name": "authenticate", "kind": "function", "filePath": "...", "line": 10 },
+  "fromMetadata": { "purpose": "...", "domain": "[\"auth\"]" },
+  "toMetadata": { "purpose": "..." },
+  "fromModule": { "id": 2, "name": "Controllers", "fullPath": "project.api.controllers" },
+  "toModule": { "id": 3, "name": "Services", "fullPath": "project.services" },
+  "interaction": { "id": 1, "pattern": "business", "weight": 5, "semantic": "..." },
+  "flows": [{ "id": 1, "name": "UserLoginFlow", "slug": "user-login" }]
+}
+```
+
+#### `squint domains show <name> --json`
+
+```json
+{
+  "domain": { "name": "auth", "description": "Authentication and authorization", "createdAt": "..." },
+  "symbols": [{ "id": 10, "name": "handleLogin", "kind": "function", "filePath": "...", "line": 5, "purpose": "..." }],
+  "moduleDistribution": [{ "id": 2, "name": "Controllers", "fullPath": "project.api.controllers", "count": 3 }],
+  "intraDomainRelationships": [{ "fromName": "handleLogin", "toName": "authenticate", "relationshipType": "calls", "semantic": "..." }]
+}
+```
+
+### Example Drill-Down Session
+
+The following shows a concrete example of how an AI agent would explore a codebase using the top-down approach:
+
+```bash
+# 1. Get the big picture
+squint overview --json
+
+# 2. Explore the "Authentication" feature
+squint features show authentication --json
+# -> See 2 flows, 3 modules involved, 2 interactions
+
+# 3. Drill into the registration flow
+squint flows show user-registration --json
+# -> See entry point handleRegister(), 2 interaction steps, definition trace
+
+# 4. Understand the controller-to-service interaction
+squint interactions show 1 --json
+# -> See resolved symbols, module descriptions, related interactions
+
+# 5. Examine the controller module's role
+squint modules show project.api.controllers --json
+# -> See 3 members, outgoing interactions, flows, features
+
+# 6. Deep-dive into a specific symbol
+squint symbols show handleRegister --json
+# -> See module, relationships, dependencies, dependents, flows, source code
 ```
 
 ---
