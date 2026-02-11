@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type CompleteWithLoggingOptions,
   calculatePercentage,
   createLookup,
   generateUniqueSlug,
@@ -216,6 +217,29 @@ describe('llm-utils', () => {
         processBatch: async (batch) => batch,
       });
       expect(results).toEqual([1, 2]);
+    });
+  });
+
+  // ============================================
+  // CompleteWithLoggingOptions type check
+  // ============================================
+  describe('CompleteWithLoggingOptions', () => {
+    it('accepts maxTokens parameter', () => {
+      // Type-level test: verify that maxTokens is a valid option
+      const opts: Partial<CompleteWithLoggingOptions> = {
+        maxTokens: 4096,
+      };
+      expect(opts.maxTokens).toBe(4096);
+    });
+
+    it('maxTokens is optional', () => {
+      // Type-level test: verify maxTokens can be omitted
+      const opts: Partial<CompleteWithLoggingOptions> = {
+        model: 'test',
+        systemPrompt: 'sys',
+        userPrompt: 'user',
+      };
+      expect(opts.maxTokens).toBeUndefined();
     });
   });
 

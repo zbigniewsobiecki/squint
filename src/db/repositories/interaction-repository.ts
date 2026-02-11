@@ -10,6 +10,7 @@ export interface InteractionInsertOptions {
   symbols?: string[];
   semantic?: string;
   source?: InteractionSource;
+  confidence?: 'high' | 'medium';
 }
 
 export interface InteractionUpdateOptions {
@@ -36,6 +37,7 @@ const INTERACTION_COLS = `
   symbols,
   semantic,
   source,
+  confidence,
   created_at as createdAt`;
 
 const INTERACTION_WITH_PATHS_SELECT = `
@@ -49,6 +51,7 @@ const INTERACTION_WITH_PATHS_SELECT = `
     i.symbols,
     i.semantic,
     i.source,
+    i.confidence,
     i.created_at as createdAt,
     from_m.full_path as fromModulePath,
     to_m.full_path as toModulePath
@@ -77,8 +80,8 @@ export class InteractionRepository {
     ensureInteractionsTables(this.db);
 
     const stmt = this.db.prepare(`
-      INSERT INTO interactions (from_module_id, to_module_id, direction, weight, pattern, symbols, semantic, source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO interactions (from_module_id, to_module_id, direction, weight, pattern, symbols, semantic, source, confidence)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -89,7 +92,8 @@ export class InteractionRepository {
       options?.pattern ?? null,
       options?.symbols ? JSON.stringify(options.symbols) : null,
       options?.semantic ?? null,
-      options?.source ?? 'ast'
+      options?.source ?? 'ast',
+      options?.confidence ?? null
     );
 
     return result.lastInsertRowid as number;
@@ -112,6 +116,10 @@ export class InteractionRepository {
       // Update weight separately if provided
       if (options?.weight !== undefined) {
         this.db.prepare('UPDATE interactions SET weight = ? WHERE id = ?').run(options.weight, existing.id);
+      }
+      // Update confidence if provided
+      if (options?.confidence !== undefined) {
+        this.db.prepare('UPDATE interactions SET confidence = ? WHERE id = ?').run(options.confidence, existing.id);
       }
       return existing.id;
     }
@@ -285,6 +293,17 @@ export class InteractionRepository {
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM interactions WHERE source = ?');
     const row = stmt.get(source) as { count: number };
     return row.count;
+  }
+
+  /**
+   * Remove all llm-inferred interactions targeting a specific module.
+   * Used by fan-in anomaly detection to bulk-remove hallucinated connections.
+   */
+  removeInferredToModule(targetModuleId: number): number {
+    ensureInteractionsTables(this.db);
+    const stmt = this.db.prepare("DELETE FROM interactions WHERE to_module_id = ? AND source = 'llm-inferred'");
+    const result = stmt.run(targetModuleId);
+    return result.changes;
   }
 
   // ============================================================

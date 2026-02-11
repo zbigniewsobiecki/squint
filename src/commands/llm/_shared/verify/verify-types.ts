@@ -17,12 +17,14 @@ export interface VerificationIssue {
       | 'remove-flow'
       | 'remove-ghost'
       | 'remove-interaction'
+      | 'remove-inferred-to-module'
       | 'rebuild-symbols'
       | 'set-direction-uni'
       | 'null-entry-point';
     targetDefinitionId?: number;
     expectedType?: string;
     interactionId?: number;
+    targetModuleId?: number;
     flowId?: number;
     ghostTable?: string;
     ghostRowId?: number;

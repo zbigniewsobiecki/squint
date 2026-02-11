@@ -128,6 +128,7 @@ export function ensureInteractionsTables(db: Database.Database): void {
         symbols TEXT,
         semantic TEXT,
         source TEXT NOT NULL DEFAULT 'ast',
+        confidence TEXT DEFAULT NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(from_module_id, to_module_id)
       );
@@ -150,6 +151,17 @@ export function ensureInteractionsTables(db: Database.Database): void {
         ALTER TABLE interactions ADD COLUMN source TEXT NOT NULL DEFAULT 'ast';
         CREATE INDEX idx_interactions_source ON interactions(source);
       `);
+    }
+
+    // Check if we need to add confidence column
+    const hasConfidence = db
+      .prepare(`
+      SELECT COUNT(*) as count FROM pragma_table_info('interactions') WHERE name='confidence'
+    `)
+      .get() as { count: number };
+
+    if (hasConfidence.count === 0) {
+      db.exec('ALTER TABLE interactions ADD COLUMN confidence TEXT DEFAULT NULL');
     }
   }
 }

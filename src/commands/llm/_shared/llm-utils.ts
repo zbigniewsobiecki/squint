@@ -211,6 +211,7 @@ export interface CompleteWithLoggingOptions {
   systemPrompt: string;
   userPrompt: string;
   temperature?: number;
+  maxTokens?: number;
   command: Command;
   isJson: boolean;
   iteration?: { current: number; max: number }; // max=0 means unlimited
@@ -237,7 +238,7 @@ function formatCost(cost: number): string {
 }
 
 export async function completeWithLogging(options: CompleteWithLoggingOptions): Promise<string> {
-  const { model, systemPrompt, userPrompt, temperature, command, isJson, iteration } = options;
+  const { model, systemPrompt, userPrompt, temperature, maxTokens, command, isJson, iteration } = options;
 
   const estTokens = Math.round((systemPrompt.length + userPrompt.length) / 4);
   const iterTag = formatIterationTag(iteration);
@@ -261,6 +262,7 @@ export async function completeWithLogging(options: CompleteWithLoggingOptions): 
     model: resolvedModel,
     messages,
     ...(temperature !== undefined && { temperature }),
+    ...(maxTokens !== undefined && { maxTokens }),
   });
 
   for await (const chunk of stream) {

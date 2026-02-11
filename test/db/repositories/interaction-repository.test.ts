@@ -335,6 +335,88 @@ describe('InteractionRepository', () => {
     });
   });
 
+  describe('confidence', () => {
+    it('inserts with confidence', () => {
+      const id = repo.insert(moduleId1, moduleId2, {
+        source: 'llm-inferred',
+        confidence: 'high',
+      });
+
+      const interaction = repo.getById(id);
+      expect(interaction).not.toBeNull();
+      expect(interaction!.confidence).toBe('high');
+    });
+
+    it('defaults confidence to null', () => {
+      const id = repo.insert(moduleId1, moduleId2);
+
+      const interaction = repo.getById(id);
+      expect(interaction!.confidence).toBeNull();
+    });
+
+    it('persists confidence on upsert (insert path)', () => {
+      const id = repo.upsert(moduleId1, moduleId2, {
+        source: 'llm-inferred',
+        confidence: 'medium',
+      });
+
+      const interaction = repo.getById(id);
+      expect(interaction!.confidence).toBe('medium');
+    });
+
+    it('updates confidence on upsert (update path)', () => {
+      repo.insert(moduleId1, moduleId2, {
+        source: 'llm-inferred',
+        confidence: 'medium',
+      });
+
+      repo.upsert(moduleId1, moduleId2, {
+        confidence: 'high',
+      });
+
+      const interaction = repo.getByModules(moduleId1, moduleId2);
+      expect(interaction!.confidence).toBe('high');
+    });
+
+    it('confidence returned in getAll()', () => {
+      repo.insert(moduleId1, moduleId2, {
+        source: 'llm-inferred',
+        confidence: 'high',
+      });
+
+      const all = repo.getAll();
+      expect(all).toHaveLength(1);
+      expect(all[0].confidence).toBe('high');
+    });
+  });
+
+  describe('removeInferredToModule', () => {
+    it('removes all llm-inferred to target, keeps AST', () => {
+      // AST interaction targeting moduleId3
+      repo.insert(moduleId1, moduleId2, { source: 'ast' });
+      // LLM-inferred interactions targeting moduleId2
+      repo.insert(moduleId1, moduleId3, { source: 'llm-inferred' });
+      repo.insert(moduleId2, moduleId3, { source: 'llm-inferred' });
+
+      const removed = repo.removeInferredToModule(moduleId3);
+
+      expect(removed).toBe(2);
+      expect(repo.getCount()).toBe(1);
+      // The AST one should remain
+      const remaining = repo.getByModules(moduleId1, moduleId2);
+      expect(remaining).not.toBeNull();
+      expect(remaining!.source).toBe('ast');
+    });
+
+    it('returns 0 when no llm-inferred interactions to target', () => {
+      repo.insert(moduleId1, moduleId2, { source: 'ast' });
+
+      const removed = repo.removeInferredToModule(moduleId2);
+      expect(removed).toBe(0);
+      expect(repo.getCount()).toBe(1);
+    });
+  });
+
   describe('getBySource', () => {
     it('returns interactions filtered by source', () => {
       repo.insert(moduleId1, moduleId2, { source: 'ast' });

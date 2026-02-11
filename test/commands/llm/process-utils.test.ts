@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  type ProcessGroups,
   areSameProcess,
   computeProcessGroups,
   getCrossProcessGroupPairs,
@@ -366,7 +367,7 @@ describe('process-utils', () => {
       expect(pairs.length).toBe(0);
     });
 
-    it('2 disconnected groups → at least 1 pair', () => {
+    it('2 disconnected singleton groups → 0 pairs', () => {
       const rootId = db.modules.ensureRoot();
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
@@ -380,11 +381,9 @@ describe('process-utils', () => {
 
       const groups = computeProcessGroups(db);
       const pairs = getCrossProcessGroupPairs(groups);
-      // modA and modB have no imports → 2 separate file-based groups
-      // Root module is an isolated singleton → filtered out by getCrossProcessGroupPairs
-      // Result: 2 non-isolated groups → C(2,2) = 1 pair
-      expect(pairs.length).toBe(1);
-      expect(pairs.length).toBeGreaterThan(0);
+      // modA and modB have no imports → 2 separate singleton groups
+      // Singleton groups are excluded → 0 pairs
+      expect(pairs.length).toBe(0);
     });
 
     it('each pair contains correct module arrays', () => {
@@ -392,23 +391,30 @@ describe('process-utils', () => {
       const modA = setupModule('ModA', 'mod-a', rootId);
       const modB = setupModule('ModB', 'mod-b', rootId);
       const modC = setupModule('ModC', 'mod-c', rootId);
+      const modD = setupModule('ModD', 'mod-d', rootId);
 
       const fileA = insertFile('/src/a.ts');
       const fileB = insertFile('/src/b.ts');
       const fileC = insertFile('/src/c.ts');
+      const fileD = insertFile('/src/d.ts');
       const defA = insertDefinition(fileA, 'funcA');
       const defB = insertDefinition(fileB, 'funcB');
       const defC = insertDefinition(fileC, 'funcC');
+      const defD = insertDefinition(fileD, 'funcD');
       db.modules.assignSymbol(defA, modA);
       db.modules.assignSymbol(defB, modB);
       db.modules.assignSymbol(defC, modC);
+      db.modules.assignSymbol(defD, modD);
 
-      // Connect A and B, but not C
+      // Group 1: A↔B connected, Group 2: C↔D connected, no cross-group imports
       insertImport(fileA, fileB, false);
+      insertImport(fileC, fileD, false);
 
       const groups = computeProcessGroups(db);
       const pairs = getCrossProcessGroupPairs(groups);
 
+      // 2 multi-module groups → C(2,2) = 1 pair
+      expect(pairs.length).toBe(1);
       // Each pair should have two arrays of modules
       for (const [groupA, groupB] of pairs) {
         expect(Array.isArray(groupA)).toBe(true);
@@ -416,6 +422,37 @@ describe('process-utils', () => {
         expect(groupA.length).toBeGreaterThan(0);
         expect(groupB.length).toBeGreaterThan(0);
       }
+    });
+
+    it('excludes singleton groups (both positive and negative ID)', () => {
+      // Build a ProcessGroups object directly to control group IDs and sizes
+      const mkMod = (id: number, name: string): Module => ({
+        id,
+        name,
+        slug: name.toLowerCase(),
+        parentId: 0,
+        depth: 1,
+        description: null,
+      });
+
+      const groups: ProcessGroups = {
+        moduleToGroup: new Map(),
+        groupToModules: new Map([
+          // 2 multi-module groups
+          [1, [mkMod(10, 'A1'), mkMod(11, 'A2')]],
+          [2, [mkMod(20, 'B1'), mkMod(21, 'B2')]],
+          // 3 singleton groups (mix of positive and negative IDs)
+          [3, [mkMod(30, 'Solo1')]],
+          [-1, [mkMod(40, 'Solo2')]],
+          [4, [mkMod(50, 'Solo3')]],
+        ]),
+      };
+
+      const pairs = getCrossProcessGroupPairs(groups);
+      // Only the 2 multi-module groups should pair → C(2,2) = 1
+      expect(pairs.length).toBe(1);
+      expect(pairs[0][0]).toEqual(groups.groupToModules.get(1));
+      expect(pairs[0][1]).toEqual(groups.groupToModules.get(2));
     });
   });
 });

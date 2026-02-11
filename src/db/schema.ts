@@ -173,6 +173,7 @@ export interface Interaction {
   symbols: string | null; // JSON array of symbol names
   semantic: string | null; // What happens in this interaction
   source: InteractionSource; // How this interaction was detected
+  confidence: 'high' | 'medium' | null; // Confidence level for llm-inferred interactions
   createdAt: string;
 }
 
@@ -654,6 +655,7 @@ CREATE TABLE interactions (
   symbols TEXT,  -- JSON array of symbol names
   semantic TEXT,  -- What happens in this interaction
   source TEXT NOT NULL DEFAULT 'ast',  -- 'ast' | 'llm-inferred'
+  confidence TEXT,  -- 'high' | 'medium' | NULL
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(from_module_id, to_module_id)
 );

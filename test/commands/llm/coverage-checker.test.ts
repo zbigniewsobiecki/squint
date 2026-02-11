@@ -735,5 +735,107 @@ describe('coverage-checker', () => {
       const noImport = result.issues.filter((i) => i.category === 'no-import-path');
       expect(noImport.length).toBeGreaterThanOrEqual(1);
     });
+
+    it('skips ungrounded-inferred check for cross-process interactions', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+
+      // Create an inferred interaction with no static evidence
+      db.interactions.insert(modA, modB, { source: 'llm-inferred' });
+
+      // Create processGroups where modA and modB are in different groups
+      const processGroups = {
+        moduleToGroup: new Map([
+          [modA, 1],
+          [modB, 2],
+        ]),
+        groupToModules: new Map(),
+        groupCount: 2,
+      };
+
+      const result = checkInteractionQuality(db, processGroups as any);
+      const ungrounded = result.issues.filter((i) => i.category === 'ungrounded-inferred');
+      expect(ungrounded).toHaveLength(0);
+    });
+
+    it('still flags ungrounded-inferred for same-process interactions', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+
+      // Create an inferred interaction with no static evidence
+      db.interactions.insert(modA, modB, { source: 'llm-inferred' });
+
+      // Create processGroups where both are in the same group
+      const processGroups = {
+        moduleToGroup: new Map([
+          [modA, 1],
+          [modB, 1],
+        ]),
+        groupToModules: new Map(),
+        groupCount: 1,
+      };
+
+      const result = checkInteractionQuality(db, processGroups as any);
+      const ungrounded = result.issues.filter((i) => i.category === 'ungrounded-inferred');
+      expect(ungrounded.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects direction-implausible when AST edges only flow in reverse', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'a', 'A');
+      const modB = db.modules.insert(rootId, 'b', 'B');
+      const modC = db.modules.insert(rootId, 'c', 'C');
+
+      // AST interaction flows B→A (reverse direction)
+      db.interactions.insert(modB, modA, { source: 'ast' });
+      // LLM-inferred goes A→B (forward, against AST flow)
+      db.interactions.insert(modA, modC, { source: 'llm-inferred' });
+      db.interactions.insert(modA, modB, { source: 'llm-inferred' });
+
+      // Process groups: modA in group 1, modB in group 2
+      const processGroups = {
+        moduleToGroup: new Map([
+          [modA, 1],
+          [modB, 2],
+          [modC, 1],
+        ]),
+        groupToModules: new Map(),
+        groupCount: 2,
+      };
+
+      const result = checkInteractionQuality(db, processGroups as any);
+      const directionIssues = result.issues.filter((i) => i.category === 'direction-implausible');
+      expect(directionIssues.length).toBeGreaterThanOrEqual(1);
+      expect(directionIssues[0].fixData?.action).toBe('remove-interaction');
+    });
+
+    it('fan-in-anomaly detected for high llm fan-in with zero AST fan-in', () => {
+      const rootId = db.modules.ensureRoot();
+      const target = db.modules.insert(rootId, 'target', 'Target');
+
+      // Create normal-fan-in targets to establish baseline
+      const normalTargets: number[] = [];
+      for (let i = 0; i < 30; i++) {
+        normalTargets.push(db.modules.insert(rootId, `nt${i}`, `NT${i}`));
+      }
+      for (let i = 0; i < 30; i++) {
+        const src = db.modules.insert(rootId, `ns${i}`, `NS${i}`);
+        db.interactions.insert(src, normalTargets[i], { source: 'llm-inferred' });
+      }
+
+      // 20 llm-inferred inbound to anomalous target, 0 AST
+      for (let i = 0; i < 20; i++) {
+        const src = db.modules.insert(rootId, `h${i}`, `H${i}`);
+        db.interactions.insert(src, target, { source: 'llm-inferred' });
+      }
+
+      const result = checkInteractionQuality(db);
+      const fanInIssues = result.issues.filter((i) => i.category === 'fan-in-anomaly');
+      expect(fanInIssues.length).toBeGreaterThanOrEqual(1);
+      expect(fanInIssues[0].fixData?.action).toBe('remove-inferred-to-module');
+      expect(fanInIssues[0].fixData?.targetModuleId).toBe(target);
+    });
   });
 });

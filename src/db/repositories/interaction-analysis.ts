@@ -351,6 +351,84 @@ export class InteractionAnalysis {
   }
 
   /**
+   * Detect fan-in anomalies: modules with unusually high llm-inferred inbound
+   * connections but zero AST inbound connections (hallucination pattern).
+   *
+   * Uses Tukey's far-outlier fence (Q3 + 3*IQR) with an absolute minimum of 8.
+   */
+  detectFanInAnomalies(): Array<{
+    moduleId: number;
+    modulePath: string;
+    llmFanIn: number;
+    astFanIn: number;
+  }> {
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+
+    // Query llm-inferred fan-in per target module
+    const llmFanInRows = this.db
+      .prepare(`
+      SELECT to_module_id as moduleId, COUNT(*) as fanIn
+      FROM interactions
+      WHERE source = 'llm-inferred'
+      GROUP BY to_module_id
+    `)
+      .all() as Array<{ moduleId: number; fanIn: number }>;
+
+    if (llmFanInRows.length === 0) return [];
+
+    // Query AST fan-in per target module
+    const astFanInRows = this.db
+      .prepare(`
+      SELECT to_module_id as moduleId, COUNT(*) as fanIn
+      FROM interactions
+      WHERE source IN ('ast', 'ast-import')
+      GROUP BY to_module_id
+    `)
+      .all() as Array<{ moduleId: number; fanIn: number }>;
+
+    const astFanInMap = new Map(astFanInRows.map((r) => [r.moduleId, r.fanIn]));
+
+    // Compute distribution statistics for llm fan-in values
+    const fanInValues = llmFanInRows.map((r) => r.fanIn).sort((a, b) => a - b);
+    const n = fanInValues.length;
+    const q1 = fanInValues[Math.floor(n * 0.25)];
+    const q3 = fanInValues[Math.floor(n * 0.75)];
+    const iqr = q3 - q1;
+    const farFence = q3 + 3 * iqr;
+
+    // Get module paths for reporting
+    const modulePathRows = this.db
+      .prepare(`
+      SELECT id, full_path as fullPath FROM modules
+    `)
+      .all() as Array<{ id: number; fullPath: string }>;
+    const modulePathMap = new Map(modulePathRows.map((r) => [r.id, r.fullPath]));
+
+    const anomalies: Array<{
+      moduleId: number;
+      modulePath: string;
+      llmFanIn: number;
+      astFanIn: number;
+    }> = [];
+
+    for (const row of llmFanInRows) {
+      const astFanIn = astFanInMap.get(row.moduleId) ?? 0;
+
+      if (row.fanIn > farFence && row.fanIn >= 8 && astFanIn === 0) {
+        anomalies.push({
+          moduleId: row.moduleId,
+          modulePath: modulePathMap.get(row.moduleId) ?? `module#${row.moduleId}`,
+          llmFanIn: row.fanIn,
+          astFanIn,
+        });
+      }
+    }
+
+    return anomalies;
+  }
+
+  /**
    * Get symbols from relationship annotations for a module pair.
    */
   getRelationshipSymbolsForPair(fromModuleId: number, toModuleId: number): string[] {

@@ -31,6 +31,7 @@ interface InferredInteraction {
   fromModuleId: number;
   toModuleId: number;
   reason: string;
+  confidence?: 'high' | 'medium';
 }
 
 export default class Interactions extends BaseLlmCommand {
@@ -280,6 +281,7 @@ export default class Interactions extends BaseLlmCommand {
             pattern: 'business',
             symbols: symbols.length > 0 ? symbols : undefined,
             weight: 1,
+            confidence: li.confidence,
           });
           inferredCount++;
         } catch {
@@ -295,6 +297,30 @@ export default class Interactions extends BaseLlmCommand {
 
       if (!isJson) {
         this.log(chalk.green(`  Added ${inferredCount} inferred interactions`));
+      }
+
+      // Post-hoc fan-in anomaly detection
+      const anomalies = db.interactionAnalysis.detectFanInAnomalies();
+      if (anomalies.length > 0) {
+        let totalRemoved = 0;
+        for (const anomaly of anomalies) {
+          const removed = db.interactions.removeInferredToModule(anomaly.moduleId);
+          totalRemoved += removed;
+          if (!isJson && verbose) {
+            this.log(
+              chalk.yellow(
+                `  Fan-in anomaly: removed ${removed} inferred interactions targeting ${anomaly.modulePath} (llm-fan-in: ${anomaly.llmFanIn}, ast-fan-in: ${anomaly.astFanIn})`
+              )
+            );
+          }
+        }
+        if (!isJson && totalRemoved > 0) {
+          this.log(
+            chalk.yellow(
+              `  Fan-in cleanup: removed ${totalRemoved} hallucinated interactions from ${anomalies.length} anomalous target(s)`
+            )
+          );
+        }
       }
     } else if (!isJson) {
       if (logicalInteractions.length === 0) {
@@ -425,6 +451,7 @@ export default class Interactions extends BaseLlmCommand {
               pattern: 'business',
               symbols: symbols.length > 0 ? symbols : undefined,
               weight: 1,
+              confidence: ti.confidence ?? 'medium',
             });
             targetedCount++;
           } catch {
@@ -548,6 +575,7 @@ Generate semantic descriptions for each interaction in CSV format.`;
       systemPrompt,
       userPrompt,
       temperature: 0,
+      maxTokens: 4096,
       command: this,
       isJson,
       iteration: { current: batchIdx, max: totalBatches },
@@ -690,6 +718,7 @@ Generate semantic descriptions for each interaction in CSV format.`;
         systemPrompt,
         userPrompt,
         temperature: 0,
+        maxTokens: 8192,
         command: this,
         isJson,
       });
@@ -700,7 +729,7 @@ Generate semantic descriptions for each interaction in CSV format.`;
         this.log(chalk.gray(response));
       }
 
-      const results = this.parseLogicalInteractionCSV(response, modules, existingPairs);
+      const results = this.parseLogicalInteractionCSV(response, modules, existingPairs, processGroups, db);
       allResults.push(...results);
     }
 
@@ -814,6 +843,7 @@ Evaluate each pair and output CONFIRM or SKIP in CSV format.`;
       systemPrompt,
       userPrompt,
       temperature: 0,
+      maxTokens: 8192,
       command: this,
       isJson,
     });
@@ -830,6 +860,11 @@ Evaluate each pair and output CONFIRM or SKIP in CSV format.`;
     const csv = csvMatch ? csvMatch[1] : response;
 
     const pairByPaths = new Map(uncoveredPairs.map((p) => [`${p.fromPath}|${p.toPath}`, p]));
+    const moduleByPath = new Map(Array.from(moduleMap.values()).map((m) => [m.fullPath, m]));
+
+    // Build existingInteractionPairs for gating
+    const existingInteractions = db.interactions.getAll();
+    const existingInteractionPairs = new Set(existingInteractions.map((i) => `${i.fromModuleId}->${i.toModuleId}`));
 
     for (const line of csv.split('\n')) {
       if (!line.trim() || line.startsWith('from_module')) continue;
@@ -844,10 +879,19 @@ Evaluate each pair and output CONFIRM or SKIP in CSV format.`;
       const pair = pairByPaths.get(`${fromPath.trim()}|${toPath.trim()}`);
       if (!pair) continue;
 
+      const fromModule = moduleByPath.get(pair.fromPath);
+      const toModule = moduleByPath.get(pair.toPath);
+      if (!fromModule || !toModule) continue;
+
+      // Apply structural gating
+      const gate = this.gateInferredInteraction(fromModule, toModule, processGroups, existingInteractionPairs, db);
+      if (!gate.pass) continue;
+
       results.push({
         fromModuleId: pair.fromModuleId,
         toModuleId: pair.toModuleId,
         reason: reason?.replace(/"/g, '').trim() ?? 'Targeted inference',
+        confidence: 'medium',
       });
     }
 
@@ -887,7 +931,15 @@ Confidence levels:
 DO NOT report:
 - Connections within the same process group (those are visible via static analysis)
 - Utility modules (logging, config, etc.)
-- Shared type definitions (no runtime interaction)`;
+- Shared type definitions (no runtime interaction)
+
+## Architecture Constraints
+- In client-server architectures, the CLIENT (frontend/app/sdk) initiates requests.
+  Backend modules do NOT push to specific frontend components.
+- Dev-time modules (CLI scripts, seed scripts, migrations) have NO runtime callers.
+  Do NOT connect production modules to dev-time utilities.
+- A realistic cross-process call surface has 3-8 callers per target, not dozens.
+  If you find yourself connecting most modules in one group to a single target, stop.`;
   }
 
   /**
@@ -923,16 +975,46 @@ DO NOT report:
     const groupAIds = new Set(groupA.map((m) => m.id));
     const groupBIds = new Set(groupB.map((m) => m.id));
 
+    const BOUNDARY_PATTERNS =
+      /\b(router|controller|handler|hook|client|endpoint|api|gateway|service|provider|adapter|facade|proxy|middleware)\b/i;
+
+    const detectBoundaryModules = (group: Module[]): Module[] => {
+      return group.filter((m) => {
+        // Check module name/path
+        if (BOUNDARY_PATTERNS.test(m.fullPath) || BOUNDARY_PATTERNS.test(m.name)) return true;
+        // Check member names
+        const modWithMembers = membersMap.get(m.id);
+        if (modWithMembers) {
+          return modWithMembers.members.some((member) => BOUNDARY_PATTERNS.test(member.name));
+        }
+        return false;
+      });
+    };
+
+    const formatBoundaryHints = (boundaryModules: Module[], label: string): string[] => {
+      if (boundaryModules.length === 0) return [];
+      const hints: string[] = [];
+      hints.push(`\nLikely boundary modules in "${label}":`);
+      for (const m of boundaryModules.slice(0, 10)) {
+        hints.push(`  * ${m.fullPath}`);
+      }
+      return hints;
+    };
+
     parts.push(`## Process Group: "${labelA}" (${groupA.length} modules)`);
     for (const m of groupA) {
       parts.push(`- ${m.fullPath}: "${m.name}"${m.description ? ` - ${m.description}` : ''}${formatMembers(m.id)}`);
     }
+    const boundaryA = detectBoundaryModules(groupA);
+    parts.push(...formatBoundaryHints(boundaryA, labelA));
 
     parts.push('');
     parts.push(`## Process Group: "${labelB}" (${groupB.length} modules)`);
     for (const m of groupB) {
       parts.push(`- ${m.fullPath}: "${m.name}"${m.description ? ` - ${m.description}` : ''}${formatMembers(m.id)}`);
     }
+    const boundaryB = detectBoundaryModules(groupB);
+    parts.push(...formatBoundaryHints(boundaryB, labelB));
 
     parts.push('');
     parts.push('## Existing AST-Detected Cross-Process Connections (for reference)');
@@ -976,7 +1058,8 @@ DO NOT report:
 
     // Run referential integrity check first
     const ghostResult = checkReferentialIntegrity(db);
-    const result = checkInteractionQuality(db);
+    const processGroups = computeProcessGroups(db);
+    const result = checkInteractionQuality(db, processGroups);
 
     // Merge ghost issues into result
     result.issues.unshift(...ghostResult.issues);
@@ -1065,6 +1148,11 @@ DO NOT report:
           const updated = db.interactions.update(issue.fixData.interactionId, { direction: 'uni' });
           if (updated) fixed++;
         }
+
+        if (issue.fixData.action === 'remove-inferred-to-module' && issue.fixData.targetModuleId) {
+          const removed = db.interactions.removeInferredToModule(issue.fixData.targetModuleId);
+          fixed += removed;
+        }
       }
 
       if (fixed > 0 && !isJson) {
@@ -1078,12 +1166,45 @@ DO NOT report:
   }
 
   /**
+   * Structural gate for inferred interactions.
+   * Rejects duplicates, self-loops, and reverse-of-AST interactions.
+   */
+  private gateInferredInteraction(
+    fromModule: Module,
+    toModule: Module,
+    _processGroups: ProcessGroups,
+    existingInteractionPairs: Set<string>,
+    db: IndexDatabase
+  ): { pass: boolean; reason?: string } {
+    // Gate A — Duplicate
+    const pairKey = `${fromModule.id}->${toModule.id}`;
+    if (existingInteractionPairs.has(pairKey)) {
+      return { pass: false, reason: 'duplicate' };
+    }
+
+    // Gate B — Self-loop
+    if (fromModule.id === toModule.id) {
+      return { pass: false, reason: 'self-loop' };
+    }
+
+    // Gate C — Reverse-of-AST
+    const reverseInteraction = db.interactions.getByModules(toModule.id, fromModule.id);
+    if (reverseInteraction && (reverseInteraction.source === 'ast' || reverseInteraction.source === 'ast-import')) {
+      return { pass: false, reason: 'reverse-of-ast' };
+    }
+
+    return { pass: true };
+  }
+
+  /**
    * Parse the LLM response CSV into inferred interactions.
    */
   private parseLogicalInteractionCSV(
     response: string,
     modules: Module[],
-    existingPairs: Set<string>
+    existingPairs: Set<string>,
+    processGroups: ProcessGroups,
+    db: IndexDatabase
   ): InferredInteraction[] {
     const results: InferredInteraction[] = [];
     const moduleByPath = new Map(modules.map((m) => [m.fullPath, m]));
@@ -1097,25 +1218,31 @@ DO NOT report:
       const fields = parseRow(line);
       if (!fields || fields.length < 4) continue;
 
-      const [fromPath, toPath, reason, confidence] = fields;
+      const [fromPath, toPath, reason, confidenceStr] = fields;
 
       const fromModule = moduleByPath.get(fromPath.trim());
       const toModule = moduleByPath.get(toPath.trim());
 
       if (!fromModule || !toModule) continue;
-      if (confidence.trim().toLowerCase() === 'low') continue;
 
-      const pairKey = `${fromModule.id}->${toModule.id}`;
-      if (existingPairs.has(pairKey)) continue; // Skip duplicates
+      const normalizedConfidence = confidenceStr.trim().toLowerCase();
+      if (normalizedConfidence === 'low') continue;
+
+      // Apply structural gating
+      const gate = this.gateInferredInteraction(fromModule, toModule, processGroups, existingPairs, db);
+      if (!gate.pass) continue;
+
+      const confidence: 'high' | 'medium' = normalizedConfidence === 'high' ? 'high' : 'medium';
 
       results.push({
         fromModuleId: fromModule.id,
         toModuleId: toModule.id,
         reason: reason?.replace(/"/g, '').trim() ?? 'LLM inferred connection',
+        confidence,
       });
 
       // Mark as processed to avoid duplicates within this batch
-      existingPairs.add(pairKey);
+      existingPairs.add(`${fromModule.id}->${toModule.id}`);
     }
 
     return results;
