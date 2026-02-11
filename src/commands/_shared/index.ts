@@ -3,3 +3,10 @@ export { SymbolResolver, type ResolvedSymbol, type ResolvedSymbolWithDetails } f
 export { SharedFlags, LlmFlags } from './flags.js';
 export { outputJsonOrPlain, truncate, tableSeparator, formatLineNumber } from './output.js';
 export { readSourceLines, readSourceAsString, readAllLines } from './source-reader.js';
+export {
+  formatModuleRef,
+  collectFeaturesForFlows,
+  resolveModuleIds,
+  collectModuleIdsFromSteps,
+  collectFlowsForInteractions,
+} from './context-helpers.js';

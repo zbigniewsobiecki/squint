@@ -54,7 +54,7 @@ export default class Verify extends BaseLlmCommand {
     'batch-size': Flags.integer({
       char: 'b',
       description: 'Number of symbols per LLM call',
-      default: 10,
+      default: 80,
     }),
     'max-iterations': Flags.integer({
       description: 'Maximum iterations (0 = unlimited)',

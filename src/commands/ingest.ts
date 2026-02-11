@@ -162,6 +162,8 @@ export default class Ingest extends Command {
             '--aspect',
             'pure',
             '--fix',
+            '--batch-size',
+            batchSize,
             ...llmFlags,
             ...debugFlags,
           ]),
@@ -182,7 +184,7 @@ export default class Ingest extends Command {
       {
         id: 'relationships-verify',
         label: 'Verify relationships',
-        run: () => RelationshipsVerify.run(['--fix', ...llmFlags, ...debugFlags]),
+        run: () => RelationshipsVerify.run(['--fix', '--batch-size', batchSize, ...llmFlags, ...debugFlags]),
       },
       {
         id: 'modules',
