@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/zbigniewsobiecki/squint/compare/v1.4.0...v1.4.1) (2026-02-12)
+
+### Bug Fixes
+
+* format package.json for biome compliance ([4402da6](https://github.com/zbigniewsobiecki/squint/commit/4402da6261d3f170da6f29bb129307585180bd83))
+* remove domain-specific bias from all LLM prompts ([f7c5b90](https://github.com/zbigniewsobiecki/squint/commit/f7c5b90da75d5daf5f896ff67f406801bcd124d3))
+
 ## [1.4.0](https://github.com/zbigniewsobiecki/squint/compare/v1.3.1...v1.4.0) (2026-02-12)
 
 ### Features
