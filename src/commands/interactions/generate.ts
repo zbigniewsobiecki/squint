@@ -548,7 +548,7 @@ project.controllers,project.services.auth,"Controllers delegate authentication l
 Guidelines:
 - Describe WHY the source module calls the target module
 - For UTILITY patterns: use generic descriptions like "Uses logging utilities", "Accesses database layer"
-- For BUSINESS patterns: be specific about the business action (e.g., "Processes customer orders", "Validates user credentials")
+- For BUSINESS patterns: be specific about the business action (e.g., "Processes incoming requests", "Validates user credentials")
 - Keep descriptions concise (under 80 chars)
 - Focus on the business purpose, not implementation details`;
 
@@ -782,7 +782,7 @@ For each pair, determine if a real runtime interaction exists and describe it.
 ## Output Format
 \`\`\`csv
 from_module_path,to_module_path,action,reason
-project.backend.services.sales,project.backend.data.models.vehicle,CONFIRM,"Sales service updates vehicle availability status on sale completion"
+project.backend.services.billing,project.backend.data.models.transaction,CONFIRM,"Billing service records transaction status on completion"
 project.shared.types,project.backend.models,SKIP,"Shared type definitions, no runtime interaction"
 \`\`\`
 
@@ -922,7 +922,7 @@ For each connection:
 - Describe the communication mechanism and purpose
 
 Use entity/name matching to pair modules:
-- "useCustomers" (process A) likely calls "customerController" (process B)
+- "useAccounts" (process A) likely calls "accountController" (process B)
 - Match by entity name, action verbs, and module descriptions
 
 Only report connections with medium or high confidence.
@@ -930,7 +930,7 @@ Only report connections with medium or high confidence.
 ## Output Format
 \`\`\`csv
 from_module_path,to_module_path,reason,confidence
-project.frontend.hooks.useCustomers,project.backend.api.controllers,"Customer data hooks call customer API controllers via HTTP",high
+project.frontend.hooks.useAccounts,project.backend.api.controllers,"Account data hooks call account API controllers via HTTP",high
 \`\`\`
 
 Confidence levels:

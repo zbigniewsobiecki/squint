@@ -647,9 +647,9 @@ export class FlowRepository {
     ensureFlowsTables(this.db);
     ensureInteractionsTables(this.db);
 
-    // Exclude test-internal interactions from the total
+    // Exclude ast-import and test-internal interactions from the total (runtime only)
     const totalStmt = this.db.prepare(
-      "SELECT COUNT(*) as count FROM interactions WHERE pattern IS NULL OR pattern != 'test-internal'"
+      "SELECT COUNT(*) as count FROM interactions WHERE source != 'ast-import' AND (pattern IS NULL OR pattern != 'test-internal')"
     );
     const totalInteractions = (totalStmt.get() as { count: number }).count;
 
@@ -657,7 +657,7 @@ export class FlowRepository {
       SELECT COUNT(DISTINCT fs.interaction_id) as count
       FROM flow_steps fs
       JOIN interactions i ON fs.interaction_id = i.id
-      WHERE i.pattern IS NULL OR i.pattern != 'test-internal'
+      WHERE i.source != 'ast-import' AND (i.pattern IS NULL OR i.pattern != 'test-internal')
     `);
     const coveredByFlows = (coveredStmt.get() as { count: number }).count;
 

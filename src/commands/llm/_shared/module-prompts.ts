@@ -81,14 +81,14 @@ Test classification is inherited: if a parent is test, children should also be t
 - Keep module names concise but descriptive
 - Each parent_path must be a valid path (either "project" or a previously defined module)
 - For API layers (controllers, routes, services), create entity-specific modules:
-  - backend.api.controllers.users (not just backend.api.controllers)
-  - backend.api.controllers.products
-  - backend.services.user-management
+  - backend.api.controllers.accounts (not just backend.api.controllers)
+  - backend.api.controllers.items
+  - backend.services.account-management
   This enables accurate per-entity flow tracing.
 
 ## Business Domain Parity (CRITICAL)
 - Every business entity domain MUST be a first-class branch.
-  If the codebase has customers, vehicles, and sales — each gets equal treatment.
+  If the codebase has multiple business entity domains — each gets equal treatment.
   Do NOT bury one domain under "Infrastructure" or "Misc" while others get their own branch.
   The domains list below tells you which business entities exist — ensure each one appears
   in the tree at the same structural level.
@@ -221,7 +221,7 @@ If unsure about the best module, assign to the closest parent module. Never skip
 - Symbols from test files (*.test.ts, *.spec.ts) that are NOT exported are test-file-local.
   Assign them to the nearest test module (project.testing.*) — never to production modules.
 - Only exported symbols from dedicated test utility files (test/helpers/*, test/factories/*)
-  belong in specific test infrastructure modules (e.g., project.testing.factories.customers).
+  belong in specific test infrastructure modules (e.g., project.testing.factories.records).
 - Non-exported symbols from test files are inline mocks/fixtures — assign them to a general
   test module like project.testing.helpers or project.testing.mocks, not to granular sub-modules.`;
 }
@@ -342,21 +342,21 @@ export function buildDeepenSystemPrompt(): string {
 ## Your Task
 A module has too many members and needs to be split into 2-5 smaller sub-modules.
 Analyze the member symbols and propose sub-modules based on patterns in:
-- Names (e.g., use*Customer* → customers sub-module)
+- Names (e.g., use*Account* → accounts sub-module)
 - File paths (same file often = same sub-module)
 - Functionality (CRUD operations, queries, mutations, etc.)
-- Entity/domain groupings (customers, sales, vehicles, etc.)
+- Entity/domain groupings (accounts, tasks, projects, etc.)
 
 ## Output Format
 Respond with **only** a CSV table with two row types:
 
 \`\`\`csv
 type,parent_path,slug,name,description,definition_id
-module,project.frontend.hooks.data-fetching,customers,"Customer Hooks","Hooks for customer data",
-module,project.frontend.hooks.data-fetching,sales,"Sales Hooks","Hooks for sales data",
-reassign,project.frontend.hooks.data-fetching.customers,,,,42
-reassign,project.frontend.hooks.data-fetching.customers,,,,43
-reassign,project.frontend.hooks.data-fetching.sales,,,,87
+module,project.frontend.hooks.data-fetching,accounts,"Account Hooks","Hooks for account data",
+module,project.frontend.hooks.data-fetching,tasks,"Task Hooks","Hooks for task data",
+reassign,project.frontend.hooks.data-fetching.accounts,,,,42
+reassign,project.frontend.hooks.data-fetching.accounts,,,,43
+reassign,project.frontend.hooks.data-fetching.tasks,,,,87
 \`\`\`
 
 Row types:
@@ -439,8 +439,8 @@ Symbols not mentioned will stay in their current module.
 
 \`\`\`csv
 type,symbol_id,module_path
-assignment,42,project.frontend.hooks.customers
-assignment,87,project.frontend.hooks.sales
+assignment,42,project.frontend.hooks.accounts
+assignment,87,project.frontend.hooks.tasks
 \`\`\`
 
 ## Guidelines
@@ -468,7 +468,7 @@ Respond with **only** a CSV table. Include a row for EVERY symbol you want to mo
 
 \`\`\`csv
 type,symbol_id,module_path
-assignment,42,project.frontend.hooks.customers
+assignment,42,project.frontend.hooks.accounts
 \`\`\`
 
 ## Guidelines

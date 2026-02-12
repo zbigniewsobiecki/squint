@@ -199,7 +199,7 @@ You have access to:
 ## Task
 For each entry point module (screens, pages, routes, controllers), identify ALL user-facing actions including those that go through hooks/services.
 
-Key insight: A screen component like "Customers" may call hooks like "useCreateCustomer", "useDeleteCustomer". These represent separate user actions even though they're not direct members of the screen module.
+Key insight: A screen component like "ItemList" may call hooks like "useCreateItem", "useDeleteItem". These represent separate user actions even though they're not direct members of the screen module.
 
 ## Action Type Guidelines
 - **view**: Displays data - list views, detail views, dashboards
@@ -219,10 +219,10 @@ Classify who initiates the action:
 ## Output Format
 \`\`\`csv
 module_id,member_name,is_entry_point,action_type,target_entity,stakeholder,reason
-42,Customers,true,view,customer,user,"Main component displaying customer list"
-42,Customers,true,create,customer,user,"Calls useCreateCustomer hook for new customers"
-42,Customers,true,update,customer,user,"Calls useUpdateCustomer hook"
-42,Customers,true,delete,customer,user,"Calls useDeleteCustomer hook"
+42,ItemList,true,view,item,user,"Main component displaying item list"
+42,ItemList,true,create,item,user,"Calls useCreateItem hook for new items"
+42,ItemList,true,update,item,user,"Calls useUpdateItem hook"
+42,ItemList,true,delete,item,user,"Calls useDeleteItem hook"
 \`\`\`
 
 IMPORTANT: A single component can have MULTIPLE action types if it calls multiple mutation hooks.
