@@ -1,3 +1,13 @@
+## [1.4.0](https://github.com/zbigniewsobiecki/squint/compare/v1.3.1...v1.4.0) (2026-02-12)
+
+### Features
+
+* improve flow generation, overhaul UI, and fix native module install ([3ca3b28](https://github.com/zbigniewsobiecki/squint/commit/3ca3b28d2f9cce0659b48fc63f3687008c09ab59))
+
+### Bug Fixes
+
+* format package.json for biome compliance ([46cc754](https://github.com/zbigniewsobiecki/squint/commit/46cc75475e3780b4e03bc2fdf2dfa714cee5432c))
+
 ## [1.3.1](https://github.com/zbigniewsobiecki/squint/compare/v1.3.0...v1.3.1) (2026-02-12)
 
 ### Bug Fixes
