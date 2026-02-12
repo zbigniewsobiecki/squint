@@ -3,7 +3,7 @@ import type { ApiClient } from '../api/client';
 import { getKindColor, getNodeRadius } from '../d3/colors';
 import { setupZoom } from '../d3/zoom';
 import type { Store } from '../state/store';
-import { selectSymbol, setSymbolSearch } from '../state/store';
+import { selectSymbol, setRelationshipFilter, setSymbolSearch } from '../state/store';
 import type { SymbolNode } from '../types/api';
 
 interface SimulationNode extends SymbolNode, d3.SimulationNodeDatum {}
@@ -144,6 +144,7 @@ function renderSidebarList(store: Store) {
     el.addEventListener('click', () => {
       const id = Number((el as HTMLElement).dataset.symbolId);
       selectSymbol(store, id);
+      autoSelectFirstType(store, id);
       highlightSelected(id);
       renderDetail(store, id);
       renderNeighborhoodGraph(store, id);
@@ -221,6 +222,20 @@ function setupEventHandlers(store: Store) {
   }
 }
 
+function autoSelectFirstType(store: Store, symbolId: number) {
+  const data = store.getState().graphData;
+  if (!data) return;
+
+  const types = new Set<string>();
+  for (const e of data.edges) {
+    if (e.source === symbolId || e.target === symbolId) {
+      types.add(e.type);
+    }
+  }
+  const sorted = [...types].sort();
+  setRelationshipFilter(store, sorted[0] ?? null);
+}
+
 function renderDetail(store: Store, symbolId: number) {
   const state = store.getState();
   const data = state.graphData;
@@ -232,9 +247,22 @@ function renderDetail(store: Store, symbolId: number) {
   const detailEl = document.getElementById('symbols-detail');
   if (!detailEl) return;
 
-  // Count connections
-  const incoming = data.edges.filter((e) => e.target === symbolId).length;
-  const outgoing = data.edges.filter((e) => e.source === symbolId).length;
+  const selectedType = state.selectedRelationshipType;
+
+  // All edges for this symbol
+  const allEdges = data.edges.filter((e) => e.source === symbolId || e.target === symbolId);
+
+  // Filtered edges
+  const filteredEdges = selectedType ? allEdges.filter((e) => e.type === selectedType) : allEdges;
+  const incoming = filteredEdges.filter((e) => e.target === symbolId).length;
+  const outgoing = filteredEdges.filter((e) => e.source === symbolId).length;
+
+  // Compute which relationship types exist for this symbol
+  const typeCounts = new Map<string, number>();
+  for (const e of allEdges) {
+    typeCounts.set(e.type, (typeCounts.get(e.type) || 0) + 1);
+  }
+  const types = [...typeCounts.keys()].sort();
 
   const fileParts = node.filePath.split('/');
   const shortPath = fileParts.slice(-2).join('/');
@@ -265,8 +293,32 @@ function renderDetail(store: Store, symbolId: number) {
 
   html += `<div class="symbol-detail-connections"><span>${incoming}</span> incoming, <span>${outgoing}</span> outgoing connections</div>`;
 
+  // Render filter chips for relationship types
+  if (types.length > 0) {
+    html += `<div class="symbol-detail-filters">`;
+    for (const type of types) {
+      const count = typeCounts.get(type) || 0;
+      html += `<div class="filter-chip${selectedType === type ? ' active' : ''}" data-rel-type="${escapeHtml(type)}"><span>${escapeHtml(type)} (${count})</span></div>`;
+    }
+    if (types.length > 1) {
+      html += `<div class="filter-chip${selectedType === null ? ' active' : ''}" data-rel-type="all"><span>all (${allEdges.length})</span></div>`;
+    }
+    html += '</div>';
+  }
+
   detailEl.innerHTML = html;
   detailEl.classList.add('visible');
+
+  // Attach chip click handlers
+  detailEl.querySelectorAll('.filter-chip[data-rel-type]').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const type = (chip as HTMLElement).dataset.relType!;
+      const newType = type === 'all' ? null : type;
+      setRelationshipFilter(store, newType);
+      renderDetail(store, symbolId);
+      renderNeighborhoodGraph(store, symbolId);
+    });
+  });
 }
 
 function renderNeighborhoodGraph(store: Store, symbolId: number) {
@@ -293,7 +345,11 @@ function renderNeighborhoodGraph(store: Store, symbolId: number) {
   if (width === 0 || height === 0) return;
 
   // Build ego-network
-  const neighborEdges = data.edges.filter((e) => e.source === symbolId || e.target === symbolId);
+  const selectedType = state.selectedRelationshipType;
+  let neighborEdges = data.edges.filter((e) => e.source === symbolId || e.target === symbolId);
+  if (selectedType) {
+    neighborEdges = neighborEdges.filter((e) => e.type === selectedType);
+  }
   const neighborIds = new Set<number>();
   neighborIds.add(symbolId);
   for (const e of neighborEdges) {
@@ -341,7 +397,7 @@ function renderNeighborhoodGraph(store: Store, symbolId: number) {
     .attr('d', 'M 0,-5 L 10,0 L 0,5')
     .attr('fill', '#4a4a4a');
 
-  // Create simulation
+  // Create simulation — no center force since selected node is pinned to center
   simulation = d3
     .forceSimulation(simNodes)
     .force(
@@ -349,13 +405,12 @@ function renderNeighborhoodGraph(store: Store, symbolId: number) {
       d3
         .forceLink<SimulationNode, SimulationLink>(simLinks)
         .id((d) => d.id)
-        .distance(120)
+        .distance(180)
     )
-    .force('charge', d3.forceManyBody().strength(-200))
-    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('charge', d3.forceManyBody().strength(-300))
     .force(
       'collision',
-      d3.forceCollide<SimulationNode>().radius((d) => getNodeRadius(d.lines) + 10)
+      d3.forceCollide<SimulationNode>().radius((d) => getNodeRadius(d.lines) + 30)
     );
 
   // Main group with zoom
@@ -448,6 +503,7 @@ function renderNeighborhoodGraph(store: Store, symbolId: number) {
     tooltip.style('display', 'none');
     if (d.id !== symbolId) {
       selectSymbol(store, d.id);
+      autoSelectFirstType(store, d.id);
       highlightSelected(d.id);
       renderDetail(store, d.id);
       renderNeighborhoodGraph(store, d.id);

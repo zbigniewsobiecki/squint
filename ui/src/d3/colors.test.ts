@@ -1,20 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { HierarchyNode } from '../types/api';
-import {
-  FLOW_COLORS,
-  HIERARCHY_COLORS,
-  KIND_COLORS,
-  getFlowColor,
-  getHierarchyColor,
-  getKindColor,
-  getNodeRadius,
-  getStrokeColor,
-} from './colors';
-
-// Helper to create d3-like hierarchy nodes for testing
-function createHierarchyNode(data: HierarchyNode): { data: HierarchyNode } {
-  return { data };
-}
+import { FLOW_COLORS, KIND_COLORS, getFlowColor, getKindColor, getNodeRadius } from './colors';
 
 describe('colors', () => {
   describe('KIND_COLORS', () => {
@@ -33,13 +18,6 @@ describe('colors', () => {
       for (const color of Object.values(KIND_COLORS)) {
         expect(color).toMatch(hexRegex);
       }
-    });
-  });
-
-  describe('HIERARCHY_COLORS', () => {
-    it('has colors for directory and file', () => {
-      expect(HIERARCHY_COLORS.directory).toBeDefined();
-      expect(HIERARCHY_COLORS.file).toBeDefined();
     });
   });
 
@@ -81,86 +59,6 @@ describe('colors', () => {
       expect(getKindColor('unknown')).toBe('#666');
       expect(getKindColor('custom')).toBe('#666');
       expect(getKindColor('')).toBe('#666');
-    });
-  });
-
-  describe('getHierarchyColor', () => {
-    it('returns kind color for symbol nodes', () => {
-      const node = createHierarchyNode({
-        name: 'myFunction',
-        data: { id: 1, name: 'myFunction', kind: 'function', filePath: 'test.ts', hasAnnotations: false, lines: 10 },
-      });
-
-      expect(getHierarchyColor(node as any)).toBe(KIND_COLORS.function);
-    });
-
-    it('returns file color for file nodes', () => {
-      const node = createHierarchyNode({
-        name: 'test.ts',
-        isFile: true,
-        children: [],
-      });
-
-      expect(getHierarchyColor(node as any)).toBe(HIERARCHY_COLORS.file);
-    });
-
-    it('returns directory color for directory nodes', () => {
-      const node = createHierarchyNode({
-        name: 'src',
-        isDirectory: true,
-        children: [],
-      });
-
-      expect(getHierarchyColor(node as any)).toBe(HIERARCHY_COLORS.directory);
-    });
-
-    it('returns default color for root or unknown nodes', () => {
-      const node = createHierarchyNode({
-        name: 'root',
-        isRoot: true,
-        children: [],
-      });
-
-      expect(getHierarchyColor(node as any)).toBe('#2d2d2d');
-    });
-
-    it('returns default for unknown kind in symbol', () => {
-      const node = createHierarchyNode({
-        name: 'unknown',
-        data: { id: 1, name: 'unknown', kind: 'weird', filePath: 'test.ts', hasAnnotations: false, lines: 10 },
-      });
-
-      expect(getHierarchyColor(node as any)).toBe('#666');
-    });
-  });
-
-  describe('getStrokeColor', () => {
-    it('returns green for annotated symbols', () => {
-      const node = createHierarchyNode({
-        name: 'myFunction',
-        data: { id: 1, name: 'myFunction', kind: 'function', filePath: 'test.ts', hasAnnotations: true, lines: 10 },
-      });
-
-      expect(getStrokeColor(node as any)).toBe('#6a9955');
-    });
-
-    it('returns default for non-annotated symbols', () => {
-      const node = createHierarchyNode({
-        name: 'myFunction',
-        data: { id: 1, name: 'myFunction', kind: 'function', filePath: 'test.ts', hasAnnotations: false, lines: 10 },
-      });
-
-      expect(getStrokeColor(node as any)).toBe('#3c3c3c');
-    });
-
-    it('returns default for non-symbol nodes', () => {
-      const node = createHierarchyNode({
-        name: 'src',
-        isDirectory: true,
-        children: [],
-      });
-
-      expect(getStrokeColor(node as any)).toBe('#3c3c3c');
     });
   });
 

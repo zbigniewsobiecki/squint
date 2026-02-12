@@ -39,7 +39,7 @@ export function initInteractions(store: Store, _api: ApiClient) {
       <svg id="imap-svg"></svg>
       <div class="chord-sidebar hidden" id="imap-sidebar"></div>
       <div class="keyboard-hint">
-        <kbd>Scroll</kbd> zoom &nbsp; <kbd>Drag</kbd> pan &nbsp; <kbd>Click</kbd> module or arrow
+        <kbd>Click</kbd> module to select &nbsp; <kbd>Click</kbd> background to deselect/zoom out &nbsp; <kbd>Hover</kbd> to preview interactions
       </div>
     </div>
   `;

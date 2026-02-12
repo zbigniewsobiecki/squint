@@ -17,8 +17,8 @@ describe('store', () => {
       expect(state.modulesData).toBeNull();
       expect(state.flowsData).toBeNull();
       expect(state.flowsDagData).toBeNull();
-      expect(state.currentView).toBe('force');
-      expect(state.selectedGrouping).toBe('structure');
+      expect(state.currentView).toBe('symbols');
+      expect(state.selectedRelationshipType).toBeNull();
       expect(state.selectedFlows).toBeInstanceOf(Set);
       expect(state.selectedFlows.size).toBe(0);
       expect(state.expandedModules).toBeInstanceOf(Set);

@@ -17,6 +17,7 @@ export interface SymbolEdge {
   source: number;
   target: number;
   semantic: string;
+  type: string;
 }
 
 export interface SymbolGraphStats {
@@ -206,21 +207,6 @@ export interface DbStats {
   references: number;
   imports: number;
 }
-
-// Hierarchy node for D3 visualization
-export interface HierarchyNode {
-  name: string;
-  children?: HierarchyNode[];
-  data?: SymbolNode;
-  isRoot?: boolean;
-  isDirectory?: boolean;
-  isFile?: boolean;
-  depth?: number;
-  value?: number;
-}
-
-// Relationship type classification
-export type RelationshipType = 'extends' | 'implements' | 'calls' | 'imports' | 'uses' | 'structure';
 
 // Kind colors mapping
 export const KIND_COLORS: Record<string, string> = {

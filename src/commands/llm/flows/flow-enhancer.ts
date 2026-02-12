@@ -66,38 +66,40 @@ export class FlowEnhancer {
 "[stakeholder] [verb]s [entity]"
 
 Rules:
-- Stakeholder MUST come first (user, admin, salesperson, system, developer)
+- Stakeholder MUST come first (user, admin, system, developer, external)
 - Verb MUST match the action type:
   - view → views, lists, browses
   - create → creates, adds, registers
   - update → updates, edits, modifies
   - delete → deletes, removes
   - process → processes, logs into, authenticates
-- Entity MUST be singular and specific (customer, vehicle, sale)
+- Entity MUST be derived from the actual code — use the target_entity from the flow data
 - All lowercase sentence format
 
 ## Examples
 
 GOOD:
-- "user views customer list"
-- "admin creates new vehicle"
-- "salesperson updates sale details"
-- "user deletes draft order"
+- "user views item list"
+- "admin creates new record"
+- "user updates account details"
+- "user deletes draft entry"
 - "user logs into system"
 
 BAD (DO NOT produce):
-- "CustomerFlow" ❌ (wrong format)
-- "Vehicle Management" ❌ (too vague)
-- "views customers" ❌ (missing stakeholder)
-- "User Creates Customer" ❌ (wrong case)
+- "ItemFlow" ❌ (wrong format)
+- "Record Management" ❌ (too vague)
+- "views items" ❌ (missing stakeholder)
+- "User Creates Record" ❌ (wrong case)
 
 ## Output
 \`\`\`csv
 entry_point,name,description
-handleCustomerCreate,"admin creates new customer","Validates and persists customer record"
-VehicleList,"user views vehicle inventory","Displays available vehicles with filters"
-handleDelete,"user deletes customer","Removes customer after confirmation"
-\`\`\``;
+handleItemCreate,"admin creates new item","Validates and persists item record"
+ListView,"user views item list","Displays available items with filters"
+handleRemove,"user deletes record","Removes record after confirmation"
+\`\`\`
+
+IMPORTANT: The entry_point column MUST match the entry point value from the input exactly. This is used to match responses back to flows.`;
   }
 
   private buildEnhancementUserPrompt(
@@ -153,50 +155,56 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
   }
 
   private parseEnhancedFlowsCSV(response: string, originalFlows: FlowSuggestion[]): FlowSuggestion[] {
-    const results: FlowSuggestion[] = [];
-
     const csvMatch = response.match(/```csv\n([\s\S]*?)\n```/) || response.match(/```\n([\s\S]*?)\n```/);
     const csvContent = csvMatch ? csvMatch[1] : response;
 
     const lines = csvContent.split('\n').filter((l) => l.trim() && !l.startsWith('entry_point'));
 
-    for (let i = 0; i < originalFlows.length; i++) {
-      const original = originalFlows[i];
+    // Build a lookup from entry_point value → parsed enhancement
+    const enhancementByKey = new Map<string, { name: string; description: string }>();
+    for (const line of lines) {
+      const fields = parseRow(line);
+      if (!fields || fields.length < 3) continue;
 
-      if (i < lines.length) {
-        const fields = parseRow(lines[i]);
-        if (fields && fields.length >= 3) {
-          const newName = fields[1].trim().replace(/"/g, '');
-          const newSlug = newName
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-|-$/g, '');
+      const entryPoint = fields[0].trim().replace(/"/g, '');
+      const name = fields[1].trim().replace(/"/g, '');
+      const description = fields[2].trim().replace(/"/g, '');
 
-          // Extract stakeholder from the LLM-generated name (format: "[stakeholder] [verb]s [entity]")
-          const validStakeholders: Record<string, FlowSuggestion['stakeholder']> = {
-            user: 'user',
-            admin: 'admin',
-            system: 'system',
-            developer: 'developer',
-            external: 'external',
-          };
-          const firstWord = newName.split(' ')[0]?.toLowerCase();
-          const derivedStakeholder = validStakeholders[firstWord] ?? null;
-
-          results.push({
-            ...original,
-            name: newName || original.name,
-            slug: newSlug || original.slug,
-            description: fields[2].trim().replace(/"/g, '') || original.description,
-            ...(derivedStakeholder ? { stakeholder: derivedStakeholder } : {}),
-          });
-          continue;
-        }
+      if (entryPoint && name) {
+        enhancementByKey.set(entryPoint, { name, description });
       }
-
-      results.push(original);
     }
 
-    return results;
+    const validStakeholders: Record<string, FlowSuggestion['stakeholder']> = {
+      user: 'user',
+      admin: 'admin',
+      system: 'system',
+      developer: 'developer',
+      external: 'external',
+    };
+
+    // Match each original flow to its enhancement by entry_point key
+    return originalFlows.map((original) => {
+      // Try matching by entryPath (the key we emit in the user prompt)
+      const enhancement = enhancementByKey.get(original.entryPath);
+      if (!enhancement) return original;
+
+      const newName = enhancement.name;
+      const newSlug = newName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+
+      const firstWord = newName.split(' ')[0]?.toLowerCase();
+      const derivedStakeholder = validStakeholders[firstWord] ?? null;
+
+      return {
+        ...original,
+        name: newName || original.name,
+        slug: newSlug || original.slug,
+        description: enhancement.description || original.description,
+        ...(derivedStakeholder ? { stakeholder: derivedStakeholder } : {}),
+      };
+    });
   }
 }

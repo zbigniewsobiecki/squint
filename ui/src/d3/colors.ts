@@ -1,6 +1,3 @@
-import type * as d3 from 'd3';
-import type { HierarchyNode } from '../types/api';
-
 /**
  * Color scheme for different symbol kinds
  */
@@ -13,14 +10,6 @@ export const KIND_COLORS: Record<string, string> = {
   const: '#803d3d',
   enum: '#3d6880',
   method: '#4a6670',
-};
-
-/**
- * Hierarchy level colors (for directories/files)
- */
-export const HIERARCHY_COLORS = {
-  directory: '#2d4a5a',
-  file: '#3d4a5a',
 };
 
 /**
@@ -40,33 +29,6 @@ export function getFlowColor(index: number): string {
  */
 export function getKindColor(kind: string): string {
   return KIND_COLORS[kind] || '#666';
-}
-
-/**
- * Get color for hierarchy node (D3 hierarchy datum)
- */
-export function getHierarchyColor(d: d3.HierarchyNode<HierarchyNode>): string {
-  if (d.data.data) {
-    // Symbol node - use kind color
-    return KIND_COLORS[d.data.data.kind] || '#666';
-  }
-  if (d.data.isFile) {
-    return HIERARCHY_COLORS.file;
-  }
-  if (d.data.isDirectory) {
-    return HIERARCHY_COLORS.directory;
-  }
-  return '#2d2d2d';
-}
-
-/**
- * Get stroke color based on annotation status
- */
-export function getStrokeColor(d: d3.HierarchyNode<HierarchyNode>): string {
-  if (d.data.data?.hasAnnotations) {
-    return '#6a9955';
-  }
-  return '#3c3c3c';
 }
 
 /**

@@ -68,10 +68,10 @@ describe('FlowEnhancer', () => {
     const parseCSV = (response: string, flows: FlowSuggestion[]) =>
       (enhancer as any).parseEnhancedFlowsCSV(response, flows);
 
-    it('updates flow name, slug, and description from CSV', () => {
+    it('updates flow name, slug, and description from CSV (key-based matching)', () => {
       const response = `\`\`\`csv
 entry_point,name,description
-Home,"user views dashboard","Displays main dashboard with metrics"
+project.frontend.Home,"user views dashboard","Displays main dashboard with metrics"
 \`\`\``;
 
       const flows = [makeFlow()];
@@ -83,9 +83,10 @@ Home,"user views dashboard","Displays main dashboard with metrics"
       expect(result[0].description).toBe('Displays main dashboard with metrics');
     });
 
-    it('preserves original flow when CSV line is missing', () => {
+    it('preserves original flow when no matching entry_point in CSV', () => {
       const response = `\`\`\`csv
 entry_point,name,description
+non.matching.path,"user views something","Some desc"
 \`\`\``;
 
       const original = makeFlow({ name: 'KeepMe', slug: 'keep-me' });
@@ -96,14 +97,17 @@ entry_point,name,description
       expect(result[0].slug).toBe('keep-me');
     });
 
-    it('handles multiple flows', () => {
+    it('handles multiple flows matched by entry_point key', () => {
       const response = `\`\`\`csv
 entry_point,name,description
-CustomerList,"user views customers","Lists all customers"
-CreateCustomer,"admin creates customer","Creates a new customer record"
+project.customers.CustomerList,"user views customers","Lists all customers"
+project.customers.CreateCustomer,"admin creates customer","Creates a new customer record"
 \`\`\``;
 
-      const flows = [makeFlow({ name: 'Flow1', slug: 'flow-1' }), makeFlow({ name: 'Flow2', slug: 'flow-2' })];
+      const flows = [
+        makeFlow({ name: 'Flow1', slug: 'flow-1', entryPath: 'project.customers.CustomerList' }),
+        makeFlow({ name: 'Flow2', slug: 'flow-2', entryPath: 'project.customers.CreateCustomer' }),
+      ];
 
       const result = parseCSV(response, flows);
 
@@ -114,7 +118,7 @@ CreateCustomer,"admin creates customer","Creates a new customer record"
 
     it('handles response without code fences', () => {
       const response = `entry_point,name,description
-Home,"user views home","Home page"`;
+project.frontend.Home,"user views home","Home page"`;
 
       const flows = [makeFlow()];
       const result = parseCSV(response, flows);
@@ -125,7 +129,7 @@ Home,"user views home","Home page"`;
     it('preserves original when CSV line has too few fields', () => {
       const response = `\`\`\`csv
 entry_point,name,description
-Home,"short"
+project.frontend.Home,"short"
 \`\`\``;
 
       const original = makeFlow({ name: 'KeepThis', slug: 'keep-this', description: 'original desc' });
@@ -138,7 +142,7 @@ Home,"short"
     it('generates correct slug from enhanced name', () => {
       const response = `\`\`\`csv
 entry_point,name,description
-Home,"admin creates new vehicle","Creates vehicle record"
+project.frontend.Home,"admin creates new vehicle","Creates vehicle record"
 \`\`\``;
 
       const flows = [makeFlow()];
@@ -150,7 +154,7 @@ Home,"admin creates new vehicle","Creates vehicle record"
     it('strips quotes from name and description', () => {
       const response = `\`\`\`csv
 entry_point,name,description
-Home,"user views ""dashboard""","Shows the ""main"" dashboard"
+project.frontend.Home,"user views ""dashboard""","Shows the ""main"" dashboard"
 \`\`\``;
 
       const flows = [makeFlow()];
@@ -163,7 +167,7 @@ Home,"user views ""dashboard""","Shows the ""main"" dashboard"
     it('preserves non-name/slug/description fields from original', () => {
       const response = `\`\`\`csv
 entry_point,name,description
-Home,"admin views dashboard","Dashboard view"
+project.frontend.Home,"admin views dashboard","Dashboard view"
 \`\`\``;
 
       const original = makeFlow({
@@ -188,7 +192,7 @@ Home,"admin views dashboard","Dashboard view"
     it('derives stakeholder from LLM-generated name', () => {
       const response = `\`\`\`csv
 entry_point,name,description
-Home,"system processes batch job","Runs scheduled batch processing"
+project.frontend.Home,"system processes batch job","Runs scheduled batch processing"
 \`\`\``;
 
       const original = makeFlow({ stakeholder: 'user' });
@@ -200,7 +204,7 @@ Home,"system processes batch job","Runs scheduled batch processing"
     it('preserves original stakeholder when name has no valid stakeholder prefix', () => {
       const response = `\`\`\`csv
 entry_point,name,description
-Home,"unknown action here","Some description"
+project.frontend.Home,"unknown action here","Some description"
 \`\`\``;
 
       const original = makeFlow({ stakeholder: 'admin' });
@@ -209,16 +213,16 @@ Home,"unknown action here","Some description"
       expect(result[0].stakeholder).toBe('admin');
     });
 
-    it('handles more flows than CSV lines', () => {
+    it('only matches the flow with correct entry_point, others keep original', () => {
       const response = `\`\`\`csv
 entry_point,name,description
-Home,"user views home","Home page"
+project.frontend.Home,"user views home","Home page"
 \`\`\``;
 
       const flows = [
-        makeFlow({ name: 'Flow1', slug: 'flow-1' }),
-        makeFlow({ name: 'Flow2', slug: 'flow-2' }),
-        makeFlow({ name: 'Flow3', slug: 'flow-3' }),
+        makeFlow({ name: 'Flow1', slug: 'flow-1', entryPath: 'project.frontend.Home' }),
+        makeFlow({ name: 'Flow2', slug: 'flow-2', entryPath: 'project.frontend.Settings' }),
+        makeFlow({ name: 'Flow3', slug: 'flow-3', entryPath: 'project.frontend.Profile' }),
       ];
 
       const result = parseCSV(response, flows);

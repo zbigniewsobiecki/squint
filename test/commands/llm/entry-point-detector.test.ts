@@ -56,20 +56,12 @@ describe('entry-point-detector heuristics', () => {
       expect(infer('doSomething', 'project.misc').actionType).toBeNull();
     });
 
-    it('infers target entity from name', () => {
-      expect(infer('createCustomer', 'project.sales').targetEntity).toBe('customer');
-      expect(infer('updateVehicle', 'project.inventory').targetEntity).toBe('vehicle');
-      expect(infer('deleteOrder', 'project.orders').targetEntity).toBe('order');
-    });
-
-    it('infers target entity from module path', () => {
-      expect(infer('handleSubmit', 'project.customer').targetEntity).toBe('customer');
-      expect(infer('handleSubmit', 'project.vehicle').targetEntity).toBe('vehicle');
-    });
-
-    it('falls back to last path segment for target entity', () => {
-      const result = infer('handleClick', 'project.widgets');
-      expect(result.targetEntity).toBe('widgets');
+    it('returns null targetEntity (entity classification deferred to LLM)', () => {
+      expect(infer('createCustomer', 'project.sales').targetEntity).toBeNull();
+      expect(infer('updateVehicle', 'project.inventory').targetEntity).toBeNull();
+      expect(infer('deleteOrder', 'project.orders').targetEntity).toBeNull();
+      expect(infer('handleSubmit', 'project.customer').targetEntity).toBeNull();
+      expect(infer('handleClick', 'project.widgets').targetEntity).toBeNull();
     });
 
     it('excludes generic path segments from target entity', () => {

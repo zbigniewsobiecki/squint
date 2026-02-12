@@ -710,6 +710,17 @@ CREATE INDEX idx_flow_def_steps_to ON flow_definition_steps(to_definition_id);
 // Utility Functions
 // ============================================================
 
+/**
+ * Predicate that identifies runtime interactions (as opposed to static import edges).
+ * Keeps 'ast' and 'llm-inferred' sources, excludes 'ast-import' source and 'test-internal' pattern.
+ * This is the single source of truth for "meaningful interaction" across the entire pipeline.
+ */
+export function isRuntimeInteraction(i: Pick<Interaction, 'source' | 'pattern'>): boolean {
+  if (i.pattern === 'test-internal') return false;
+  if (i.source === 'ast-import') return false;
+  return true;
+}
+
 export function computeHash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }

@@ -10,7 +10,6 @@ import { initFilesTreemap } from './views/files-treemap';
 import { initFlowsDag } from './views/flows-dag';
 import { initInteractions } from './views/interactions';
 import { initModulesTree } from './views/modules-tree';
-import { initSunburst } from './views/sunburst';
 import { initSymbols } from './views/symbols';
 
 // Initialize store and API client
@@ -20,7 +19,6 @@ const api = createApiClient();
 // View initialization functions
 const views = {
   symbols: initSymbols,
-  sunburst: initSunburst,
   modules: initModulesTree,
   flows: initFlowsDag,
   interactions: initInteractions,
@@ -48,12 +46,6 @@ function switchView(view: keyof typeof views) {
   document.querySelectorAll('.view-btn').forEach((btn) => {
     btn.classList.toggle('active', (btn as HTMLElement).dataset.view === view);
   });
-
-  // Show/hide relationship filters (only for hierarchy view)
-  const filters = document.getElementById('relationship-filters');
-  if (filters) {
-    filters.classList.toggle('visible', view === 'sunburst');
-  }
 
   // Update stats display based on view
   updateStatsForView(view);
@@ -167,36 +159,9 @@ async function loadInitialData() {
   }
 }
 
-// Setup relationship filters (for hierarchy view)
-function setupRelationshipFilters() {
-  document.querySelectorAll('.filter-chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      const type = (chip as HTMLElement).dataset.type;
-      if (!type) return;
-
-      // Update chip styles (single-select)
-      document.querySelectorAll('.filter-chip').forEach((c) => {
-        c.classList.remove('active');
-        c.classList.add('inactive');
-      });
-      chip.classList.remove('inactive');
-      chip.classList.add('active');
-
-      // Update store and re-render
-      store.setState({
-        selectedGrouping: type as 'structure' | 'extends' | 'implements' | 'calls' | 'imports' | 'uses',
-      });
-      if (currentView === 'sunburst') {
-        renderCurrentView();
-      }
-    });
-  });
-}
-
 // Initialize the application
 function init() {
   setupViewToggle();
-  setupRelationshipFilters();
   loadInitialData();
 }
 

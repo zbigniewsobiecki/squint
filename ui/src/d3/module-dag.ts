@@ -35,7 +35,35 @@ export function getBoxColors(depth: number, branchIndex: number): { fill: string
   };
 }
 
-function computeValue(node: ModuleTreeNode): number {
+export function buildModuleTree(modules: DagModule[]): ModuleTreeNode | null {
+  const moduleById = new Map<number, ModuleTreeNode>();
+  for (const m of modules) {
+    moduleById.set(m.id, { ...m, children: [], _value: undefined, colorIndex: m.colorIndex ?? 0 });
+  }
+
+  let rootModule: ModuleTreeNode | null = null;
+
+  for (const m of modules) {
+    const node = moduleById.get(m.id)!;
+    if (m.parentId === null) {
+      rootModule = node;
+    } else {
+      const parent = moduleById.get(m.parentId);
+      if (parent) {
+        parent.children.push(node);
+      }
+    }
+  }
+
+  if (!rootModule && modules.length > 0) {
+    rootModule = moduleById.get(modules[0].id)!;
+  }
+
+  if (rootModule) computeValue(rootModule);
+  return rootModule;
+}
+
+export function computeValue(node: ModuleTreeNode): number {
   const childrenSum = node.children.reduce((s, c) => s + computeValue(c), 0);
   node._value = node.memberCount + childrenSum;
   if (node._value === 0) node._value = 1;
@@ -62,32 +90,8 @@ export function renderModuleDag(
 
   if (modules.length === 0) return null;
 
-  // Build tree structure from flat module list
-  const moduleById = new Map<number, ModuleTreeNode>();
-  for (const m of modules) {
-    moduleById.set(m.id, { ...m, children: [] });
-  }
-
-  let rootModule: ModuleTreeNode | null = null;
-
-  for (const m of modules) {
-    const node = moduleById.get(m.id)!;
-    if (m.parentId === null) {
-      rootModule = node;
-    } else {
-      const parent = moduleById.get(m.parentId);
-      if (parent) {
-        parent.children.push(node);
-      }
-    }
-  }
-
-  if (!rootModule) {
-    rootModule = moduleById.get(modules[0].id)!;
-  }
-
-  // Compute cumulative values
-  computeValue(rootModule);
+  const rootModule = buildModuleTree(modules);
+  if (!rootModule) return null;
 
   // D3 pack layout
   const size = Math.min(width, height);
@@ -182,6 +186,29 @@ export function renderModuleDag(
     circle.attr('r', (d) => d.r * k);
   }
 
+  // Visibility: show focus, its direct children, and grandchildren (one level inside each child)
+  function isVisible(
+    d: d3.HierarchyCircularNode<ModuleTreeNode>,
+    focusNode: d3.HierarchyCircularNode<ModuleTreeNode>
+  ): boolean {
+    return d === focusNode || d.parent === focusNode || d.parent?.parent === focusNode;
+  }
+
+  function updateCircleVisibility(focusNode: d3.HierarchyCircularNode<ModuleTreeNode>, animate: boolean) {
+    if (animate) {
+      circle
+        .transition()
+        .duration(750)
+        .style('opacity', (d) => (isVisible(d, focusNode) ? 1 : 0))
+        .on('end', function (d) {
+          d3.select(this.parentNode as SVGGElement).style('pointer-events', isVisible(d, focusNode) ? 'auto' : 'none');
+        });
+    } else {
+      circle.style('opacity', (d) => (isVisible(d, focusNode) ? 1 : 0));
+      circleNode.style('pointer-events', (d) => (isVisible(d, focusNode) ? 'auto' : 'none'));
+    }
+  }
+
   function zoom(_event: MouseEvent | null, d: d3.HierarchyCircularNode<ModuleTreeNode>) {
     focus = d;
 
@@ -192,6 +219,8 @@ export function renderModuleDag(
         const i = d3.interpolateZoom(view, [focus.x, focus.y, focus.r * 2]);
         return (t: number) => zoomTo(i(t));
       });
+
+    updateCircleVisibility(focus, true);
 
     label
       .filter(function (d) {
@@ -245,7 +274,8 @@ export function renderModuleDag(
     onSelect?.(null);
   });
 
-  // Initial zoom
+  // Initial visibility and zoom
+  updateCircleVisibility(root, false);
   zoomTo([root.x, root.y, root.r * 2]);
 
   return { modulePositions, zoomGroup: g, svg };
