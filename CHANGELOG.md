@@ -1,3 +1,10 @@
+## [1.4.2](https://github.com/zbigniewsobiecki/squint/compare/v1.4.1...v1.4.2) (2026-02-12)
+
+### Bug Fixes
+
+* derive actionType and targetEntity from enhancer-generated names ([041f95a](https://github.com/zbigniewsobiecki/squint/commit/041f95a04f04f242e37aa9d0f78bc94faf1302a9))
+* format package.json for biome compliance ([c0ed371](https://github.com/zbigniewsobiecki/squint/commit/c0ed371d6fc2c9758178aa664f3f4b577a7c6f77))
+
 ## [1.4.1](https://github.com/zbigniewsobiecki/squint/compare/v1.4.0...v1.4.1) (2026-02-12)
 
 ### Bug Fixes
