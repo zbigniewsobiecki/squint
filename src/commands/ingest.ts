@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
+import DomainsConsolidate from './domains/consolidate.js';
 import FeaturesGenerate from './features/generate.js';
 import FlowsGenerate from './flows/generate.js';
 import FlowsVerify from './flows/verify.js';
@@ -25,6 +26,7 @@ const STAGE_IDS = [
   'parse',
   'symbols',
   'symbols-verify',
+  'domains-consolidate',
   'relationships',
   'relationships-verify',
   'modules',
@@ -167,6 +169,11 @@ export default class Ingest extends Command {
             ...llmFlags,
             ...debugFlags,
           ]),
+      },
+      {
+        id: 'domains-consolidate',
+        label: 'Consolidate domains',
+        run: () => DomainsConsolidate.run(['--fix', '-d', dbPath]),
       },
       {
         id: 'relationships',

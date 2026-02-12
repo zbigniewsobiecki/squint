@@ -27,9 +27,15 @@ export interface CoverageInfo {
  */
 const ASPECT_DESCRIPTIONS: Record<string, string> = {
   purpose: 'A concise 1-2 sentence description of what the symbol does and why it exists.',
-  domain: 'A JSON array of domain tags (e.g., ["parsing", "validation"]). Use lowercase, hyphenated names.',
+  domain: `A JSON array of 1-3 domain tags (e.g., ["parsing", "validation"]). Use lowercase, hyphenated names.
+  - Derive domains from the symbol's actual functionality AND its file location/package
+  - Use consistent naming: always plural OR singular (not both), no abbreviations (use "authentication" not "auth")
+  - Avoid overly generic tags like "utility", "types", "configuration" unless the symbol is truly generic
+  - Each symbol's domains should reflect ITS OWN context — do not copy domains from other symbols in this batch`,
   role: 'The architectural role (e.g., "controller", "utility", "model", "service", "factory", "adapter").',
-  pure: `"true" only if purely functional (deterministic, no side effects). "false" if it: creates objects with mutable state, returns closures with internal state, uses vi.fn()/mock factories, or performs I/O. Most factory functions are NOT pure.`,
+  pure: `"true" only if purely functional (deterministic, no side effects). "false" if it: creates objects with mutable state, returns closures with internal state, uses vi.fn()/mock factories, or performs I/O. Most factory functions are NOT pure.
+  - Functions returning \`new CustomClass(...)\` create new mutable instance identities each call → impure
+  - Exception: constructing immutable value objects like Error subclasses (with only readonly/constructor fields) can be pure`,
 };
 
 /**
@@ -121,6 +127,7 @@ The description depends on the relationship type:
     - \`useXxx()\` hooks → React stateful hooks
     - \`Math.random()\` → non-deterministic
     - Functions that return objects containing \`new Date()\` fields
+    - Functions returning \`new CustomClass(...)\` — creates mutable instance identity
 - For domain: pick 1-3 relevant domain tags that describe the problem area
 - For role: identify the architectural pattern the symbol represents
 - If unsure, make your best informed judgment based on the code`;

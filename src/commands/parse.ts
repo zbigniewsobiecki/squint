@@ -4,6 +4,7 @@ import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { type IIndexWriter, IndexDatabase, computeHash } from '../db/database.js';
 import { type ParsedFile, parseFile } from '../parser/ast-parser.js';
+import { buildWorkspaceMap } from '../parser/workspace-resolver.js';
 import { scanDirectory } from '../utils/file-scanner.js';
 
 export interface IndexingResult {
@@ -98,6 +99,17 @@ export function indexParsedFiles(
           }
         }
 
+        // Follow re-export chains when definition wasn't found directly
+        if (defId === null && ref.resolvedPath && !ref.isExternal) {
+          defId = followReExportChain(
+            sym.kind === 'default' ? 'default' : sym.name,
+            ref.resolvedPath,
+            parsedFiles,
+            definitionMap,
+            new Set()
+          );
+        }
+
         const symbolId = db.insertSymbol(refId, defId, sym);
 
         // Insert usages for this symbol
@@ -143,6 +155,48 @@ export function indexParsedFiles(
     usageCount: db.getUsageCount(),
     inheritanceRelationships: { extendsCreated: 0, implementsCreated: 0, notFound: 0 },
   };
+}
+
+/**
+ * Follow re-export chains to find the original definition.
+ * When a module re-exports a symbol from another module, this traces through
+ * the chain to find where the symbol is actually defined.
+ */
+function followReExportChain(
+  symbolName: string,
+  filePath: string,
+  parsedFiles: Map<string, ParsedFile>,
+  definitionMap: Map<string, Map<string, number>>,
+  visited: Set<string>
+): number | null {
+  if (visited.has(filePath) || visited.size >= 5) return null;
+  visited.add(filePath);
+
+  const parsed = parsedFiles.get(filePath);
+  if (!parsed) return null;
+
+  for (const ref of parsed.references) {
+    if ((ref.type !== 're-export' && ref.type !== 'export-all') || !ref.resolvedPath) continue;
+
+    if (ref.type === 'export-all') {
+      // export * from './source' — symbol might come from here
+      const defId = definitionMap.get(ref.resolvedPath)?.get(symbolName) ?? null;
+      if (defId !== null) return defId;
+      const found = followReExportChain(symbolName, ref.resolvedPath, parsedFiles, definitionMap, visited);
+      if (found !== null) return found;
+    } else {
+      // export { X } from './source' — check if X matches
+      for (const sym of ref.imports) {
+        if (sym.name === symbolName || sym.localName === symbolName) {
+          const defId = definitionMap.get(ref.resolvedPath)?.get(sym.name) ?? null;
+          if (defId !== null) return defId;
+          const found = followReExportChain(sym.name, ref.resolvedPath, parsedFiles, definitionMap, visited);
+          if (found !== null) return found;
+        }
+      }
+    }
+  }
+  return null;
 }
 
 export default class Parse extends Command {
@@ -199,6 +253,7 @@ export default class Parse extends Command {
     this.log(chalk.blue('Parsing files...'));
     const parsedFiles: Map<string, ParsedFile> = new Map();
     const knownFiles = new Set(files);
+    const workspaceMap = buildWorkspaceMap(directory, knownFiles);
     let successCount = 0;
     let errorCount = 0;
 
@@ -206,7 +261,7 @@ export default class Parse extends Command {
       const relativePath = path.relative(process.cwd(), filePath);
       try {
         process.stdout.write(chalk.gray(`  Parsing ${relativePath}...`));
-        const parsed = await parseFile(filePath, knownFiles);
+        const parsed = await parseFile(filePath, knownFiles, workspaceMap);
         parsedFiles.set(filePath, parsed);
         successCount++;
         process.stdout.write(chalk.green(' done\n'));

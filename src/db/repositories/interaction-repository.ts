@@ -424,6 +424,53 @@ export class InteractionRepository {
     }));
   }
 
+  /**
+   * Get module pairs connected by file-level imports (regardless of symbol resolution).
+   * This is a fallback for getImportOnlyModulePairs() — it joins through files instead
+   * of symbols.definition_id, catching imports where symbol resolution failed
+   * (complex re-exports, dynamic imports, etc.).
+   * Only returns pairs that have no existing interaction.
+   */
+  getFileLevelImportModulePairs(): Array<{
+    fromModuleId: number;
+    toModuleId: number;
+    importCount: number;
+    isTypeOnly: boolean;
+  }> {
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+
+    const stmt = this.db.prepare(`
+      SELECT
+        from_mm.module_id as fromModuleId,
+        to_mm.module_id as toModuleId,
+        COUNT(DISTINCT i.id) as importCount,
+        MIN(i.is_type_only) as isTypeOnly
+      FROM imports i
+      JOIN files from_f ON i.from_file_id = from_f.id
+      JOIN definitions from_d ON from_d.file_id = from_f.id
+      JOIN module_members from_mm ON from_mm.definition_id = from_d.id
+      JOIN files to_f ON i.to_file_id = to_f.id
+      JOIN definitions to_d ON to_d.file_id = to_f.id
+      JOIN module_members to_mm ON to_mm.definition_id = to_d.id
+      WHERE i.to_file_id IS NOT NULL
+        AND from_mm.module_id != to_mm.module_id
+        AND NOT EXISTS (
+          SELECT 1 FROM interactions
+          WHERE from_module_id = from_mm.module_id
+            AND to_module_id = to_mm.module_id
+        )
+      GROUP BY from_mm.module_id, to_mm.module_id
+    `);
+
+    return (stmt.all() as any[]).map((row) => ({
+      fromModuleId: row.fromModuleId,
+      toModuleId: row.toModuleId,
+      importCount: row.importCount,
+      isTypeOnly: row.isTypeOnly === 1,
+    }));
+  }
+
   // ============================================================
   // Import Path & Validation Methods
   // ============================================================

@@ -302,6 +302,27 @@ function countArguments(argsNode: SyntaxNode): number {
 }
 
 /**
+ * Check if a node has any function/arrow_function/method ancestor.
+ * Used to determine if a throw_statement is inside a function body
+ * (even a nested callback) vs. bare module scope.
+ */
+function hasAncestorFunction(node: SyntaxNode): boolean {
+  let current = node.parent;
+  while (current) {
+    if (
+      current.type === 'arrow_function' ||
+      current.type === 'function_declaration' ||
+      current.type === 'function' ||
+      current.type === 'method_definition'
+    ) {
+      return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+/**
  * Check if a node is inside a type annotation context (should be ignored).
  */
 function isInTypeContext(node: SyntaxNode): boolean {
@@ -345,6 +366,12 @@ function walkForImpurity(node: SyntaxNode, localIds: Set<string> | null, reasons
       reasons.push('generator side effect (yield)');
       break;
 
+    case 'throw_statement':
+      if (!localIds && !hasAncestorFunction(node)) {
+        reasons.push('module-scope throw');
+      }
+      break;
+
     case 'assignment_expression':
     case 'augmented_assignment_expression':
       checkMutationTarget(node.childForFieldName('left'), localIds, reasons);
@@ -365,6 +392,10 @@ function walkForImpurity(node: SyntaxNode, localIds: Set<string> | null, reasons
       // Module-scope construction of non-builtin class
       if (!localIds && ctor?.type === 'identifier' && !PURE_GLOBAL_CONSTRUCTORS.has(ctor.text)) {
         reasons.push(`module-scope side effect (new ${ctor.text}())`);
+      }
+      // Function-scope construction of non-builtin class → creates mutable identity
+      if (localIds && ctor?.type === 'identifier' && !PURE_GLOBAL_CONSTRUCTORS.has(ctor.text)) {
+        reasons.push(`creates mutable instance (new ${ctor.text}())`);
       }
       break;
     }

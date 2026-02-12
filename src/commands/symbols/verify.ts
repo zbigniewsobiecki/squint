@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 import type { IndexDatabase, ReadySymbolInfo } from '../../db/database.js';
@@ -124,10 +125,10 @@ export default class Verify extends BaseLlmCommand {
 
     // Auto-fix: correct suspect-pure annotations if --fix
     if (shouldFix && !dryRun) {
-      const suspectPureIssues = phase1.issues.filter((i) => i.fixData?.action === 'set-pure-false');
-      if (suspectPureIssues.length > 0) {
+      const setPureFalseIssues = phase1.issues.filter((i) => i.fixData?.action === 'set-pure-false');
+      if (setPureFalseIssues.length > 0) {
         let fixed = 0;
-        for (const issue of suspectPureIssues) {
+        for (const issue of setPureFalseIssues) {
           if (issue.definitionId) {
             db.metadata.set(issue.definitionId, 'pure', 'false');
             fixed++;
@@ -139,10 +140,26 @@ export default class Verify extends BaseLlmCommand {
         }
       }
 
+      const setPureTrueIssues = phase1.issues.filter((i) => i.fixData?.action === 'set-pure-true');
+      if (setPureTrueIssues.length > 0) {
+        let fixed = 0;
+        for (const issue of setPureTrueIssues) {
+          if (issue.definitionId) {
+            db.metadata.set(issue.definitionId, 'pure', 'true');
+            fixed++;
+          }
+        }
+        if (!isJson) {
+          this.log(chalk.green(`  Fixed: corrected ${fixed} pure annotations to "true" (type-level declarations)`));
+          this.log('');
+        }
+      }
+
       // Auto-fix: harmonize inconsistent domain tags (deterministic — pick most common)
+      // Uses same directory-tree grouping as the detection check to avoid cross-directory harmonization
       const domainIssues = phase1.issues.filter((i) => i.fixData?.action === 'harmonize-domain');
       if (domainIssues.length > 0) {
-        // Group by (name, kind) to find the most common domain variant
+        // Group by (name, kind, parentDir) to find the most common domain variant within a directory tree
         const defIds = domainIssues.map((i) => i.definitionId).filter((id): id is number => id !== undefined);
         const groups = new Map<string, Array<{ id: number; domain: string }>>();
         for (const defId of defIds) {
@@ -150,13 +167,17 @@ export default class Verify extends BaseLlmCommand {
           if (!def) continue;
           const domain = db.metadata.getValue(defId, 'domain');
           if (!domain) continue;
-          const key = `${def.name}::${def.kind}`;
+          const dir = def.filePath ? path.dirname(def.filePath) : '';
+          const parentDir = path.dirname(dir);
+          const key = `${def.name}::${def.kind}::${parentDir}`;
           if (!groups.has(key)) groups.set(key, []);
           groups.get(key)!.push({ id: defId, domain });
         }
 
         let harmonized = 0;
         for (const [, defs] of groups) {
+          if (defs.length < 2) continue;
+
           // Find the most common domain variant
           const counts = new Map<string, number>();
           for (const { domain } of defs) {
@@ -178,6 +199,10 @@ export default class Verify extends BaseLlmCommand {
           }
           if (!bestDomain) continue;
 
+          // Only harmonize when there's a clear majority (bestCount > 1)
+          // When every member has a unique domain, there's no meaningful consensus
+          if (bestCount <= 1) continue;
+
           // Apply the most common domain to all definitions in the group
           for (const { id, domain } of defs) {
             try {
@@ -195,6 +220,135 @@ export default class Verify extends BaseLlmCommand {
         if (harmonized > 0 && !isJson) {
           this.log(chalk.green(`  Fixed: harmonized ${harmonized} inconsistent domain annotations`));
           this.log('');
+        }
+      }
+
+      // Auto-fix: re-annotate mistagged domains in small batches (max 1 per name per batch)
+      if (ctx.model) {
+        const mistaggedIssues = phase1.issues.filter((i) => i.fixData?.action === 'reannotate-mistagged-domain');
+        if (mistaggedIssues.length > 0) {
+          if (!isJson) {
+            this.log(chalk.bold(`Fixing ${mistaggedIssues.length} mistagged domain annotations via LLM...`));
+          }
+
+          // Group mistagged defs by name
+          const byName = new Map<string, number[]>();
+          for (const issue of mistaggedIssues) {
+            if (!issue.definitionId) continue;
+            const name = issue.definitionName ?? '?';
+            if (!byName.has(name)) byName.set(name, []);
+            byName.get(name)!.push(issue.definitionId);
+          }
+
+          // Round-robin into batches of ~10, max 1 per name per batch
+          const BATCH_SIZE = 10;
+          const batches: number[][] = [];
+          const iterators = new Map<string, number>();
+          for (const name of byName.keys()) iterators.set(name, 0);
+
+          let done = false;
+          while (!done) {
+            done = true;
+            const batch: number[] = [];
+            for (const [name, ids] of byName) {
+              const idx = iterators.get(name)!;
+              if (idx < ids.length) {
+                batch.push(ids[idx]);
+                iterators.set(name, idx + 1);
+                done = false;
+                if (batch.length >= BATCH_SIZE) break;
+              }
+            }
+            if (batch.length > 0) batches.push(batch);
+          }
+
+          if (!isJson) {
+            this.log(
+              chalk.gray(`  ${batches.length} batches (${mistaggedIssues.length} symbols, max 1 per name per batch)`)
+            );
+          }
+
+          let totalFixed = 0;
+          for (let bi = 0; bi < batches.length; bi++) {
+            const batch = batches[bi];
+            const symbolsToFix = batch
+              .map((id) => db.definitions.getById(id))
+              .filter((d): d is NonNullable<typeof d> => d !== null)
+              .map((d) => ({
+                id: d.id,
+                name: d.name,
+                kind: d.kind,
+                filePath: d.filePath,
+                line: d.line,
+                endLine: d.endLine,
+                dependencyCount: 0,
+              }));
+
+            if (symbolsToFix.length === 0) continue;
+
+            const domainAspects = aspects.filter((a) => a === 'domain');
+            if (domainAspects.length === 0) continue;
+
+            try {
+              const enhancedSymbols = await this.enhanceSymbols(db, symbolsToFix, domainAspects, 0);
+              const systemPrompt = buildSystemPrompt(domainAspects);
+
+              const symbolContexts: SymbolContextEnhanced[] = enhancedSymbols.map((s) => ({
+                id: s.id,
+                name: s.name,
+                kind: s.kind,
+                filePath: s.filePath,
+                line: s.line,
+                endLine: s.endLine,
+                sourceCode: s.sourceCode,
+                isExported: s.isExported,
+                dependencies: s.dependencies,
+                relationshipsToAnnotate: [],
+                incomingDependencies: s.incomingDependencies,
+                incomingDependencyCount: s.incomingDependencyCount,
+              }));
+
+              const allCoverage = db.metadata.getAspectCoverage({});
+              const totalSymbols = db.metadata.getFilteredCount({});
+              const coverage = filterCoverageForAspects(allCoverage, domainAspects, totalSymbols);
+
+              const userPrompt = buildUserPromptEnhanced(symbolContexts, domainAspects, coverage);
+
+              const response = await completeWithLogging({
+                model: ctx.model,
+                systemPrompt,
+                userPrompt,
+                temperature: 0,
+                command: this,
+                isJson: ctx.isJson,
+              });
+
+              const parseResult = parseCombinedCsv(response);
+              const validIds = new Set(batch);
+
+              for (const row of parseResult.symbols) {
+                if (!validIds.has(row.symbolId)) continue;
+                if (row.aspect !== 'domain') continue;
+                if (!row.value || row.value.length < 2) continue;
+
+                db.metadata.set(row.symbolId, row.aspect, row.value);
+                totalFixed++;
+              }
+
+              if (!isJson) {
+                this.log(chalk.gray(`  Batch ${bi + 1}/${batches.length}: processed ${symbolsToFix.length} symbols`));
+              }
+            } catch {
+              if (!isJson) {
+                this.log(chalk.yellow(`  Batch ${bi + 1}/${batches.length}: LLM error, skipping`));
+              }
+            }
+          }
+
+          if (totalFixed > 0 && !isJson) {
+            this.log(chalk.green(`  Fixed: re-annotated ${totalFixed} mistagged domain annotations via LLM`));
+            this.log('');
+          }
         }
       }
     }
@@ -268,7 +422,7 @@ export default class Verify extends BaseLlmCommand {
           }));
 
         if (symbolsToFix.length > 0) {
-          const enhancedSymbols = await this.enhanceSymbols(db, symbolsToFix, aspects, 50);
+          const enhancedSymbols = await this.enhanceSymbols(db, symbolsToFix, aspects, 0);
           const systemPrompt = buildSystemPrompt(aspects);
 
           const symbolContexts: SymbolContextEnhanced[] = enhancedSymbols.map((s) => ({

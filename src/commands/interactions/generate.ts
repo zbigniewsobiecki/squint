@@ -216,6 +216,33 @@ export default class InteractionsGenerate extends BaseLlmCommand {
       }
     }
 
+    // Step 2b: File-level import fallback (catches imports where symbol resolution failed)
+    let fileLevelCount = 0;
+    if (!dryRun) {
+      const fileLevelPairs = db.interactions.getFileLevelImportModulePairs();
+      if (fileLevelPairs.length > 0) {
+        for (const pair of fileLevelPairs) {
+          const pattern =
+            testModuleIds.has(pair.fromModuleId) || testModuleIds.has(pair.toModuleId) ? 'test-internal' : 'business';
+          try {
+            db.interactions.upsert(pair.fromModuleId, pair.toModuleId, {
+              weight: pair.importCount,
+              pattern,
+              semantic: pair.isTypeOnly ? 'Type dependency (file-level import)' : 'File-level import dependency',
+              source: 'ast-import',
+            });
+            fileLevelCount++;
+          } catch {
+            // Skip if already exists
+          }
+        }
+
+        if (!isJson && verbose && fileLevelCount > 0) {
+          this.log(chalk.green(`  Added ${fileLevelCount} file-level import interactions`));
+        }
+      }
+    }
+
     // Compute process groups for Steps 3 and 4
     const processGroups = computeProcessGroups(db);
 
@@ -1028,8 +1055,19 @@ DO NOT report:
   }
 
   /**
+   * Check if a module contains only type definitions (interfaces, types, enums).
+   * Type-only modules should never be the initiator of an interaction.
+   */
+  private isTypeOnlyModule(moduleId: number, db: IndexDatabase): boolean {
+    const members = db.modules.getSymbols(moduleId);
+    if (members.length === 0) return false;
+    const TYPE_KINDS = new Set(['interface', 'type', 'enum']);
+    return members.every((m) => TYPE_KINDS.has(m.kind));
+  }
+
+  /**
    * Structural gate for inferred interactions.
-   * Rejects duplicates, self-loops, and reverse-of-AST interactions.
+   * Rejects duplicates, self-loops, reverse-of-AST interactions, and type-only initiators.
    */
   private gateInferredInteraction(
     fromModule: Module,
@@ -1053,6 +1091,11 @@ DO NOT report:
     const reverseInteraction = db.interactions.getByModules(toModule.id, fromModule.id);
     if (reverseInteraction && (reverseInteraction.source === 'ast' || reverseInteraction.source === 'ast-import')) {
       return { pass: false, reason: 'reverse-of-ast' };
+    }
+
+    // Gate D — Type-only module as initiator
+    if (this.isTypeOnlyModule(fromModule.id, db)) {
+      return { pass: false, reason: 'type-only-initiator' };
     }
 
     return { pass: true };

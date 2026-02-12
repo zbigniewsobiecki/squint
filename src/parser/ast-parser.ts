@@ -11,6 +11,7 @@ import {
   extractInternalUsages,
   extractReferences,
 } from './reference-extractor.js';
+import type { WorkspaceMap } from './workspace-resolver.js';
 
 export interface ParsedFile {
   language: 'typescript' | 'javascript';
@@ -53,14 +54,15 @@ export function parseContent(
   content: string,
   filePath: string,
   knownFiles: Set<string>,
-  metadata: { sizeBytes: number; modifiedAt: string }
+  metadata: { sizeBytes: number; modifiedAt: string },
+  workspaceMap?: WorkspaceMap | null
 ): ParsedFile {
   const parser = getParser(filePath);
   // Buffer size: file size × 2 (for UTF-16) + 1MB overhead, minimum 1MB
   const bufferSize = Math.max(1024 * 1024, content.length * 2 + 1024 * 1024);
   const tree = parser.parse(content, undefined, { bufferSize });
   const language = getLanguageFromExtension(filePath);
-  const references = extractReferences(tree.rootNode, filePath, knownFiles);
+  const references = extractReferences(tree.rootNode, filePath, knownFiles, workspaceMap);
   const definitions = extractDefinitions(tree.rootNode);
   const internalUsages = extractInternalUsages(tree.rootNode, definitions);
 
@@ -75,12 +77,22 @@ export function parseContent(
   };
 }
 
-export async function parseFile(filePath: string, knownFiles: Set<string> = new Set()): Promise<ParsedFile> {
+export async function parseFile(
+  filePath: string,
+  knownFiles: Set<string> = new Set(),
+  workspaceMap?: WorkspaceMap | null
+): Promise<ParsedFile> {
   const [content, stat] = await Promise.all([fs.readFile(filePath, 'utf-8'), fs.stat(filePath)]);
-  return parseContent(content, filePath, knownFiles, {
-    sizeBytes: stat.size,
-    modifiedAt: stat.mtime.toISOString(),
-  });
+  return parseContent(
+    content,
+    filePath,
+    knownFiles,
+    {
+      sizeBytes: stat.size,
+      modifiedAt: stat.mtime.toISOString(),
+    },
+    workspaceMap
+  );
 }
 
 export async function parseFiles(filePaths: string[]): Promise<Map<string, ParsedFile>> {

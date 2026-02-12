@@ -510,6 +510,47 @@ export class DependencyRepository {
   }
 
   /**
+   * Detect orphan module-scope usages: imported symbols used in a file at lines
+   * outside any definition's line range. These are module-scope statements
+   * (e.g., app.use('/auth', authRouter)) that the line-range join cannot capture.
+   * Returns one row per (file, referenced definition) pair.
+   */
+  getOrphanModuleScopeUsages(): Array<{
+    filePath: string;
+    symbolName: string;
+    usageLine: number;
+    referencedDefId: number;
+    referencedDefName: string;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT
+        f.path as filePath,
+        s.name as symbolName,
+        u.line as usageLine,
+        dep_def.id as referencedDefId,
+        dep_def.name as referencedDefName
+      FROM usages u
+      JOIN symbols s ON u.symbol_id = s.id
+      JOIN definitions dep_def ON s.definition_id = dep_def.id
+      JOIN imports i ON s.reference_id = i.id
+      JOIN files f ON i.from_file_id = f.id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM definitions d
+        WHERE d.file_id = f.id
+          AND d.line <= u.line AND u.line <= d.end_line
+      )
+      ORDER BY f.path, u.line
+    `);
+    return stmt.all() as Array<{
+      filePath: string;
+      symbolName: string;
+      usageLine: number;
+      referencedDefId: number;
+      referencedDefName: string;
+    }>;
+  }
+
+  /**
    * Get import dependency graph data for D3 visualization
    */
   getImportGraph(): {

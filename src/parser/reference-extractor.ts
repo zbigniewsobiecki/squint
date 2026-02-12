@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { SyntaxNode } from 'tree-sitter';
 import type { Definition } from './definition-extractor.js';
+import type { WorkspaceMap } from './workspace-resolver.js';
+import { resolveWorkspaceImport } from './workspace-resolver.js';
 
 export interface CallsiteMetadata {
   argumentCount: number;
@@ -101,7 +103,12 @@ function resolveSubpathImport(source: string, imports: Record<string, string>, p
 /**
  * Resolve an import path to an absolute path if it exists in the known files set
  */
-export function resolveImportPath(source: string, fromFile: string, knownFiles: Set<string>): string | undefined {
+export function resolveImportPath(
+  source: string,
+  fromFile: string,
+  knownFiles: Set<string>,
+  workspaceMap?: WorkspaceMap | null
+): string | undefined {
   const fromDir = path.dirname(fromFile);
 
   // Handle subpath imports (#...)
@@ -126,8 +133,11 @@ export function resolveImportPath(source: string, fromFile: string, knownFiles: 
     return undefined;
   }
 
-  // External packages can't be resolved
+  // Bare specifiers: try workspace resolution first, then treat as external
   if (!source.startsWith('.') && !source.startsWith('/')) {
+    if (workspaceMap) {
+      return resolveWorkspaceImport(source, workspaceMap, knownFiles);
+    }
     return undefined;
   }
 
@@ -545,7 +555,8 @@ function extractDynamicImport(
   callNode: SyntaxNode,
   _rootNode: SyntaxNode,
   filePath: string,
-  knownFiles: Set<string>
+  knownFiles: Set<string>,
+  workspaceMap?: WorkspaceMap | null
 ): FileReference | null {
   // Check if this is import()
   const functionNode = callNode.childForFieldName('function');
@@ -560,12 +571,15 @@ function extractDynamicImport(
   if (!firstArg || firstArg.type !== 'string') return null;
 
   const source = firstArg.text.slice(1, -1);
-  const isExternal = !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
+  const resolvedPath = resolveImportPath(source, filePath, knownFiles, workspaceMap);
+  const isExternal = resolvedPath
+    ? false
+    : !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
 
   return {
     type: 'dynamic-import',
     source,
-    resolvedPath: resolveImportPath(source, filePath, knownFiles),
+    resolvedPath,
     isExternal,
     isTypeOnly: false,
     imports: [
@@ -590,7 +604,8 @@ function extractRequireCall(
   callNode: SyntaxNode,
   rootNode: SyntaxNode,
   filePath: string,
-  knownFiles: Set<string>
+  knownFiles: Set<string>,
+  workspaceMap?: WorkspaceMap | null
 ): FileReference | null {
   const functionNode = callNode.childForFieldName('function');
   if (!functionNode || functionNode.text !== 'require') {
@@ -604,7 +619,10 @@ function extractRequireCall(
   if (!firstArg || firstArg.type !== 'string') return null;
 
   const source = firstArg.text.slice(1, -1);
-  const isExternal = !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
+  const requireResolvedPath = resolveImportPath(source, filePath, knownFiles, workspaceMap);
+  const isExternal = requireResolvedPath
+    ? false
+    : !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
 
   // Try to find what variable this require is assigned to
   const imports: ImportedSymbol[] = [];
@@ -662,7 +680,7 @@ function extractRequireCall(
   return {
     type: 'require',
     source,
-    resolvedPath: resolveImportPath(source, filePath, knownFiles),
+    resolvedPath: requireResolvedPath,
     isExternal,
     isTypeOnly: false,
     imports,
@@ -676,21 +694,29 @@ function extractRequireCall(
 /**
  * Extract all references from an AST
  */
-export function extractReferences(rootNode: SyntaxNode, filePath: string, knownFiles: Set<string>): FileReference[] {
+export function extractReferences(
+  rootNode: SyntaxNode,
+  filePath: string,
+  knownFiles: Set<string>,
+  workspaceMap?: WorkspaceMap | null
+): FileReference[] {
   const references: FileReference[] = [];
 
   function walk(node: SyntaxNode): void {
     if (node.type === 'import_statement') {
       const source = extractSourceString(node);
       if (source) {
-        const isExternal = !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
+        const resolvedPath = resolveImportPath(source, filePath, knownFiles, workspaceMap);
+        const isExternal = resolvedPath
+          ? false
+          : !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
         const isTypeOnly = isTypeOnlyImport(node);
         const imports = extractImportedSymbols(node, rootNode);
 
         references.push({
           type: 'import',
           source,
-          resolvedPath: resolveImportPath(source, filePath, knownFiles),
+          resolvedPath,
           isExternal,
           isTypeOnly,
           imports,
@@ -704,7 +730,10 @@ export function extractReferences(rootNode: SyntaxNode, filePath: string, knownF
       const source = extractSourceString(node);
       if (source) {
         // This is a re-export
-        const isExternal = !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
+        const resolvedPath = resolveImportPath(source, filePath, knownFiles, workspaceMap);
+        const isExternal = resolvedPath
+          ? false
+          : !source.startsWith('.') && !source.startsWith('/') && !source.startsWith('#');
         const imports = extractReExportedSymbols(node, rootNode);
 
         // Determine if it's export-all or re-export
@@ -713,7 +742,7 @@ export function extractReferences(rootNode: SyntaxNode, filePath: string, knownF
         references.push({
           type: isExportAll ? 'export-all' : 're-export',
           source,
-          resolvedPath: resolveImportPath(source, filePath, knownFiles),
+          resolvedPath,
           isExternal,
           isTypeOnly: isTypeOnlyImport(node),
           imports,
@@ -725,14 +754,14 @@ export function extractReferences(rootNode: SyntaxNode, filePath: string, knownF
       }
     } else if (node.type === 'call_expression') {
       // Check for dynamic import
-      const dynamicImport = extractDynamicImport(node, rootNode, filePath, knownFiles);
+      const dynamicImport = extractDynamicImport(node, rootNode, filePath, knownFiles, workspaceMap);
       if (dynamicImport) {
         references.push(dynamicImport);
         return; // Don't recurse into import()
       }
 
       // Check for require()
-      const requireCall = extractRequireCall(node, rootNode, filePath, knownFiles);
+      const requireCall = extractRequireCall(node, rootNode, filePath, knownFiles, workspaceMap);
       if (requireCall) {
         references.push(requireCall);
         return; // Don't recurse into require()

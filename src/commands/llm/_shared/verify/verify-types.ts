@@ -11,6 +11,7 @@ export interface VerificationIssue {
   suggestion?: string;
   fixData?: {
     action:
+      | 'set-pure-true'
       | 'set-pure-false'
       | 'change-relationship-type'
       | 'move-to-test-module'
@@ -24,7 +25,9 @@ export interface VerificationIssue {
       | 'reannotate-relationship'
       | 'annotate-missing-relationship'
       | 'reannotate-definition'
-      | 'harmonize-domain';
+      | 'reannotate-mistagged-domain'
+      | 'harmonize-domain'
+      | 'purpose-role-mismatch';
     targetDefinitionId?: number;
     expectedType?: string;
     interactionId?: number;

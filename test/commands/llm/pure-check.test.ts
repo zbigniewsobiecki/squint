@@ -338,6 +338,77 @@ function pure(x: number) { return x * 2; }`;
     });
   });
 
+  describe('function-scope non-builtin constructor detection', () => {
+    it('detects new MyClass() inside function body as impure', () => {
+      const source = 'function create() { return new MyClass(); }';
+      const reasons = detectImpurePatterns(source);
+      expect(reasons).toContain('creates mutable instance (new MyClass())');
+    });
+
+    it('does NOT flag new URL() inside function body (pure built-in)', () => {
+      const source = 'function parse(s: string) { return new URL(s); }';
+      const reasons = detectImpurePatterns(source);
+      const ctorReasons = reasons.filter((r) => r.includes('mutable instance'));
+      expect(ctorReasons).toEqual([]);
+    });
+
+    it('does NOT flag new Error() inside function body (pure built-in)', () => {
+      const source = `function wrap() { return new Error("x"); }`;
+      const reasons = detectImpurePatterns(source);
+      const ctorReasons = reasons.filter((r) => r.includes('mutable instance'));
+      expect(ctorReasons).toEqual([]);
+    });
+
+    it('detects new AppError() inside factory function', () => {
+      const source = 'function createError(msg: string) { return new AppError(msg); }';
+      const reasons = detectImpurePatterns(source);
+      expect(reasons).toContain('creates mutable instance (new AppError())');
+    });
+
+    it('does NOT flag new Map() inside function body (pure built-in)', () => {
+      const source = 'function makeMap() { return new Map(); }';
+      const reasons = detectImpurePatterns(source);
+      const ctorReasons = reasons.filter((r) => r.includes('mutable instance'));
+      expect(ctorReasons).toEqual([]);
+    });
+  });
+
+  describe('throw statement scope', () => {
+    it('flags throw at module scope as impure', () => {
+      const source = `throw new Error("fail");`;
+      const reasons = detectImpurePatterns(source);
+      expect(reasons).toContain('module-scope throw');
+    });
+
+    it('does NOT flag throw inside function body', () => {
+      const source = `function validate(x: unknown) {
+        if (!x) throw new Error("bad");
+        return x;
+      }`;
+      const reasons = detectImpurePatterns(source);
+      expect(reasons).toEqual([]);
+    });
+
+    it('does NOT flag throw inside arrow function callback', () => {
+      const source = `const validate = (x: unknown) => {
+        if (!x) throw new Error("missing");
+        return x;
+      };`;
+      const reasons = detectImpurePatterns(source);
+      expect(reasons).toEqual([]);
+    });
+
+    it('does NOT flag throw inside Zod .refine() callback', () => {
+      const source = `const schema = z.string().refine((val) => {
+        if (val.length < 3) throw new Error("too short");
+        return true;
+      });`;
+      const reasons = detectImpurePatterns(source);
+      const throwReasons = reasons.filter((r) => r.includes('throw'));
+      expect(throwReasons).toEqual([]);
+    });
+  });
+
   describe('edge cases', () => {
     it('empty string returns empty', () => {
       expect(detectImpurePatterns('')).toEqual([]);

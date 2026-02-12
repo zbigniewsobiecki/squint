@@ -3,6 +3,7 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
 import type { IndexDatabase } from '../../../../db/database.js';
 import { isTestFile } from '../module-prompts.js';
 import type { ProcessGroups } from '../process-utils.js';
@@ -75,6 +76,12 @@ export function checkAnnotationCoverage(db: IndexDatabase, aspects: string[]): C
     issues.push(...domainIssues);
   }
 
+  // Check for purpose-role mismatches (when both purpose and role are present)
+  if (aspects.includes('purpose') || (aspects.includes('purpose') && aspects.includes('role'))) {
+    const purposeIssues = checkPurposeAnnotations(db);
+    issues.push(...purposeIssues);
+  }
+
   // Get relationship counts
   let totalRelationships = 0;
   let annotatedRelationships = 0;
@@ -120,37 +127,120 @@ function checkDomainConsistency(db: IndexDatabase): VerificationIssue[] {
   for (const [, defs] of groups) {
     if (defs.length < 2) continue;
 
-    // Get domain metadata for each definition
-    const domainVariants = new Map<string, number[]>(); // normalized domain string → def IDs
+    // Sub-group by parent directory so definitions in unrelated directories are independent
+    const byParentDir = new Map<string, typeof defs>();
     for (const def of defs) {
+      const fullDef = db.definitions.getById(def.id);
+      const dir = fullDef?.filePath ? path.dirname(fullDef.filePath) : '';
+      const parentDir = path.dirname(dir);
+      if (!byParentDir.has(parentDir)) byParentDir.set(parentDir, []);
+      byParentDir.get(parentDir)!.push(def);
+    }
+
+    for (const [, subGroup] of byParentDir) {
+      if (subGroup.length < 2) continue;
+
+      // Get domain metadata for each definition
+      const domainVariants = new Map<string, number[]>(); // normalized domain string → def IDs
+      for (const def of subGroup) {
+        const domainValue = db.metadata.getValue(def.id, 'domain');
+        if (!domainValue) continue;
+        try {
+          const parsed = JSON.parse(domainValue) as string[];
+          const normalized = JSON.stringify([...parsed].sort());
+          if (!domainVariants.has(normalized)) domainVariants.set(normalized, []);
+          domainVariants.get(normalized)!.push(def.id);
+        } catch {
+          // Skip unparseable domain values
+        }
+      }
+
+      // If there are multiple distinct domain variants, flag inconsistency
+      // Skip when every definition has a unique domain AND there are many (3+) — these are
+      // likely independent symbols sharing a name (e.g., 4 different `router` exports in 4 files)
+      const allUnique = domainVariants.size === subGroup.length;
+      if (domainVariants.size > 1 && !(allUnique && subGroup.length > 2)) {
+        for (const def of subGroup) {
+          const domainValue = db.metadata.getValue(def.id, 'domain');
+          if (!domainValue) continue;
+          const fullDef = db.definitions.getById(def.id);
+          issues.push({
+            definitionId: def.id,
+            definitionName: def.name,
+            filePath: fullDef?.filePath,
+            line: def.line,
+            severity: 'warning',
+            category: 'inconsistent-domain',
+            message: `'${def.name}' (${def.kind}) has domain ${domainValue} — other definitions with same name have different domains`,
+            fixData: { action: 'harmonize-domain' },
+          });
+        }
+      }
+    }
+  }
+
+  // Cross-directory same-name check: non-exported symbols with identical names AND
+  // identical domains across different directories are likely mistagged (the logger pattern).
+  const nameGroups = new Map<string, Array<{ id: number; name: string; filePath: string; isExported: boolean }>>();
+  for (const def of allDefs) {
+    if (!nameGroups.has(def.name)) nameGroups.set(def.name, []);
+    const fullDef = db.definitions.getById(def.id);
+    nameGroups.get(def.name)!.push({
+      id: def.id,
+      name: def.name,
+      filePath: fullDef?.filePath ?? '',
+      isExported: fullDef?.isExported ?? false,
+    });
+  }
+
+  for (const [name, defs] of nameGroups) {
+    // Only check non-exported symbols
+    const nonExported = defs.filter((d) => !d.isExported);
+    if (nonExported.length <= 5) continue;
+
+    // Get domains for each
+    const domainsByDef = new Map<number, string>();
+    for (const def of nonExported) {
       const domainValue = db.metadata.getValue(def.id, 'domain');
-      if (!domainValue) continue;
+      if (domainValue) domainsByDef.set(def.id, domainValue);
+    }
+
+    // Group by exact domain value
+    const byDomain = new Map<string, number[]>();
+    for (const [defId, domainValue] of domainsByDef) {
       try {
         const parsed = JSON.parse(domainValue) as string[];
         const normalized = JSON.stringify([...parsed].sort());
-        if (!domainVariants.has(normalized)) domainVariants.set(normalized, []);
-        domainVariants.get(normalized)!.push(def.id);
+        if (!byDomain.has(normalized)) byDomain.set(normalized, []);
+        byDomain.get(normalized)!.push(defId);
       } catch {
-        // Skip unparseable domain values
+        // Skip
       }
     }
 
-    // If there are multiple distinct domain variants, flag inconsistency
-    if (domainVariants.size > 1) {
-      for (const def of defs) {
-        const domainValue = db.metadata.getValue(def.id, 'domain');
-        if (!domainValue) continue;
-        const fullDef = db.definitions.getById(def.id);
-        issues.push({
-          definitionId: def.id,
-          definitionName: def.name,
-          filePath: fullDef?.filePath,
-          line: def.line,
-          severity: 'warning',
-          category: 'inconsistent-domain',
-          message: `'${def.name}' (${def.kind}) has domain ${domainValue} — other definitions with same name have different domains`,
-          fixData: { action: 'harmonize-domain' },
-        });
+    for (const [domainStr, defIds] of byDomain) {
+      if (defIds.length <= 5) continue;
+
+      // Count distinct directories
+      const dirs = new Set<string>();
+      for (const defId of defIds) {
+        const def = nonExported.find((d) => d.id === defId);
+        if (def?.filePath) dirs.add(path.dirname(def.filePath));
+      }
+
+      if (dirs.size > 3) {
+        for (const defId of defIds) {
+          const def = nonExported.find((d) => d.id === defId);
+          issues.push({
+            definitionId: defId,
+            definitionName: name,
+            filePath: def?.filePath,
+            severity: 'warning',
+            category: 'mistagged-domain',
+            message: `'${name}' in ${def?.filePath} shares domain ${domainStr} with ${defIds.length - 1} other '${name}' symbols across ${dirs.size} directories`,
+            fixData: { action: 'reannotate-mistagged-domain' },
+          });
+        }
       }
     }
   }
@@ -164,17 +254,54 @@ function checkDomainConsistency(db: IndexDatabase): VerificationIssue[] {
 function checkPureAnnotations(db: IndexDatabase): VerificationIssue[] {
   const issues: VerificationIssue[] = [];
 
-  // Get all definitions that have pure = "true"
-  const pureTrueIds = db.metadata.getDefinitionsWith('pure');
+  // Get all definitions that have pure annotation
+  const pureIds = db.metadata.getDefinitionsWith('pure');
 
-  for (const defId of pureTrueIds) {
+  for (const defId of pureIds) {
     const pureValue = db.metadata.getValue(defId, 'pure');
-    if (pureValue !== 'true') continue;
-
     const def = db.definitions.getById(defId);
     if (!def) continue;
 
-    // Skip types that are inherently pure
+    // Check A: type/interface/enum marked pure=false → should be true
+    if (pureValue === 'false' && (def.kind === 'type' || def.kind === 'interface' || def.kind === 'enum')) {
+      issues.push({
+        definitionId: def.id,
+        definitionName: def.name,
+        filePath: def.filePath,
+        line: def.line,
+        severity: 'warning',
+        category: 'suspect-pure',
+        message: `'${def.name}' (${def.kind}) marked pure=false but type-level declarations are always pure`,
+        suggestion: 'Change pure to "true"',
+        fixData: { action: 'set-pure-true' },
+      });
+      continue;
+    }
+
+    if (pureValue !== 'true') continue;
+
+    // Check B: class marked pure=true — only flag if NOT an Error subclass
+    if (def.kind === 'class') {
+      const fullDef = db.definitions.getById(def.id);
+      const isErrorSubclass =
+        fullDef?.extendsName != null && (fullDef.extendsName === 'Error' || fullDef.extendsName.endsWith('Error'));
+      if (!isErrorSubclass) {
+        issues.push({
+          definitionId: def.id,
+          definitionName: def.name,
+          filePath: def.filePath,
+          line: def.line,
+          severity: 'warning',
+          category: 'suspect-pure',
+          message: `'${def.name}' (class) marked pure=true but classes have mutable instances`,
+          suggestion: 'Change pure to "false"',
+          fixData: { action: 'set-pure-false' },
+        });
+      }
+      continue;
+    }
+
+    // Skip types that are inherently pure (already handled above)
     if (def.kind === 'interface' || def.kind === 'type' || def.kind === 'enum') continue;
 
     try {
@@ -222,6 +349,70 @@ function checkPureAnnotations(db: IndexDatabase): VerificationIssue[] {
       } catch {
         // Ignore errors
       }
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Check for purpose-role mismatches: e.g., a definition with role "controller"
+ * whose purpose says "business logic" instead of "HTTP handler" / "controller".
+ */
+function checkPurposeAnnotations(db: IndexDatabase): VerificationIssue[] {
+  const issues: VerificationIssue[] = [];
+
+  const allDefs = db.definitions.getAll();
+
+  for (const def of allDefs) {
+    const role = db.metadata.getValue(def.id, 'role');
+    const purpose = db.metadata.getValue(def.id, 'purpose');
+    if (!role || !purpose) continue;
+
+    const roleLower = role.toLowerCase();
+    const purposeLower = purpose.toLowerCase();
+
+    // Controller/handler role but purpose says "business logic"
+    if (
+      (roleLower === 'controller' || roleLower === 'handler') &&
+      purposeLower.includes('business logic') &&
+      !purposeLower.includes('controller') &&
+      !purposeLower.includes('handler') &&
+      !purposeLower.includes('http')
+    ) {
+      const fullDef = db.definitions.getById(def.id);
+      issues.push({
+        definitionId: def.id,
+        definitionName: def.name,
+        filePath: fullDef?.filePath,
+        line: def.line,
+        severity: 'warning',
+        category: 'purpose-role-mismatch',
+        message: `'${def.name}' has role "${role}" but purpose describes "business logic" — controllers/handlers manage HTTP concerns, not business logic`,
+        suggestion: 'Re-annotate purpose to reflect HTTP handler/controller role',
+        fixData: { action: 'reannotate-definition' },
+      });
+    }
+
+    // Service role but purpose says "HTTP handler" / "route handler"
+    if (
+      roleLower === 'service' &&
+      (purposeLower.includes('http handler') || purposeLower.includes('route handler')) &&
+      !purposeLower.includes('service') &&
+      !purposeLower.includes('business')
+    ) {
+      const fullDef = db.definitions.getById(def.id);
+      issues.push({
+        definitionId: def.id,
+        definitionName: def.name,
+        filePath: fullDef?.filePath,
+        line: def.line,
+        severity: 'warning',
+        category: 'purpose-role-mismatch',
+        message: `'${def.name}' has role "${role}" but purpose describes HTTP handling — services contain business logic, not HTTP concerns`,
+        suggestion: 'Re-annotate purpose to reflect service/business logic role',
+        fixData: { action: 'reannotate-definition' },
+      });
     }
   }
 
@@ -455,6 +646,43 @@ export function checkRelationshipCoverage(db: IndexDatabase): CoverageCheckResul
     }
   } catch {
     // Ignore errors
+  }
+
+  // Orphan module-scope usages: imported symbols used outside any definition's line range
+  try {
+    const orphans = db.dependencies.getOrphanModuleScopeUsages();
+    if (orphans.length > 0) {
+      // Group by file for concise reporting
+      const byFile = new Map<string, typeof orphans>();
+      for (const o of orphans) {
+        if (!byFile.has(o.filePath)) byFile.set(o.filePath, []);
+        byFile.get(o.filePath)!.push(o);
+      }
+
+      issues.push({
+        severity: 'info',
+        category: 'orphan-module-scope-usage',
+        message: `${orphans.length} imported symbol(s) used at module scope (outside any definition) across ${byFile.size} file(s) — these cannot be captured as dependencies by the line-range join`,
+      });
+      for (const [filePath, fileOrphans] of [...byFile.entries()].slice(0, 10)) {
+        const names = [...new Set(fileOrphans.map((o) => o.symbolName))].join(', ');
+        issues.push({
+          severity: 'info',
+          category: 'orphan-module-scope-usage',
+          filePath,
+          message: `  ${filePath}: ${names}`,
+        });
+      }
+      if (byFile.size > 10) {
+        issues.push({
+          severity: 'info',
+          category: 'orphan-module-scope-usage',
+          message: `  ... and ${byFile.size - 10} more files`,
+        });
+      }
+    }
+  } catch {
+    // Usages table may not exist
   }
 
   const totalDefinitions = db.definitions.getCount();

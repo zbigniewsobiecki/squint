@@ -143,7 +143,7 @@ export default class Annotate extends BaseLlmCommand {
     }),
     'relationship-limit': Flags.integer({
       description: 'Max relationships per symbol (0 = no limit)',
-      default: 50,
+      default: 0,
     }),
   };
 
@@ -361,9 +361,10 @@ export default class Annotate extends BaseLlmCommand {
             let cycleAnnotations = 0;
             let cycleRelAnnotations = 0;
 
-            // Build source code and dependency maps for cycle symbols
+            // Build source code, dependency, and kind maps for cycle symbols
             const cycleSourceCodeById = new Map(symbolContexts.map((s) => [s.id, s.sourceCode]));
             const cycleDepsById = new Map(enhancedCycleSymbols.map((s) => [s.id, s.dependencies]));
+            const cycleKindById = new Map(enhancedCycleSymbols.map((s) => [s.id, s.kind]));
 
             // Process symbol annotations
             for (const row of parseResult.symbols) {
@@ -375,9 +376,15 @@ export default class Annotate extends BaseLlmCommand {
                 row.aspect,
                 value,
                 cycleSourceCodeById.get(row.symbolId),
-                cycleDepsById.get(row.symbolId)
+                cycleDepsById.get(row.symbolId),
+                cycleKindById.get(row.symbolId)
               );
-              if (validationError?.startsWith('overridden')) {
+              if (validationError?.startsWith('overridden to true')) {
+                if (!isJson && ctx.verbose) {
+                  this.log(chalk.yellow(`  Pure override for #${row.symbolId}: ${validationError}`));
+                }
+                value = 'true';
+              } else if (validationError?.startsWith('overridden')) {
                 if (!isJson && ctx.verbose) {
                   this.log(chalk.yellow(`  Pure override for #${row.symbolId}: ${validationError}`));
                 }
@@ -517,9 +524,10 @@ export default class Annotate extends BaseLlmCommand {
       const validSymbolIds = new Set(enhancedSymbols.map((s) => s.id));
       const symbolNameById = new Map(enhancedSymbols.map((s) => [s.id, s.name]));
 
-      // Build source code and dependency maps for pure validation
+      // Build source code, dependency, and kind maps for pure validation
       const sourceCodeById = new Map(symbolContexts.map((s) => [s.id, s.sourceCode]));
       const depsById = new Map(enhancedSymbols.map((s) => [s.id, s.dependencies]));
+      const kindById = new Map(enhancedSymbols.map((s) => [s.id, s.kind]));
 
       // Build valid relationship map (from_id -> Set of valid to_ids)
       const validRelationships = new Map<number, Map<number, string>>();
@@ -577,9 +585,15 @@ export default class Annotate extends BaseLlmCommand {
           row.aspect,
           value,
           sourceCodeById.get(symbolId),
-          depsById.get(symbolId)
+          depsById.get(symbolId),
+          kindById.get(symbolId)
         );
-        if (validationError?.startsWith('overridden')) {
+        if (validationError?.startsWith('overridden to true')) {
+          if (!isJson && ctx.verbose) {
+            this.log(chalk.yellow(`  Pure override for #${symbolId}: ${validationError}`));
+          }
+          value = 'true';
+        } else if (validationError?.startsWith('overridden')) {
           // Pure gate triggered — override value to false and log
           if (!isJson && ctx.verbose) {
             this.log(chalk.yellow(`  Pure override for #${symbolId}: ${validationError}`));
@@ -969,7 +983,8 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
     aspect: string,
     value: string,
     sourceCode?: string,
-    deps?: DependencyContextEnhanced[]
+    deps?: DependencyContextEnhanced[],
+    kind?: string
   ): string | null {
     switch (aspect) {
       case 'domain':
@@ -989,6 +1004,14 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
       case 'pure':
         if (value !== 'true' && value !== 'false') {
           return 'pure must be "true" or "false"';
+        }
+        // Gate 0: type-level declarations are always pure
+        if (value === 'false' && kind && (kind === 'type' || kind === 'interface' || kind === 'enum')) {
+          return 'overridden to true: type-level declaration';
+        }
+        // Gate 0b: classes are always impure (instances have mutable state)
+        if (value === 'true' && kind === 'class') {
+          return 'overridden to false: class (mutable instances)';
         }
         // Gate 1: override LLM's "true" if source code contains impure patterns
         if (value === 'true' && sourceCode) {
