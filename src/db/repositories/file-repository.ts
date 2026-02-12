@@ -156,6 +156,22 @@ export class FileRepository {
     return stmt.all() as FileInfo[];
   }
 
+  getAllWithHash(): Array<{ id: number; path: string; contentHash: string }> {
+    const stmt = this.db.prepare(`
+      SELECT id, path, content_hash as contentHash
+      FROM files
+    `);
+    return stmt.all() as Array<{ id: number; path: string; contentHash: string }>;
+  }
+
+  updateHash(fileId: number, contentHash: string, sizeBytes: number, modifiedAt: string): void {
+    this.db
+      .prepare(`
+      UPDATE files SET content_hash = ?, size_bytes = ?, modified_at = ? WHERE id = ?
+    `)
+      .run(contentHash, sizeBytes, modifiedAt, fileId);
+  }
+
   getAllWithStats(): FileWithStats[] {
     const stmt = this.db.prepare(`
       SELECT

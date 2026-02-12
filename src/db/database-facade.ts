@@ -88,6 +88,10 @@ export class IndexDatabase implements IIndexWriter {
     this.conn.close();
   }
 
+  getConnection(): Database.Database {
+    return this.conn;
+  }
+
   // ============================================================
   // Path Helpers
   // ============================================================
