@@ -128,11 +128,11 @@ Given a list of user journey flows and a module tree, group the flows into produ
 ## Rules
 - Each flow belongs to EXACTLY ONE feature
 - Every flow must be assigned — no orphans
-- Feature names should be product-level (e.g., "Customer Management", "Authentication & Security")
+- Feature names should be product-level (e.g., "Content Management", "Authentication & Security")
 - Group by product capability, not just entity
 - Atomic (tier-0) flows should be assigned to the feature they support, or grouped into an "Internal Infrastructure" feature if they don't clearly belong elsewhere
 - Aim for 4-8 features for a typical application
-- Feature slugs should be kebab-case (e.g., "customer-management")
+- Feature slugs should be kebab-case (e.g., "content-management")
 
 ## Output Format
 Respond with ONLY a CSV (no markdown fences, no explanation).

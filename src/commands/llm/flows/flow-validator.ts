@@ -97,7 +97,7 @@ but don't appear in the detected flows.
 
 What to look for:
 - UNCOVERED interactions in the graph that should be part of a user story
-- Cross-entity side effects visible in the interaction graph (e.g., a sale flow also touching vehicle/inventory modules)
+- Cross-entity side effects visible in the interaction graph (e.g., a create flow also touching notification or logging modules)
 - Compositions of existing atomic flows into higher-level user stories
 
 What NOT to do:
@@ -117,7 +117,7 @@ What NOT to do:
 \`\`\`csv
 flow_name,stakeholder,action_type,target_entity,interaction_chain,description
 "user views dashboard","user","view","dashboard","project.frontend.screens→project.frontend.hooks→project.backend.api","Fetches stats for KPI display"
-"admin registers new user","admin","process","user","project.frontend.screens→project.backend.api.controllers","Admin creates new user account"
+"admin creates account","admin","create","account","project.frontend.screens→project.backend.api.controllers","Admin provisions new account"
 \`\`\`
 
 For interaction_chain: list the module path segments in order, separated by →.
