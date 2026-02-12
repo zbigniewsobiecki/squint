@@ -1,3 +1,15 @@
+## [1.3.0](https://github.com/zbigniewsobiecki/squint/compare/v1.2.0...v1.3.0) (2026-02-12)
+
+### Features
+
+* add incremental sync command for detecting and applying code changes ([9210e2b](https://github.com/zbigniewsobiecki/squint/commit/9210e2b9d2fb38d19230b1b5cc8c26056c955ec7))
+* **ui:** add interaction map visualization ([606e13a](https://github.com/zbigniewsobiecki/squint/commit/606e13ad0339d598891cfb72c9f1390dc0d1cd48))
+* workspace resolution, re-export chains, and structural gates for interactions ([948ed8f](https://github.com/zbigniewsobiecki/squint/commit/948ed8faf9c1431138c778c8846b44d1fcd25b15))
+
+### Bug Fixes
+
+* format package.json for biome compliance ([a521299](https://github.com/zbigniewsobiecki/squint/commit/a5212993e0c6de66b0a98e94e5d85dbf9ea9aea7))
+
 ## [1.2.0](https://github.com/zbigniewsobiecki/squint/compare/v1.1.4...v1.2.0) (2026-02-11)
 
 ### Features
