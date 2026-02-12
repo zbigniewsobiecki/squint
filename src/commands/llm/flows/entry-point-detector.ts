@@ -208,13 +208,21 @@ Key insight: A screen component like "Customers" may call hooks like "useCreateC
 - **delete**: Removes records - uses hooks/services with "delete", "remove"
 - **process**: Non-CRUD - login, logout, sync, export
 
+## Stakeholder Guidelines
+Classify who initiates the action:
+- **user**: End-user facing UI (screens, pages, components)
+- **admin**: Admin panels, back-office tools
+- **system**: Background jobs, cron tasks, workers, event handlers
+- **developer**: CLI commands, dev tools, scripts
+- **external**: API endpoints consumed by external clients/services
+
 ## Output Format
 \`\`\`csv
-module_id,member_name,is_entry_point,action_type,target_entity,reason
-42,Customers,true,view,customer,"Main component displaying customer list"
-42,Customers,true,create,customer,"Calls useCreateCustomer hook for new customers"
-42,Customers,true,update,customer,"Calls useUpdateCustomer hook"
-42,Customers,true,delete,customer,"Calls useDeleteCustomer hook"
+module_id,member_name,is_entry_point,action_type,target_entity,stakeholder,reason
+42,Customers,true,view,customer,user,"Main component displaying customer list"
+42,Customers,true,create,customer,user,"Calls useCreateCustomer hook for new customers"
+42,Customers,true,update,customer,user,"Calls useUpdateCustomer hook"
+42,Customers,true,delete,customer,user,"Calls useDeleteCustomer hook"
 \`\`\`
 
 IMPORTANT: A single component can have MULTIPLE action types if it calls multiple mutation hooks.
@@ -279,6 +287,9 @@ Modules containing only interfaces, types, and enums are data structure definiti
 
     const candidateMap = new Map(candidates.map((c) => [c.id, c]));
 
+    const validActions: ActionType[] = ['view', 'create', 'update', 'delete', 'process'];
+    const validStakeholders = ['user', 'admin', 'system', 'developer', 'external'] as const;
+
     for (const line of lines) {
       const fields = parseRow(line);
       if (!fields || fields.length < 6) continue;
@@ -290,10 +301,23 @@ Modules containing only interfaces, types, and enums are data structure definiti
       const isEntryPoint = fields[2].trim().toLowerCase() === 'true';
       const actionTypeRaw = fields[3].trim().toLowerCase();
       const targetEntity = fields[4].trim() || null;
-      const reason = fields[5].trim().replace(/"/g, '');
 
-      const validActions: ActionType[] = ['view', 'create', 'update', 'delete', 'process'];
+      // Parse stakeholder (new column 5) and reason (column 6)
+      // Support both old format (6 cols: no stakeholder) and new format (7 cols: with stakeholder)
+      let stakeholderRaw: string | null = null;
+      let reason: string;
+      if (fields.length >= 7) {
+        stakeholderRaw = fields[5].trim().toLowerCase();
+        reason = fields[6].trim().replace(/"/g, '');
+      } else {
+        reason = fields[5].trim().replace(/"/g, '');
+      }
+
       const actionType = validActions.includes(actionTypeRaw as ActionType) ? (actionTypeRaw as ActionType) : null;
+      const stakeholder =
+        stakeholderRaw && validStakeholders.includes(stakeholderRaw as (typeof validStakeholders)[number])
+          ? (stakeholderRaw as (typeof validStakeholders)[number])
+          : null;
 
       results.push({
         moduleId,
@@ -301,6 +325,7 @@ Modules containing only interfaces, types, and enums are data structure definiti
         isEntryPoint,
         actionType,
         targetEntity: targetEntity || null,
+        stakeholder,
         reason,
       });
     }
@@ -316,6 +341,7 @@ Modules containing only interfaces, types, and enums are data structure definiti
             isEntryPoint: this.isLikelyEntryPointMemberHeuristic(member.name, candidate),
             actionType: inferred.actionType,
             targetEntity: inferred.targetEntity,
+            stakeholder: null,
             reason: 'Not in LLM response, using heuristic',
           });
         }
@@ -327,10 +353,9 @@ Modules containing only interfaces, types, and enums are data structure definiti
 
   private inferMemberActionType(
     memberName: string,
-    modulePath: string
+    _modulePath: string
   ): { actionType: ActionType | null; targetEntity: string | null } {
     const name = memberName.toLowerCase();
-    const path = modulePath.toLowerCase();
 
     let actionType: ActionType | null = null;
     if (name.includes('create') || name.includes('add') || name.includes('new') || name.includes('insert')) {
@@ -351,24 +376,8 @@ Modules containing only interfaces, types, and enums are data structure definiti
       actionType = 'process';
     }
 
-    let targetEntity: string | null = null;
-    const entityPatterns = ['customer', 'vehicle', 'sale', 'user', 'order', 'product', 'inventory', 'dashboard'];
-    for (const entity of entityPatterns) {
-      if (name.includes(entity) || path.includes(entity)) {
-        targetEntity = entity;
-        break;
-      }
-    }
-
-    if (!targetEntity) {
-      const pathParts = modulePath.split('.');
-      const lastPart = pathParts[pathParts.length - 1]?.toLowerCase();
-      if (lastPart && !['screen', 'page', 'view', 'handler', 'controller'].includes(lastPart)) {
-        targetEntity = lastPart;
-      }
-    }
-
-    return { actionType, targetEntity };
+    // Don't guess entity from hardcoded patterns — let LLM classify it
+    return { actionType, targetEntity: null };
   }
 
   private isLikelyEntryPointMemberHeuristic(memberName: string, module: ModuleCandidate): boolean {
@@ -429,6 +438,7 @@ Modules containing only interfaces, types, and enums are data structure definiti
             kind: member.kind,
             actionType: mc.actionType,
             targetEntity: mc.targetEntity,
+            stakeholder: mc.stakeholder,
           });
         }
       }
@@ -443,6 +453,7 @@ Modules containing only interfaces, types, and enums are data structure definiti
             kind: member.kind,
             actionType: null,
             targetEntity: null,
+            stakeholder: null,
           });
         }
       }

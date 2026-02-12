@@ -5,14 +5,15 @@
  */
 
 import type { InteractionWithPaths, Module } from '../../../db/schema.js';
+import { isRuntimeInteraction } from '../../../db/schema.js';
 import { groupModulesByEntity } from '../_shared/entity-utils.js';
 import type { FlowSuggestion } from './types.js';
 
 /**
  * Build a map from module ID to entity name using groupModulesByEntity.
  */
-function buildModuleEntityMap(modules: Module[]): Map<number, string> {
-  const entityGroups = groupModulesByEntity(modules);
+function buildModuleEntityMap(modules: Module[], moduleEntityOverrides?: Map<number, string>): Map<number, string> {
+  const entityGroups = groupModulesByEntity(modules, moduleEntityOverrides);
   const map = new Map<number, string>();
   for (const [entity, mods] of entityGroups) {
     for (const mod of mods) {
@@ -27,12 +28,16 @@ export class AtomicFlowBuilder {
    * Build tier-0 atomic flows from interactions and modules.
    * Each atomic flow has 1-3 interactions covering a small entity-scoped chain.
    */
-  buildAtomicFlows(interactions: InteractionWithPaths[], modules: Module[]): FlowSuggestion[] {
-    // Filter out test-internal interactions
-    const relevant = interactions.filter((i) => i.pattern !== 'test-internal');
+  buildAtomicFlows(
+    interactions: InteractionWithPaths[],
+    modules: Module[],
+    moduleEntityOverrides?: Map<number, string>
+  ): FlowSuggestion[] {
+    // Filter to runtime interactions only (excludes ast-import and test-internal)
+    const relevant = interactions.filter(isRuntimeInteraction);
     if (relevant.length === 0) return [];
 
-    const moduleEntityMap = buildModuleEntityMap(modules);
+    const moduleEntityMap = buildModuleEntityMap(modules, moduleEntityOverrides);
     const moduleById = new Map(modules.map((m) => [m.id, m]));
 
     // Group interactions by entity pair
@@ -202,7 +207,7 @@ export class AtomicFlowBuilder {
       entryPointModuleId: firstInteraction.fromModuleId,
       entryPointId: null,
       entryPath: fromModule?.fullPath ?? '',
-      stakeholder: this.inferStakeholder(fromModule?.fullPath ?? ''),
+      stakeholder: 'system',
       description: this.generateAtomicDescription(segment),
       interactionIds: segment.map((i) => i.id),
       definitionSteps: [],
@@ -271,17 +276,5 @@ export class AtomicFlowBuilder {
   private shortModuleName(mod: Module | undefined): string {
     if (!mod) return '?';
     return mod.fullPath.split('.').pop() ?? mod.name;
-  }
-
-  /**
-   * Infer stakeholder from module path (reuse same logic as FlowTracer).
-   */
-  private inferStakeholder(path: string): 'user' | 'admin' | 'system' | 'developer' | 'external' {
-    const lower = path.toLowerCase();
-    if (lower.includes('admin')) return 'admin';
-    if (lower.includes('api') || lower.includes('route')) return 'external';
-    if (lower.includes('cron') || lower.includes('job') || lower.includes('worker')) return 'system';
-    if (lower.includes('cli') || lower.includes('command')) return 'developer';
-    return 'user';
   }
 }

@@ -11,7 +11,7 @@
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 import type { IndexDatabase } from '../../db/database.js';
-import type { InteractionWithPaths } from '../../db/schema.js';
+import { type InteractionWithPaths, isRuntimeInteraction } from '../../db/schema.js';
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
 import {
@@ -122,19 +122,37 @@ export default class FlowsGenerate extends BaseLlmCommand {
     // Step 2: Build atomic flows (deterministic, no LLM)
     logStep(this, 2, 'Building Atomic Flows (Tier 0)', isJson);
 
-    const interactions = db.interactions.getAll();
+    const allInteractions = db.interactions.getAll();
+    // Filter once at the top: only runtime interactions (excludes ast-import and test-internal)
+    const interactions = allInteractions.filter(isRuntimeInteraction);
     const allModules = db.modules.getAll();
     const allModulesWithMembers = db.modules.getAllWithMembers();
 
-    const atomicFlowBuilder = new AtomicFlowBuilder();
-    const atomicFlows = atomicFlowBuilder.buildAtomicFlows(interactions, allModules);
-
-    const atomicCoverage = new Set(atomicFlows.flatMap((f) => f.interactionIds));
-    const relevantInteractions = interactions.filter((i) => i.pattern !== 'test-internal');
-    const atomicCoverageCount = relevantInteractions.filter((i) => atomicCoverage.has(i.id)).length;
     logVerbose(
       this,
-      `Built ${atomicFlows.length} atomic flows covering ${atomicCoverageCount}/${relevantInteractions.length} relevant interactions`,
+      `Filtered to ${interactions.length}/${allInteractions.length} runtime interactions (excluded ${allInteractions.length - interactions.length} ast-import/test-internal)`,
+      verbose,
+      isJson
+    );
+
+    // Build entity overrides from LLM-classified entry points for entity grouping
+    const moduleEntityOverrides = new Map<number, string>();
+    for (const ep of entryPointModules) {
+      for (const def of ep.memberDefinitions) {
+        if (def.targetEntity && !moduleEntityOverrides.has(ep.moduleId)) {
+          moduleEntityOverrides.set(ep.moduleId, def.targetEntity);
+        }
+      }
+    }
+
+    const atomicFlowBuilder = new AtomicFlowBuilder();
+    const atomicFlows = atomicFlowBuilder.buildAtomicFlows(interactions, allModules, moduleEntityOverrides);
+
+    const atomicCoverage = new Set(atomicFlows.flatMap((f) => f.interactionIds));
+    const atomicCoverageCount = interactions.filter((i) => atomicCoverage.has(i.id)).length;
+    logVerbose(
+      this,
+      `Built ${atomicFlows.length} atomic flows covering ${atomicCoverageCount}/${interactions.length} runtime interactions`,
       verbose,
       isJson
     );
@@ -432,24 +450,16 @@ export default class FlowsGenerate extends BaseLlmCommand {
     const userFlowCount = enhancedFlows.filter((f) => f.entryPointModuleId !== null).length;
     const internalFlowCount = gapFlows.length;
 
+    // interactions is already filtered to runtime-only
     const coveredInteractionIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
+    const coveredCount = interactions.filter((i) => coveredInteractionIds.has(i.id)).length;
     const coverage = dryRun
       ? {
           totalInteractions: interactions.length,
-          coveredByFlows: coveredInteractionIds.size,
-          percentage: calculatePercentage(coveredInteractionIds.size, interactions.length),
+          coveredByFlows: coveredCount,
+          percentage: calculatePercentage(coveredCount, interactions.length),
         }
       : db.flows.getCoverage();
-
-    // Count test-internal exclusions
-    const testInternalCount = interactions.filter((i) => i.pattern === 'test-internal').length;
-    const relevantTotal = dryRun
-      ? coverage.totalInteractions - testInternalCount // dry-run total includes all
-      : coverage.totalInteractions; // DB total already excludes test-internal
-    const relevantCovered = dryRun
-      ? interactions.filter((i) => i.pattern !== 'test-internal' && coveredInteractionIds.has(i.id)).length
-      : coverage.coveredByFlows; // getCoverage already excludes test-internal
-    const relevantPercentage = relevantTotal > 0 ? (relevantCovered / relevantTotal) * 100 : 0;
 
     const result = {
       entryPointModules: entryPointModules.length,
@@ -457,7 +467,6 @@ export default class FlowsGenerate extends BaseLlmCommand {
       userFlows: userFlowCount,
       internalFlows: internalFlowCount,
       coverage,
-      testInternalExcluded: testInternalCount,
     };
 
     if (isJson) {
@@ -468,16 +477,9 @@ export default class FlowsGenerate extends BaseLlmCommand {
       this.log(`Flows created: ${result.flowsCreated}`);
       this.log(`  - User flows: ${result.userFlows}`);
       this.log(`  - Internal/gap flows: ${result.internalFlows}`);
-      if (testInternalCount > 0) {
-        this.log(
-          `Interaction coverage: ${relevantCovered}/${relevantTotal} relevant (${relevantPercentage.toFixed(1)}%)`
-        );
-        this.log(chalk.gray(`  (${testInternalCount} test-internal interactions excluded)`));
-      } else {
-        this.log(
-          `Interaction coverage: ${result.coverage.coveredByFlows}/${result.coverage.totalInteractions} (${result.coverage.percentage.toFixed(1)}%)`
-        );
-      }
+      this.log(
+        `Interaction coverage: ${coverage.coveredByFlows}/${coverage.totalInteractions} runtime (${coverage.percentage.toFixed(1)}%)`
+      );
 
       if (dryRun) {
         this.log('');
@@ -502,8 +504,8 @@ export default class FlowsGenerate extends BaseLlmCommand {
   ): { passed: boolean; failures: Array<{ gate: string; actual: number; threshold: number; details: string }> } {
     const failures: Array<{ gate: string; actual: number; threshold: number; details: string }> = [];
 
-    // Filter out test-internal interactions from coverage calculation
-    const relevantInteractions = interactions.filter((i) => i.pattern !== 'test-internal');
+    // Filter to runtime interactions only (excludes ast-import and test-internal)
+    const relevantInteractions = interactions.filter(isRuntimeInteraction);
 
     // Gate 1: Interaction coverage (excludes test-internal)
     const coveredIds = new Set(flows.flatMap((f) => f.interactionIds));

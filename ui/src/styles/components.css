@@ -27,17 +27,6 @@
   color: var(--text-primary);
 }
 
-/* Relationship Filters */
-.relationship-filters {
-  display: none;
-  gap: 6px;
-  align-items: center;
-}
-
-.relationship-filters.visible {
-  display: flex;
-}
-
 .filter-chip {
   display: flex;
   align-items: center;
@@ -46,16 +35,19 @@
   border-radius: var(--radius-pill);
   font-size: 11px;
   cursor: pointer;
-  border: 1px solid;
-  transition: opacity var(--transition-fast);
+  border: 1px solid var(--border-primary);
+  opacity: 0.5;
+  transition: opacity var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.filter-chip:hover {
+  opacity: 0.8;
 }
 
 .filter-chip.active {
   opacity: 1;
-}
-
-.filter-chip.inactive {
-  opacity: 0.4;
+  border-color: var(--accent-blue);
+  background: var(--bg-elevated);
 }
 
 .filter-chip .chip-dot {
@@ -919,6 +911,13 @@
 .symbol-detail-connections span {
   color: var(--accent-blue);
   font-weight: 500;
+}
+
+.symbol-detail-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--spacing-sm);
 }
 
 /* Symbols placeholder */

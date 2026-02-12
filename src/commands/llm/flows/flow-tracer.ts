@@ -4,7 +4,7 @@
  * mapping interactions to atomic subflow references.
  */
 
-import type { InteractionWithPaths } from '../../../db/schema.js';
+import type { FlowStakeholder, InteractionWithPaths } from '../../../db/schema.js';
 import type {
   ActionType,
   EntryPointModuleInfo,
@@ -62,7 +62,7 @@ export class FlowTracer {
             entryPointModuleId: entryPointModule.moduleId,
             entryPointId: member.id,
             entryPath: `${entryPointModule.modulePath}.${member.name}`,
-            stakeholder: this.inferStakeholderFromModule(entryPointModule),
+            stakeholder: member.stakeholder ?? 'user',
             description: `Flow starting from ${member.name} in ${entryPointModule.modulePath}`,
             interactionIds: derivedInteractionIds,
             definitionSteps,
@@ -200,7 +200,14 @@ export class FlowTracer {
    */
   private generateFlowNameFromModule(
     _module: EntryPointModuleInfo,
-    member: { id: number; name: string; kind: string; actionType: ActionType | null; targetEntity: string | null }
+    member: {
+      id: number;
+      name: string;
+      kind: string;
+      actionType: ActionType | null;
+      targetEntity: string | null;
+      stakeholder: FlowStakeholder | null;
+    }
   ): string {
     if (member.actionType && member.targetEntity) {
       const actionVerb = this.actionTypeToVerb(member.actionType);
@@ -248,27 +255,18 @@ export class FlowTracer {
    */
   private generateFlowSlugFromModule(
     module: EntryPointModuleInfo,
-    member: { id: number; name: string; kind: string; actionType: ActionType | null; targetEntity: string | null }
+    member: {
+      id: number;
+      name: string;
+      kind: string;
+      actionType: ActionType | null;
+      targetEntity: string | null;
+      stakeholder: FlowStakeholder | null;
+    }
   ): string {
     return this.generateFlowNameFromModule(module, member)
       .replace(/([a-z])([A-Z])/g, '$1-$2')
       .toLowerCase();
-  }
-
-  /**
-   * Infer stakeholder from entry point module context.
-   */
-  private inferStakeholderFromModule(
-    module: EntryPointModuleInfo
-  ): 'user' | 'admin' | 'system' | 'developer' | 'external' {
-    const path = module.modulePath.toLowerCase();
-
-    if (path.includes('admin')) return 'admin';
-    if (path.includes('api') || path.includes('route')) return 'external';
-    if (path.includes('cron') || path.includes('job') || path.includes('worker')) return 'system';
-    if (path.includes('cli') || path.includes('command')) return 'developer';
-
-    return 'user';
   }
 }
 

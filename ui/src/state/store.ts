@@ -3,7 +3,6 @@ import type {
   FlowsResponse,
   InteractionsResponse,
   ModulesResponse,
-  RelationshipType,
   SymbolGraphResponse,
 } from '../types/api';
 
@@ -17,8 +16,8 @@ export interface AppState {
   interactionsData: InteractionsResponse | null;
 
   // UI state
-  currentView: 'symbols' | 'sunburst' | 'modules' | 'flows' | 'interactions' | 'files';
-  selectedGrouping: RelationshipType;
+  currentView: 'symbols' | 'modules' | 'flows' | 'interactions' | 'files';
+  selectedRelationshipType: string | null;
   selectedFlowId: number | null; // Currently viewed flow (for detail view)
   selectedFlows: Set<number>;
   expandedModules: Set<number>;
@@ -50,7 +49,7 @@ export function createStore(): Store {
     flowsDagData: null,
     interactionsData: null,
     currentView: 'symbols',
-    selectedGrouping: 'structure',
+    selectedRelationshipType: null,
     selectedFlowId: null,
     selectedFlows: new Set(),
     expandedModules: new Set(),
@@ -141,4 +140,8 @@ export function selectSymbol(store: Store, id: number | null) {
 
 export function setSymbolSearch(store: Store, query: string) {
   store.setState({ symbolSearchQuery: query });
+}
+
+export function setRelationshipFilter(store: Store, type: string | null) {
+  store.setState({ selectedRelationshipType: type });
 }

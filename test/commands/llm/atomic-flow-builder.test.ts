@@ -119,9 +119,9 @@ describe('AtomicFlowBuilder', () => {
         }),
       ];
       const modules = [
-        makeModule({ id: 1, fullPath: 'project.customer.hooks' }),
-        makeModule({ id: 2, fullPath: 'project.customer.api' }),
-        makeModule({ id: 3, fullPath: 'project.customer.service' }),
+        makeModule({ id: 1, fullPath: 'project.customer.hooks', description: 'Customer hooks' }),
+        makeModule({ id: 2, fullPath: 'project.customer.api', description: 'Customer API' }),
+        makeModule({ id: 3, fullPath: 'project.customer.service', description: 'Customer service layer' }),
       ];
       const result = builder.buildAtomicFlows(interactions, modules);
       // 2 interactions chained → should be in one atomic flow (≤3 interactions)
@@ -161,11 +161,11 @@ describe('AtomicFlowBuilder', () => {
         }),
       ];
       const modules = [
-        makeModule({ id: 1, fullPath: 'project.customer.a' }),
-        makeModule({ id: 2, fullPath: 'project.customer.b' }),
-        makeModule({ id: 3, fullPath: 'project.customer.c' }),
-        makeModule({ id: 4, fullPath: 'project.customer.d' }),
-        makeModule({ id: 5, fullPath: 'project.customer.e' }),
+        makeModule({ id: 1, fullPath: 'project.customer.a', description: 'Customer module A' }),
+        makeModule({ id: 2, fullPath: 'project.customer.b', description: 'Customer module B' }),
+        makeModule({ id: 3, fullPath: 'project.customer.c', description: 'Customer module C' }),
+        makeModule({ id: 4, fullPath: 'project.customer.d', description: 'Customer module D' }),
+        makeModule({ id: 5, fullPath: 'project.customer.e', description: 'Customer module E' }),
       ];
       const result = builder.buildAtomicFlows(interactions, modules);
       // 4 interactions → split into 2 segments (3 + 1)
@@ -279,7 +279,7 @@ describe('AtomicFlowBuilder', () => {
       expect(allIds.sort()).toEqual([1, 2, 3, 4]);
     });
 
-    it('sets stakeholder based on module path', () => {
+    it('defaults stakeholder to system for atomic flows', () => {
       const interactions = [
         makeInteraction({
           id: 1,
@@ -294,7 +294,7 @@ describe('AtomicFlowBuilder', () => {
         makeModule({ id: 2, fullPath: 'project.admin.api' }),
       ];
       const result = builder.buildAtomicFlows(interactions, modules);
-      expect(result[0].stakeholder).toBe('admin');
+      expect(result[0].stakeholder).toBe('system');
     });
 
     it('produces unique slugs', () => {

@@ -9,6 +9,7 @@ import type { FlowSuggestion } from './types.js';
 export class GapFlowGenerator {
   /**
    * Create gap flows for interactions not covered by entry point flows.
+   * Only considers runtime interactions (ast-import already filtered upstream).
    */
   createGapFlows(coveredIds: Set<number>, allInteractions: InteractionWithPaths[]): FlowSuggestion[] {
     const uncovered = allInteractions.filter((i) => !coveredIds.has(i.id));
@@ -24,22 +25,39 @@ export class GapFlowGenerator {
 
     // Create "internal" flows for each cluster
     const gapFlows: FlowSuggestion[] = [];
-    for (const [, interactions] of bySource) {
-      const modulePath = interactions[0].fromModulePath;
-      const shortName = modulePath.split('.').pop() ?? 'Module';
+    const usedSlugs = new Set<string>();
 
-      // Convert to PascalCase for flow name
-      const flowName = `${shortName.charAt(0).toUpperCase() + shortName.slice(1)}InternalFlow`;
-      const slug = `${shortName.toLowerCase()}-internal`;
+    for (const [, interactions] of bySource) {
+      const fromPath = interactions[0].fromModulePath;
+      const fromShort = fromPath.split('.').pop() ?? 'module';
+
+      // Build a descriptive name from the from→to modules
+      const targetNames = [...new Set(interactions.map((i) => i.toModulePath.split('.').pop() ?? '?'))];
+      const targetSummary = targetNames.slice(0, 3).join(', ');
+      const suffix = targetNames.length > 3 ? ` (+${targetNames.length - 3} more)` : '';
+
+      const flowName = `${fromShort} calls ${targetSummary}${suffix}`;
+      let slug = flowName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+
+      // Deduplicate slugs
+      if (usedSlugs.has(slug)) {
+        let counter = 2;
+        while (usedSlugs.has(`${slug}-${counter}`)) counter++;
+        slug = `${slug}-${counter}`;
+      }
+      usedSlugs.add(slug);
 
       gapFlows.push({
         name: flowName,
-        slug: slug,
+        slug,
         entryPointModuleId: null,
         entryPointId: null,
-        entryPath: `Internal: ${modulePath}`,
-        stakeholder: 'developer', // Internal, not user-facing
-        description: `Internal interactions originating from ${modulePath}`,
+        entryPath: `Internal: ${fromPath}`,
+        stakeholder: 'system',
+        description: `Internal interactions from ${fromShort} to ${targetSummary}${suffix}`,
         interactionIds: interactions.map((i) => i.id),
         definitionSteps: [], // Gap flows don't have definition-level tracing
         inferredSteps: [], // Gap flows don't have inferred steps

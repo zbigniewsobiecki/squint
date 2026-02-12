@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IndexDatabase } from '../../../../db/database.js';
+import { isRuntimeInteraction } from '../../../../db/schema.js';
 import { isTestFile } from '../module-prompts.js';
 import type { ProcessGroups } from '../process-utils.js';
 import { detectImpurePatterns } from '../pure-check.js';
@@ -865,7 +866,7 @@ export function checkFlowQuality(db: IndexDatabase): CoverageCheckResult {
     }
   }
   const allInteractions = db.interactions.getAll();
-  const relevantInteractions = allInteractions.filter((i) => i.pattern !== 'test-internal');
+  const relevantInteractions = allInteractions.filter(isRuntimeInteraction);
   const uncovered = relevantInteractions.filter((i) => !coveredInteractionIds.has(i.id));
   if (uncovered.length > 0) {
     issues.push({

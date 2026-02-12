@@ -126,7 +126,14 @@ describe('flow-tracer', () => {
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            { id: 10, name: 'handleCreate', kind: 'function', actionType: 'create', targetEntity: 'customer' },
+            {
+              id: 10,
+              name: 'handleCreate',
+              kind: 'function',
+              actionType: 'create',
+              targetEntity: 'customer',
+              stakeholder: null,
+            },
           ],
         },
       ];
@@ -148,7 +155,14 @@ describe('flow-tracer', () => {
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            { id: 10, name: 'handleCreate', kind: 'function', actionType: 'create', targetEntity: 'customer' },
+            {
+              id: 10,
+              name: 'handleCreate',
+              kind: 'function',
+              actionType: 'create',
+              targetEntity: 'customer',
+              stakeholder: null,
+            },
           ],
         },
       ];
@@ -169,7 +183,14 @@ describe('flow-tracer', () => {
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            { id: 10, name: 'handleCreate', kind: 'function', actionType: 'create', targetEntity: 'customer' },
+            {
+              id: 10,
+              name: 'handleCreate',
+              kind: 'function',
+              actionType: 'create',
+              targetEntity: 'customer',
+              stakeholder: null,
+            },
           ],
         },
       ];
@@ -189,7 +210,14 @@ describe('flow-tracer', () => {
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            { id: 10, name: 'handleCreate', kind: 'function', actionType: 'create', targetEntity: 'customer' },
+            {
+              id: 10,
+              name: 'handleCreate',
+              kind: 'function',
+              actionType: 'create',
+              targetEntity: 'customer',
+              stakeholder: null,
+            },
           ],
         },
       ];
@@ -209,7 +237,14 @@ describe('flow-tracer', () => {
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            { id: 10, name: 'handlePayment', kind: 'function', actionType: null, targetEntity: null },
+            {
+              id: 10,
+              name: 'handlePayment',
+              kind: 'function',
+              actionType: null,
+              targetEntity: null,
+              stakeholder: null,
+            },
           ],
         },
       ];
@@ -218,7 +253,7 @@ describe('flow-tracer', () => {
       expect(flows[0].name).toBe('PaymentFlow');
     });
 
-    it('infers stakeholder from module path', () => {
+    it('uses LLM-classified stakeholder from member definitions', () => {
       const ctx = buildSimpleContext();
       const tracer = new FlowTracer(ctx);
 
@@ -227,7 +262,9 @@ describe('flow-tracer', () => {
           moduleId: 1,
           modulePath: 'project.admin.panel',
           moduleName: 'Admin',
-          memberDefinitions: [{ id: 10, name: 'Dashboard', kind: 'function', actionType: null, targetEntity: null }],
+          memberDefinitions: [
+            { id: 10, name: 'Dashboard', kind: 'function', actionType: null, targetEntity: null, stakeholder: 'admin' },
+          ],
         },
       ];
       expect(tracer.traceFlowsFromEntryPoints(adminEntry, simpleAtomics)[0].stakeholder).toBe('admin');
@@ -247,7 +284,9 @@ describe('flow-tracer', () => {
           moduleId: 1,
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
-          memberDefinitions: [{ id: 10, name: 'test', kind: 'function', actionType: null, targetEntity: null }],
+          memberDefinitions: [
+            { id: 10, name: 'test', kind: 'function', actionType: null, targetEntity: null, stakeholder: null },
+          ],
         },
       ];
 
@@ -278,7 +317,9 @@ describe('flow-tracer', () => {
           moduleId: 1,
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
-          memberDefinitions: [{ id: 10, name: 'test', kind: 'function', actionType: null, targetEntity: null }],
+          memberDefinitions: [
+            { id: 10, name: 'test', kind: 'function', actionType: null, targetEntity: null, stakeholder: null },
+          ],
         },
       ];
 
@@ -297,7 +338,14 @@ describe('flow-tracer', () => {
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            { id: 10, name: 'Home', kind: 'function', actionType: 'view', targetEntity: 'dashboard' },
+            {
+              id: 10,
+              name: 'Home',
+              kind: 'function',
+              actionType: 'view',
+              targetEntity: 'dashboard',
+              stakeholder: null,
+            },
           ],
         },
       ];
@@ -333,8 +381,22 @@ describe('flow-tracer', () => {
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            { id: 10, name: 'listUsers', kind: 'function', actionType: 'view', targetEntity: 'user' },
-            { id: 11, name: 'createUser', kind: 'function', actionType: 'create', targetEntity: 'user' },
+            {
+              id: 10,
+              name: 'listUsers',
+              kind: 'function',
+              actionType: 'view',
+              targetEntity: 'user',
+              stakeholder: null,
+            },
+            {
+              id: 11,
+              name: 'createUser',
+              kind: 'function',
+              actionType: 'create',
+              targetEntity: 'user',
+              stakeholder: null,
+            },
           ],
         },
       ];
@@ -378,7 +440,9 @@ describe('flow-tracer', () => {
           moduleId: 1,
           modulePath: 'mod.m1',
           moduleName: 'M1',
-          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
+          memberDefinitions: [
+            { id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null, stakeholder: null },
+          ],
         },
       ];
 
@@ -421,7 +485,9 @@ describe('flow-tracer', () => {
           moduleId: 1,
           modulePath: 'mod.m1',
           moduleName: 'M1',
-          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
+          memberDefinitions: [
+            { id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null, stakeholder: null },
+          ],
         },
       ];
 
@@ -458,7 +524,9 @@ describe('flow-tracer', () => {
           moduleId: 1,
           modulePath: 'mod.m1',
           moduleName: 'M1',
-          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
+          memberDefinitions: [
+            { id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null, stakeholder: null },
+          ],
         },
       ];
 
@@ -492,7 +560,9 @@ describe('flow-tracer', () => {
           moduleId: 1,
           modulePath: 'mod.m1',
           moduleName: 'M1',
-          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
+          memberDefinitions: [
+            { id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null, stakeholder: null },
+          ],
         },
       ];
 
@@ -536,7 +606,9 @@ describe('flow-tracer', () => {
           moduleId: 1,
           modulePath: 'mod.m1',
           moduleName: 'M1',
-          memberDefinitions: [{ id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null }],
+          memberDefinitions: [
+            { id: 10, name: 'start', kind: 'function', actionType: null, targetEntity: null, stakeholder: null },
+          ],
         },
       ];
 

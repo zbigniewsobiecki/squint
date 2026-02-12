@@ -59,7 +59,7 @@ describe('GapFlowGenerator', () => {
       const flow = gaps[0];
       expect(flow.entryPointModuleId).toBeNull();
       expect(flow.entryPointId).toBeNull();
-      expect(flow.stakeholder).toBe('developer');
+      expect(flow.stakeholder).toBe('system');
       expect(flow.definitionSteps).toEqual([]);
       expect(flow.inferredSteps).toEqual([]);
       expect(flow.actionType).toBeNull();
@@ -76,8 +76,8 @@ describe('GapFlowGenerator', () => {
       ];
 
       const gaps = gen.createGapFlows(new Set(), interactions);
-      expect(gaps[0].name).toBe('ServicesInternalFlow');
-      expect(gaps[0].slug).toBe('services-internal');
+      expect(gaps[0].name).toBe('services calls module-20');
+      expect(gaps[0].slug).toBe('services-calls-module-20');
     });
 
     it('excludes covered interactions from gap flows', () => {
@@ -99,7 +99,7 @@ describe('GapFlowGenerator', () => {
       ];
 
       const gaps = gen.createGapFlows(new Set(), interactions);
-      expect(gaps[0].description).toContain('project.utils');
+      expect(gaps[0].description).toContain('utils');
       expect(gaps[0].entryPath).toContain('project.utils');
     });
   });

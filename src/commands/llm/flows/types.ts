@@ -29,6 +29,7 @@ export interface MemberClassification {
   isEntryPoint: boolean;
   actionType: ActionType | null;
   targetEntity: string | null;
+  stakeholder: FlowStakeholder | null;
   reason: string;
 }
 
@@ -42,6 +43,7 @@ export interface EntryPointModuleInfo {
     kind: string;
     actionType: ActionType | null;
     targetEntity: string | null;
+    stakeholder: FlowStakeholder | null;
   }>;
 }
 

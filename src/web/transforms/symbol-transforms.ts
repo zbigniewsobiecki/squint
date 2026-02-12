@@ -21,6 +21,7 @@ export function getSymbolGraph(db: IndexDatabase): {
     source: number;
     target: number;
     semantic: string;
+    type: string;
   }>;
   stats: {
     totalSymbols: number;
@@ -111,6 +112,7 @@ export function getSymbolGraph(db: IndexDatabase): {
     source: rel.fromDefinitionId,
     target: rel.toDefinitionId,
     semantic: rel.semantic,
+    type: rel.relationshipType,
   }));
 
   return {

@@ -3,47 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Squint Symbol Graph</title>
+  <title>squint</title>
 </head>
 <body>
   <div id="app">
     <div class="container">
       <header>
-        <h1>Squint Symbol Graph</h1>
+        <h1>squint</h1>
         <div class="view-toggle">
           <button class="view-btn" data-view="files">Files</button>
           <button class="view-btn active" data-view="symbols">Symbols</button>
-          <button class="view-btn" data-view="sunburst">Relationships</button>
           <button class="view-btn" data-view="modules">Modules</button>
           <button class="view-btn" data-view="interactions">Interactions</button>
           <button class="view-btn" data-view="flows">Flows</button>
-        </div>
-        <div class="relationship-filters" id="relationship-filters">
-          <span style="color: var(--text-muted); font-size: 11px;">Group by:</span>
-          <div class="filter-chip active" data-type="structure">
-            <span class="chip-dot" style="background: #6a9955;"></span>
-            <span>files</span>
-          </div>
-          <div class="filter-chip" data-type="extends">
-            <span class="chip-dot" style="background: #4a9eff;"></span>
-            <span>extends</span>
-          </div>
-          <div class="filter-chip" data-type="implements">
-            <span class="chip-dot" style="background: #4ad4d4;"></span>
-            <span>implements</span>
-          </div>
-          <div class="filter-chip" data-type="calls">
-            <span class="chip-dot" style="background: #ce9178;"></span>
-            <span>calls</span>
-          </div>
-          <div class="filter-chip" data-type="imports">
-            <span class="chip-dot" style="background: #9178ce;"></span>
-            <span>imports</span>
-          </div>
-          <div class="filter-chip" data-type="uses">
-            <span class="chip-dot" style="background: #858585;"></span>
-            <span>uses</span>
-          </div>
         </div>
         <div class="stats" id="stats">
           <span class="stat">Symbols: <span class="stat-value" id="stat-symbols">-</span></span>

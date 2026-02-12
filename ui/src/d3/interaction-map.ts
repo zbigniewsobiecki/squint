@@ -1,6 +1,6 @@
 import * as d3 from 'd3';
 import type { DagModule, Interaction } from '../types/api';
-import { getBoxColors } from './module-dag';
+import { buildModuleTree, getBoxColors } from './module-dag';
 import type { ModuleTreeNode } from './module-dag';
 
 export interface InteractionMapModule {
@@ -30,42 +30,6 @@ interface AggregatedArrow {
   weight: number;
   pattern: string; // 'business' | 'utility'
   interactions: Interaction[];
-}
-
-// Build module tree from flat DagModule[] (same pattern as module-dag.ts:66-87)
-function buildModuleTree(modules: DagModule[]): ModuleTreeNode | null {
-  const moduleById = new Map<number, ModuleTreeNode>();
-  for (const m of modules) {
-    moduleById.set(m.id, { ...m, children: [], _value: undefined, colorIndex: m.colorIndex ?? 0 });
-  }
-
-  let rootModule: ModuleTreeNode | null = null;
-
-  for (const m of modules) {
-    const node = moduleById.get(m.id)!;
-    if (m.parentId === null) {
-      rootModule = node;
-    } else {
-      const parent = moduleById.get(m.parentId);
-      if (parent) {
-        parent.children.push(node);
-      }
-    }
-  }
-
-  if (!rootModule && modules.length > 0) {
-    rootModule = moduleById.get(modules[0].id)!;
-  }
-
-  if (rootModule) computeValue(rootModule);
-  return rootModule;
-}
-
-function computeValue(node: ModuleTreeNode): number {
-  const childrenSum = node.children.reduce((s, c) => s + computeValue(c), 0);
-  node._value = node.memberCount + childrenSum;
-  if (node._value === 0) node._value = 1;
-  return node._value;
 }
 
 // Aggregate interactions by (fromModuleId, toModuleId) pair
@@ -158,7 +122,7 @@ export function renderInteractionMap(
   const root = hierarchy as d3.HierarchyRectangularNode<ModuleTreeNode>;
   const nodes = root.descendants();
 
-  // Build position lookup by module id
+  // Build position lookup by module id (treemap coordinates)
   const rectById = new Map<number, { x0: number; y0: number; x1: number; y1: number; cx: number; cy: number }>();
   for (const d of nodes) {
     const rd = d as d3.HierarchyRectangularNode<ModuleTreeNode>;
@@ -182,35 +146,48 @@ export function renderInteractionMap(
     });
   }
 
-  // Aggregate arrows
+  // Aggregate arrows — no cap, all arrows kept
   const allAggregated = aggregateInteractions(interactions);
-
-  // Filter to only arrows between modules that exist in the treemap
-  let arrows = allAggregated.filter((a) => rectById.has(a.fromId) && rectById.has(a.toId));
-
-  // If >15 arrow pairs, keep top 15 by weight
-  const MAX_ARROWS = 15;
-  const arrowCountExceeded = arrows.length > MAX_ARROWS;
-  if (arrowCountExceeded) {
-    arrows.sort((a, b) => b.weight - a.weight);
-    arrows = arrows.slice(0, MAX_ARROWS);
-  }
+  const arrows = allAggregated.filter((a) => rectById.has(a.fromId) && rectById.has(a.toId));
 
   // Track active selection for sticky highlight
   let activeSelection: { kind: 'module'; id: number } | { kind: 'arrow'; fromId: number; toId: number } | null = null;
 
-  // Create zoom group
-  const g = svg.append('g');
+  // Focus state
+  let focus: d3.HierarchyRectangularNode<ModuleTreeNode> = root;
 
-  // Background rect (click to deselect)
-  g.append('rect')
+  // Node-by-id lookup for zoom targets
+  const nodeById = new Map<number, d3.HierarchyRectangularNode<ModuleTreeNode>>();
+  for (const d of nodes) {
+    nodeById.set(d.data.id, d as d3.HierarchyRectangularNode<ModuleTreeNode>);
+  }
+
+  // Visibility: show focus, its direct children, and grandchildren
+  function isVisible(
+    d: d3.HierarchyRectangularNode<ModuleTreeNode>,
+    focusNode: d3.HierarchyRectangularNode<ModuleTreeNode>
+  ): boolean {
+    return d === focusNode || d.parent === focusNode || d.parent?.parent === focusNode;
+  }
+
+  // Background rect on SVG directly (outside g) so it's unaffected by zoom transform
+  svg
+    .append('rect')
     .attr('width', width)
     .attr('height', height)
     .attr('fill', 'transparent')
+    .style('cursor', 'pointer')
     .on('click', () => {
-      activeSelection = null;
-      clearHighlight();
-      onSelect?.(null);
+      if (activeSelection) {
+        // Deselect first
+        activeSelection = null;
+        clearHighlight();
+        removeZoomButton();
+        onSelect?.(null);
+      } else if (focus.parent) {
+        // Nothing selected — zoom out
+        zoomToFocus(focus.parent as d3.HierarchyRectangularNode<ModuleTreeNode>);
+      }
     });
 
   // Define arrowhead markers
@@ -242,6 +219,9 @@ export function renderInteractionMap(
     .attr('d', 'M0,-4L10,0L0,4')
     .attr('fill', 'var(--text-primary)');
 
+  // Create zoom group
+  const g = svg.append('g');
+
   // Module rectangles layer
   const cellsLayer = g.append('g').attr('class', 'imap-cells');
 
@@ -250,6 +230,9 @@ export function renderInteractionMap(
 
   // Arrows layer (on top)
   const arrowsLayer = g.append('g').attr('class', 'imap-arrows');
+
+  // Zoom button layer (topmost)
+  const zoomBtnLayer = g.append('g').attr('class', 'imap-zoom-btn-layer');
 
   // Render rectangles
   const visibleNodes = nodes.filter((d) => d.depth > 0);
@@ -274,24 +257,29 @@ export function renderInteractionMap(
     .attr('rx', 2)
     .style('cursor', 'pointer');
 
-  // Render labels
-  labelsLayer
+  // Render labels — centered in their rectangles
+  const labels = labelsLayer
     .selectAll<SVGTextElement, d3.HierarchyRectangularNode<ModuleTreeNode>>('text')
-    .data(
-      visibleNodes.filter((d) => {
-        const rd = d as d3.HierarchyRectangularNode<ModuleTreeNode>;
-        return rd.x1 - rd.x0 > 50;
-      })
-    )
+    .data(visibleNodes)
     .join('text')
     .attr('class', 'imap-label')
-    .attr('x', (d) => (d as d3.HierarchyRectangularNode<ModuleTreeNode>).x0 + 4)
-    .attr('y', (d) => (d as d3.HierarchyRectangularNode<ModuleTreeNode>).y0 + 14)
+    .attr('x', (d) => {
+      const rd = d as d3.HierarchyRectangularNode<ModuleTreeNode>;
+      return (rd.x0 + rd.x1) / 2;
+    })
+    .attr('y', (d) => {
+      const rd = d as d3.HierarchyRectangularNode<ModuleTreeNode>;
+      return (rd.y0 + rd.y1) / 2;
+    })
     .text((d) => d.data.name)
     .each(function (d) {
       const rd = d as d3.HierarchyRectangularNode<ModuleTreeNode>;
-      const maxW = rd.x1 - rd.x0 - 8;
+      const maxW = rd.x1 - rd.x0 - 16;
       const el = this as SVGTextElement;
+      if (maxW <= 0) {
+        el.textContent = '';
+        return;
+      }
       if (el.getComputedTextLength() > maxW) {
         let txt = d.data.name;
         while (txt.length > 1 && el.getComputedTextLength() > maxW) {
@@ -337,7 +325,7 @@ export function renderInteractionMap(
     return `M${x1},${y1} Q${cx},${cy2} ${x2},${y2}`;
   }
 
-  // Render arrows
+  // Render arrows — hidden by default
   const arrowPaths = arrowsLayer
     .selectAll<SVGPathElement, AggregatedArrow>('path')
     .data(arrows)
@@ -347,25 +335,137 @@ export function renderInteractionMap(
     .attr('fill', 'none')
     .attr('stroke', 'var(--text-muted)')
     .attr('stroke-width', (d) => Math.min(5, Math.max(1.5, d.weight * 0.8)))
-    .attr('stroke-opacity', (d) => (d.pattern === 'business' ? 0.25 : 0.2))
+    .attr('stroke-opacity', 0)
     .attr('stroke-dasharray', (d) => (d.pattern === 'utility' ? '5,3' : null))
     .attr('marker-end', 'url(#imap-arrowhead)')
-    .style('pointer-events', 'stroke')
-    .style('cursor', 'pointer');
+    .style('pointer-events', 'none')
+    .style('cursor', 'pointer')
+    .style('visibility', 'hidden');
 
-  // Arrow count indicator
-  if (arrowCountExceeded) {
-    g.append('text')
-      .attr('class', 'imap-arrow-count')
-      .attr('x', width - 10)
-      .attr('y', height - 10)
-      .attr('text-anchor', 'end')
-      .attr('fill', 'var(--text-muted)')
-      .attr('font-size', '11px')
-      .text(`Showing top ${MAX_ARROWS} of ${allAggregated.length} interactions`);
+  // --- Zoom & visibility helpers ---
+
+  function zoomTo(target: d3.HierarchyRectangularNode<ModuleTreeNode>, animate: boolean) {
+    const tw = target.x1 - target.x0;
+    const th = target.y1 - target.y0;
+    const scale = Math.min(width / tw, height / th);
+    const tx = -target.x0 * scale + (width - tw * scale) / 2;
+    const ty = -target.y0 * scale + (height - th * scale) / 2;
+
+    if (animate) {
+      g.transition().duration(750).attr('transform', `translate(${tx},${ty}) scale(${scale})`);
+    } else {
+      g.attr('transform', `translate(${tx},${ty}) scale(${scale})`);
+    }
   }
 
-  // Build interactions-by-module index for sidebar
+  function updateRectVisibility(focusNode: d3.HierarchyRectangularNode<ModuleTreeNode>, animate: boolean) {
+    if (animate) {
+      cells.each(function (d) {
+        const visible = isVisible(d, focusNode);
+        d3.select(this)
+          .transition()
+          .duration(750)
+          .style('opacity', visible ? 1 : 0)
+          .on('end', function () {
+            d3.select(this).style('pointer-events', visible ? 'auto' : 'none');
+          });
+      });
+    } else {
+      cells
+        .style('opacity', (d) => (isVisible(d, focusNode) ? 1 : 0))
+        .style('pointer-events', (d) => (isVisible(d, focusNode) ? 'auto' : 'none'));
+    }
+  }
+
+  function updateLabelVisibility(focusNode: d3.HierarchyRectangularNode<ModuleTreeNode>, animate: boolean) {
+    if (animate) {
+      labels
+        .filter(function (d) {
+          return d.parent === focusNode || (this as SVGTextElement).style.display === 'inline';
+        })
+        .transition()
+        .duration(750)
+        .style('fill-opacity', (d) => (d.parent === focusNode ? 1 : 0))
+        .on('start', function (d) {
+          if (d.parent === focusNode) (this as SVGTextElement).style.display = 'inline';
+        })
+        .on('end', function (d) {
+          if (d.parent !== focusNode) (this as SVGTextElement).style.display = 'none';
+        });
+    } else {
+      labels
+        .style('display', (d) => (d.parent === focusNode ? 'inline' : 'none'))
+        .style('fill-opacity', (d) => (d.parent === focusNode ? 1 : 0));
+    }
+  }
+
+  function hideAllArrows(animate: boolean) {
+    if (animate) {
+      arrowPaths
+        .transition()
+        .duration(300)
+        .attr('stroke-opacity', 0)
+        .on('end', function () {
+          d3.select(this).style('visibility', 'hidden').style('pointer-events', 'none');
+        });
+    } else {
+      arrowPaths.attr('stroke-opacity', 0).style('visibility', 'hidden').style('pointer-events', 'none');
+    }
+  }
+
+  function getVisibleArrowIds(focusNode: d3.HierarchyRectangularNode<ModuleTreeNode>): Set<number> {
+    const visibleModuleIds = new Set<number>();
+    for (const d of nodes) {
+      if (isVisible(d as d3.HierarchyRectangularNode<ModuleTreeNode>, focusNode)) {
+        visibleModuleIds.add(d.data.id);
+      }
+    }
+    return visibleModuleIds;
+  }
+
+  function zoomToFocus(target: d3.HierarchyRectangularNode<ModuleTreeNode>) {
+    focus = target;
+    activeSelection = null;
+    removeZoomButton();
+    zoomTo(target, true);
+    updateRectVisibility(target, true);
+    updateLabelVisibility(target, true);
+    hideAllArrows(true);
+    onSelect?.(null);
+  }
+
+  function removeZoomButton() {
+    zoomBtnLayer.selectAll('*').remove();
+  }
+
+  function showZoomButton(d: d3.HierarchyRectangularNode<ModuleTreeNode>) {
+    removeZoomButton();
+    if (!d.children) return;
+
+    const rd = d as d3.HierarchyRectangularNode<ModuleTreeNode>;
+    const btnW = 52;
+    const btnH = 20;
+    const bx = rd.x1 - btnW - 4;
+    const by = rd.y0 + 4;
+
+    const btn = zoomBtnLayer.append('g').attr('class', 'imap-zoom-btn');
+
+    btn.append('rect').attr('x', bx).attr('y', by).attr('width', btnW).attr('height', btnH).attr('rx', 4);
+
+    btn
+      .append('text')
+      .attr('x', bx + btnW / 2)
+      .attr('y', by + btnH / 2)
+      .text('Zoom \u2192');
+
+    btn.style('cursor', 'pointer').on('click', (event) => {
+      event.stopPropagation();
+      zoomToFocus(d);
+    });
+  }
+
+  // --- Interaction helpers ---
+
   function interactionsForModule(moduleId: number): Interaction[] {
     const seen = new Set<number>();
     const result: Interaction[] = [];
@@ -382,63 +482,68 @@ export function renderInteractionMap(
     return result;
   }
 
-  // Find connected module IDs for a given module
   function connectedModuleIds(moduleId: number): Set<number> {
+    const visibleIds = getVisibleArrowIds(focus);
     const ids = new Set<number>();
     for (const a of arrows) {
+      if (!visibleIds.has(a.fromId) || !visibleIds.has(a.toId)) continue;
       if (a.fromId === moduleId) ids.add(a.toId);
       if (a.toId === moduleId) ids.add(a.fromId);
     }
     return ids;
   }
 
-  // Highlight functions
+  // --- Highlight functions ---
+
   function applyModuleHighlight(moduleId: number) {
+    const visibleIds = getVisibleArrowIds(focus);
     const connected = connectedModuleIds(moduleId);
 
+    // Dim unrelated visible cells
     cells.style('opacity', (d) => {
+      if (!isVisible(d, focus)) return 0;
       if (d.data.id === moduleId) return 1;
       if (connected.has(d.data.id)) return 1;
       return 0.3;
     });
 
-    arrowPaths
-      .attr('stroke-opacity', (d) => {
-        if (d.fromId === moduleId || d.toId === moduleId) return 0.9;
-        return 0.06;
-      })
-      .attr('marker-end', (d) => {
-        if (d.fromId === moduleId || d.toId === moduleId) return 'url(#imap-arrowhead-highlight)';
-        return 'url(#imap-arrowhead)';
-      });
+    // Show arrows connected to this module (where both endpoints are visible)
+    arrowPaths.each(function (d) {
+      const show = visibleIds.has(d.fromId) && visibleIds.has(d.toId) && (d.fromId === moduleId || d.toId === moduleId);
+      d3.select(this)
+        .style('visibility', show ? 'visible' : 'hidden')
+        .attr('stroke-opacity', show ? 0.9 : 0)
+        .style('pointer-events', show ? 'stroke' : 'none')
+        .attr('marker-end', show ? 'url(#imap-arrowhead-highlight)' : 'url(#imap-arrowhead)');
+    });
   }
 
   function applyArrowHighlight(fromId: number, toId: number) {
     const involvedIds = new Set([fromId, toId]);
 
     cells.style('opacity', (d) => {
+      if (!isVisible(d, focus)) return 0;
       return involvedIds.has(d.data.id) ? 1 : 0.3;
     });
 
-    arrowPaths
-      .attr('stroke-opacity', (d) => {
-        if (d.fromId === fromId && d.toId === toId) return 0.9;
-        return 0.06;
-      })
-      .attr('marker-end', (d) => {
-        if (d.fromId === fromId && d.toId === toId) return 'url(#imap-arrowhead-highlight)';
-        return 'url(#imap-arrowhead)';
-      });
+    arrowPaths.each(function (d) {
+      const show = d.fromId === fromId && d.toId === toId;
+      d3.select(this)
+        .style('visibility', show ? 'visible' : 'hidden')
+        .attr('stroke-opacity', show ? 0.9 : 0)
+        .style('pointer-events', show ? 'stroke' : 'none')
+        .attr('marker-end', show ? 'url(#imap-arrowhead-highlight)' : 'url(#imap-arrowhead)');
+    });
   }
 
   function clearHighlight() {
-    cells.style('opacity', null);
-    arrowPaths
-      .attr('stroke-opacity', (d) => (d.pattern === 'business' ? 0.25 : 0.2))
-      .attr('marker-end', 'url(#imap-arrowhead)');
+    // Restore visible cells to full opacity, keep hidden ones hidden
+    cells.style('opacity', (d) => (isVisible(d, focus) ? 1 : 0));
+    // Hide all arrows
+    arrowPaths.attr('stroke-opacity', 0).style('visibility', 'hidden').style('pointer-events', 'none');
   }
 
-  // Cell hover + click
+  // --- Cell hover + click ---
   cells
     .on('mouseover', (_event, d) => {
       if (activeSelection) return;
@@ -465,8 +570,20 @@ export function renderInteractionMap(
     })
     .on('click', (event, d) => {
       event.stopPropagation();
+
+      // Toggle: clicking already-selected module deselects it
+      if (activeSelection?.kind === 'module' && activeSelection.id === d.data.id) {
+        activeSelection = null;
+        clearHighlight();
+        removeZoomButton();
+        onSelect?.(null);
+        return;
+      }
+
+      // Select this module (no zoom)
       activeSelection = { kind: 'module', id: d.data.id };
       applyModuleHighlight(d.data.id);
+      showZoomButton(d as d3.HierarchyRectangularNode<ModuleTreeNode>);
       const mod = moduleInfoById.get(d.data.id);
       if (mod) {
         onSelect?.({
@@ -477,7 +594,7 @@ export function renderInteractionMap(
       }
     });
 
-  // Arrow hover + click
+  // --- Arrow hover + click ---
   arrowPaths
     .on('mouseover', (_event, d) => {
       if (activeSelection) return;
@@ -518,13 +635,9 @@ export function renderInteractionMap(
       }
     });
 
-  // Zoom
-  const zoom = d3
-    .zoom<SVGSVGElement, unknown>()
-    .scaleExtent([0.3, 4])
-    .on('zoom', (event) => {
-      g.attr('transform', event.transform.toString());
-    });
-
-  svg.call(zoom);
+  // --- Initial state ---
+  updateRectVisibility(root, false);
+  updateLabelVisibility(root, false);
+  hideAllArrows(false);
+  zoomTo(root, false);
 }
