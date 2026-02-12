@@ -187,6 +187,104 @@ export class DefinitionRepository {
     return row.count;
   }
 
+  getByFileId(fileId: number): Array<{
+    id: number;
+    name: string;
+    kind: string;
+    isExported: boolean;
+    isDefault: boolean;
+    line: number;
+    column: number;
+    endLine: number;
+    endColumn: number;
+    declarationEndLine: number;
+    declarationEndColumn: number;
+    extendsName: string | null;
+    implementsNames: string | null;
+    extendsInterfaces: string | null;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT
+        id, name, kind,
+        is_exported as isExported,
+        is_default as isDefault,
+        line, column,
+        end_line as endLine,
+        end_column as endColumn,
+        declaration_end_line as declarationEndLine,
+        declaration_end_column as declarationEndColumn,
+        extends_name as extendsName,
+        implements_names as implementsNames,
+        extends_interfaces as extendsInterfaces
+      FROM definitions
+      WHERE file_id = ?
+      ORDER BY line
+    `);
+    const rows = stmt.all(fileId) as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      isExported: number;
+      isDefault: number;
+      line: number;
+      column: number;
+      endLine: number;
+      endColumn: number;
+      declarationEndLine: number;
+      declarationEndColumn: number;
+      extendsName: string | null;
+      implementsNames: string | null;
+      extendsInterfaces: string | null;
+    }>;
+    return rows.map((r) => ({
+      ...r,
+      isExported: r.isExported === 1,
+      isDefault: r.isDefault === 1,
+    }));
+  }
+
+  updateDefinition(
+    defId: number,
+    updates: {
+      isExported: boolean;
+      isDefault: boolean;
+      line: number;
+      column: number;
+      endLine: number;
+      endColumn: number;
+      declarationEndLine: number;
+      declarationEndColumn: number;
+      extendsName: string | null;
+      implementsNames: string | null;
+      extendsInterfaces: string | null;
+    }
+  ): void {
+    this.db
+      .prepare(`
+      UPDATE definitions SET
+        is_exported = ?, is_default = ?,
+        line = ?, column = ?,
+        end_line = ?, end_column = ?,
+        declaration_end_line = ?, declaration_end_column = ?,
+        extends_name = ?, implements_names = ?, extends_interfaces = ?
+      WHERE id = ?
+    `)
+      .run(
+        updates.isExported ? 1 : 0,
+        updates.isDefault ? 1 : 0,
+        updates.line,
+        updates.column,
+        updates.endLine,
+        updates.endColumn,
+        updates.declarationEndLine,
+        updates.declarationEndColumn,
+        updates.extendsName,
+        updates.implementsNames,
+        updates.extendsInterfaces,
+        defId
+      );
+  }
+
   getForFile(fileId: number): FileDefinition[] {
     const stmt = this.db.prepare(`
       SELECT

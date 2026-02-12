@@ -741,3 +741,84 @@ marker path {
   font-size: 10px;
   color: var(--text-secondary);
 }
+
+/* ==============================
+   Interaction Map (Treemap + Arrows)
+   ============================== */
+.imap-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.imap-container svg {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+/* Filter controls */
+.imap-controls {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  display: flex;
+  gap: 6px;
+}
+
+.imap-filter-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 12px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.imap-filter-btn.active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-secondary);
+}
+
+.imap-filter-btn:hover {
+  background: var(--bg-elevated);
+}
+
+/* Treemap cells */
+.imap-cell {
+  transition: opacity var(--transition-fast);
+}
+
+.imap-cell:hover {
+  filter: brightness(1.15);
+}
+
+/* Labels */
+.imap-label {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--text-primary);
+  pointer-events: none;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+}
+
+/* Arrows */
+.imap-arrow {
+  transition: stroke-opacity var(--transition-fast);
+}
+
+.imap-arrow:hover {
+  stroke-opacity: 0.9 !important;
+}
+
+/* Arrow count indicator */
+.imap-arrow-count {
+  pointer-events: none;
+}
