@@ -213,6 +213,93 @@ project.frontend.Home,"unknown action here","Some description"
       expect(result[0].stakeholder).toBe('admin');
     });
 
+    describe('metadata derivation from name', () => {
+      it('actionType overridden when verb differs from original', () => {
+        const response = `\`\`\`csv
+entry_point,name,description
+project.frontend.Home,"user deletes asset","Removes the selected asset"
+\`\`\``;
+
+        const original = makeFlow({ actionType: 'view' });
+        const result = parseCSV(response, [original]);
+
+        expect(result[0].actionType).toBe('delete');
+      });
+
+      it('targetEntity overridden when name has real entity', () => {
+        const response = `\`\`\`csv
+entry_point,name,description
+project.frontend.Home,"user views content_section","Shows the content section"
+\`\`\``;
+
+        const original = makeFlow({ targetEntity: null });
+        const result = parseCSV(response, [original]);
+
+        expect(result[0].targetEntity).toBe('content_section');
+      });
+
+      it('multi-word entity joined with underscore', () => {
+        const response = `\`\`\`csv
+entry_point,name,description
+project.frontend.Home,"user views api key","Shows API key details"
+\`\`\``;
+
+        const flows = [makeFlow()];
+        const result = parseCSV(response, flows);
+
+        expect(result[0].targetEntity).toBe('api_key');
+      });
+
+      it('multi-word verb "logs into" parsed correctly', () => {
+        const response = `\`\`\`csv
+entry_point,name,description
+project.frontend.Home,"user logs into system","Authenticates the user"
+\`\`\``;
+
+        const flows = [makeFlow({ actionType: 'view', targetEntity: null })];
+        const result = parseCSV(response, flows);
+
+        expect(result[0].actionType).toBe('process');
+        expect(result[0].targetEntity).toBe('system');
+      });
+
+      it('"unknown" entity filtered out, keeps original null', () => {
+        const response = `\`\`\`csv
+entry_point,name,description
+project.frontend.Home,"user processes unknown","Handles something"
+\`\`\``;
+
+        const original = makeFlow({ targetEntity: null });
+        const result = parseCSV(response, [original]);
+
+        expect(result[0].targetEntity).toBeNull();
+      });
+
+      it('unrecognized verb falls back to original', () => {
+        const response = `\`\`\`csv
+entry_point,name,description
+project.frontend.Home,"user navigates dashboard","Goes to dashboard"
+\`\`\``;
+
+        const original = makeFlow({ actionType: 'view' });
+        const result = parseCSV(response, [original]);
+
+        expect(result[0].actionType).toBe('view');
+      });
+
+      it('short name (no entity) keeps original targetEntity', () => {
+        const response = `\`\`\`csv
+entry_point,name,description
+project.frontend.Home,"user views","Views something"
+\`\`\``;
+
+        const original = makeFlow({ targetEntity: 'dashboard' });
+        const result = parseCSV(response, [original]);
+
+        expect(result[0].targetEntity).toBe('dashboard');
+      });
+    });
+
     it('only matches the flow with correct entry_point, others keep original', () => {
       const response = `\`\`\`csv
 entry_point,name,description

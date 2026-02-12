@@ -7,7 +7,24 @@ import type { Command } from '@oclif/core';
 import type { InteractionWithPaths } from '../../../db/schema.js';
 import { parseRow } from '../_shared/csv-utils.js';
 import { type LlmLogOptions, completeWithLogging, logLlmRequest, logLlmResponse } from '../_shared/llm-utils.js';
-import type { FlowSuggestion, LlmOptions } from './types.js';
+import type { ActionType, FlowSuggestion, LlmOptions } from './types.js';
+
+const VERB_TO_ACTION: Record<string, ActionType> = {
+  views: 'view',
+  lists: 'view',
+  browses: 'view',
+  creates: 'create',
+  adds: 'create',
+  registers: 'create',
+  updates: 'update',
+  edits: 'update',
+  modifies: 'update',
+  deletes: 'delete',
+  removes: 'delete',
+  processes: 'process',
+  authenticates: 'process',
+  'logs into': 'process',
+};
 
 export class FlowEnhancer {
   constructor(
@@ -123,7 +140,7 @@ IMPORTANT: The entry_point column MUST match the entry point value from the inpu
             : '';
 
         const actionLine = f.actionType ? `Action: ${f.actionType}` : 'Action: unknown';
-        const entityLine = f.targetEntity ? `Entity: ${f.targetEntity}` : 'Entity: unknown';
+        const entityLine = f.targetEntity ? `Entity: ${f.targetEntity}` : 'Entity: (derive from code context)';
 
         return `${i + 1}. ${actionLine}, ${entityLine}, Actor: ${actor}\n   Entry: ${f.entryPath}\n   Steps: ${steps}${defStepInfo}`;
       })
@@ -197,6 +214,7 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
 
       const firstWord = newName.split(' ')[0]?.toLowerCase();
       const derivedStakeholder = validStakeholders[firstWord] ?? null;
+      const derived = this.parseNameMetadata(newName);
 
       return {
         ...original,
@@ -204,7 +222,28 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
         slug: newSlug || original.slug,
         description: enhancement.description || original.description,
         ...(derivedStakeholder ? { stakeholder: derivedStakeholder } : {}),
+        ...(derived.actionType ? { actionType: derived.actionType } : {}),
+        ...(derived.targetEntity ? { targetEntity: derived.targetEntity } : {}),
       };
     });
+  }
+
+  private parseNameMetadata(name: string): { actionType: ActionType | null; targetEntity: string | null } {
+    const words = name.toLowerCase().split(/\s+/);
+    if (words.length < 3) return { actionType: null, targetEntity: null };
+
+    // Check multi-word verbs first (e.g. "logs into")
+    const twoWordVerb = `${words[1]} ${words[2]}`;
+    if (VERB_TO_ACTION[twoWordVerb]) {
+      const entity = words.slice(3).join('_') || null;
+      const filtered = entity === 'unknown' ? null : entity;
+      return { actionType: VERB_TO_ACTION[twoWordVerb], targetEntity: filtered };
+    }
+
+    // Single-word verb
+    const actionType = VERB_TO_ACTION[words[1]] ?? null;
+    const entity = words.slice(2).join('_') || null;
+    const filtered = entity === 'unknown' ? null : entity;
+    return { actionType, targetEntity: filtered };
   }
 }
