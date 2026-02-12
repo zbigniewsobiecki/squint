@@ -1,3 +1,9 @@
+## [1.3.1](https://github.com/zbigniewsobiecki/squint/compare/v1.3.0...v1.3.1) (2026-02-12)
+
+### Bug Fixes
+
+* resolve re-export chains through unchanged files during sync ([97610e2](https://github.com/zbigniewsobiecki/squint/commit/97610e27e2c712f864f5c1d593a026af962881d6))
+
 ## [1.3.0](https://github.com/zbigniewsobiecki/squint/compare/v1.2.0...v1.3.0) (2026-02-12)
 
 ### Features
