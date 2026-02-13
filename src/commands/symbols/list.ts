@@ -17,10 +17,12 @@ export default class SymbolsList extends Command {
     '<%= config.bin %> symbols --domain auth',
     '<%= config.bin %> symbols --pure false',
     '<%= config.bin %> symbols --domains',
+    '<%= config.bin %> symbols --json',
   ];
 
   static override flags = {
     database: SharedFlags.database,
+    json: SharedFlags.json,
     kind: Flags.string({
       description: 'Filter by kind (function, class, variable, type, interface, enum)',
     }),
@@ -52,6 +54,22 @@ export default class SymbolsList extends Command {
       // Handle --domains flag: list all unique domains
       if (flags.domains) {
         const domains = db.metadata.getAllDomains();
+        if (flags.json) {
+          this.log(
+            JSON.stringify(
+              {
+                domains: domains.map((d) => ({
+                  name: d,
+                  symbolCount: db.domains.getSymbolsByDomain(d).length,
+                })),
+              },
+              null,
+              2
+            )
+          );
+          return;
+        }
+
         if (domains.length === 0) {
           this.log(
             chalk.gray(
@@ -71,6 +89,26 @@ export default class SymbolsList extends Command {
       // Handle --domain filter: show symbols with a specific domain
       if (flags.domain) {
         const symbols = db.domains.getSymbolsByDomain(flags.domain);
+        if (flags.json) {
+          this.log(
+            JSON.stringify(
+              {
+                symbols: symbols.map((s) => ({
+                  name: s.name,
+                  kind: s.kind,
+                  domains: s.domains,
+                  purpose: s.purpose ?? null,
+                })),
+                count: symbols.length,
+                domain: flags.domain,
+              },
+              null,
+              2
+            )
+          );
+          return;
+        }
+
         if (symbols.length === 0) {
           this.log(chalk.gray(`No symbols found with domain "${flags.domain}".`));
         } else {
@@ -92,6 +130,27 @@ export default class SymbolsList extends Command {
           this.error(chalk.red('--pure must be "true" or "false"'));
         }
         const symbols = db.domains.getSymbolsByPurity(isPure);
+        if (flags.json) {
+          this.log(
+            JSON.stringify(
+              {
+                symbols: symbols.map((s) => ({
+                  name: s.name,
+                  kind: s.kind,
+                  filePath: s.filePath,
+                  line: s.line,
+                  purpose: s.purpose ?? null,
+                })),
+                count: symbols.length,
+                pure: isPure,
+              },
+              null,
+              2
+            )
+          );
+          return;
+        }
+
         if (symbols.length === 0) {
           this.log(chalk.gray(`No symbols found with pure=${flags.pure}.`));
         } else {
@@ -130,6 +189,26 @@ export default class SymbolsList extends Command {
       if (flags.missing) {
         const idsWithoutKey = new Set(db.metadata.getDefinitionsWithout(flags.missing));
         symbols = symbols.filter((sym) => idsWithoutKey.has(sym.id));
+      }
+
+      if (flags.json) {
+        this.log(
+          JSON.stringify(
+            {
+              symbols: symbols.map((s) => ({
+                id: s.id,
+                name: s.name,
+                kind: s.kind,
+                filePath: s.filePath,
+                line: s.line,
+              })),
+              count: symbols.length,
+            },
+            null,
+            2
+          )
+        );
+        return;
       }
 
       if (symbols.length === 0) {
