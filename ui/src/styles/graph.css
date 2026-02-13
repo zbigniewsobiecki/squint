@@ -652,6 +652,26 @@ marker path {
 .chord-sidebar-item {
   padding: var(--spacing-sm) var(--spacing-lg);
   border-bottom: 1px solid var(--bg-tertiary);
+  cursor: pointer;
+}
+
+.chord-sidebar-item:hover {
+  background: var(--bg-elevated);
+}
+
+.chord-sidebar-item-summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.chord-sidebar-item-details {
+  display: none;
+  margin-top: 6px;
+}
+
+.chord-sidebar-item.expanded .chord-sidebar-item-details {
+  display: block;
 }
 
 .chord-sidebar-item-header {
@@ -742,25 +762,32 @@ marker path {
   color: var(--text-secondary);
 }
 
+/* Sidebar group headers (interaction grouping) */
+.chord-sidebar-section {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--bg-primary);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
 /* ==============================
-   Interaction Map (Treemap + Arrows)
+   Interaction Map (Card Grid + Arrows)
    ============================== */
-.imap-container {
-  width: 100%;
-  height: 100%;
+.ixmap-container {
   display: flex;
+  height: 100%;
   overflow: hidden;
   position: relative;
 }
 
-.imap-container svg {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-}
-
 /* Filter controls */
-.imap-controls {
+.ixmap-controls {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -769,7 +796,7 @@ marker path {
   gap: 6px;
 }
 
-.imap-filter-btn {
+.ixmap-filter-btn {
   padding: 3px 10px;
   font-size: 11px;
   font-weight: 600;
@@ -781,56 +808,171 @@ marker path {
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.imap-filter-btn.active {
+.ixmap-filter-btn.active {
   background: var(--bg-elevated);
   color: var(--text-primary);
   border-color: var(--border-secondary);
 }
 
-.imap-filter-btn:hover {
+.ixmap-filter-btn:hover {
   background: var(--bg-elevated);
 }
 
-/* Treemap cells */
-.imap-cell {
-  transition: opacity var(--transition-fast);
+/* Depth control */
+.ixmap-depth-control {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
 }
 
-.imap-cell:hover {
-  filter: brightness(1.15);
-}
-
-/* Labels */
-.imap-label {
+.ixmap-depth-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
   font-size: 14px;
   font-weight: 600;
-  fill: var(--text-primary);
-  pointer-events: none;
-  text-anchor: middle;
-  dominant-baseline: central;
-  text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+  line-height: 1;
+  border-radius: 12px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-/* Zoom button on selected rectangle */
-.imap-zoom-btn rect {
-  fill: var(--bg-elevated);
-  stroke: var(--border-secondary);
-  stroke-width: 1;
-  cursor: pointer;
+.ixmap-depth-btn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
 }
-.imap-zoom-btn rect:hover {
-  fill: var(--bg-tertiary);
+
+.ixmap-depth-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
-.imap-zoom-btn text {
+
+.ixmap-depth-label {
   font-size: 11px;
   font-weight: 600;
-  fill: var(--text-primary);
-  pointer-events: none;
-  text-anchor: middle;
-  dominant-baseline: central;
+  color: var(--text-muted);
+  padding: 0 4px;
+  min-width: 52px;
+  text-align: center;
 }
 
-/* Arrows */
-.imap-arrow {
+/* Grid area (scrollable content + SVG overlay) */
+.ixmap-grid-area {
+  flex: 1;
+  position: relative;
+  overflow-y: auto;
+}
+
+.ixmap-grid {
+  display: grid;
+  gap: 36px;
+  padding: 48px 32px 32px;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+/* Leaf module cards (selectable) */
+.ixmap-card {
+  border: 2px solid transparent;
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), opacity var(--transition-fast);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+}
+
+.ixmap-card:hover {
+  filter: brightness(1.2);
+}
+
+.ixmap-card.selected {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 12px 2px rgba(79, 193, 255, 0.35);
+  filter: brightness(1.4);
+}
+
+.ixmap-card.dimmed {
+  opacity: 0.15;
+  filter: saturate(0.3);
+}
+
+.ixmap-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ixmap-card-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* Parent module cards (containers with nested children) */
+.ixmap-card-parent {
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ixmap-card-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 2px 4px 6px;
+}
+
+.ixmap-card-children {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  align-content: start;
+}
+
+/* SVG arrow overlay */
+.ixmap-svg-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Arrow paths */
+.ixmap-arrow {
   transition: stroke-opacity var(--transition-fast);
+}
+
+/* Arrow semantic labels */
+.ixmap-arrow-label text {
+  font-size: 10px;
+  fill: var(--text-secondary);
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+
+.ixmap-arrow-label rect {
+  fill: var(--bg-secondary);
+  stroke: var(--border-primary);
+  stroke-width: 0.5;
+  pointer-events: none;
+}
+
+.ixmap-arrow-label {
+  transition: opacity var(--transition-fast);
 }
