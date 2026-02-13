@@ -1,6 +1,8 @@
+import path from 'node:path';
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import type { IndexDatabase } from '../../db/database.js';
+import type { InteractionWithPaths } from '../../db/schema.js';
 import {
   SharedFlags,
   SymbolResolver,
@@ -20,8 +22,32 @@ interface CallSiteWithContext {
   contextStartLine: number;
 }
 
+interface MappedInteraction {
+  id: number;
+  fromModulePath: string;
+  toModulePath: string;
+  pattern: string | null;
+  semantic: string | null;
+  weight: number;
+  direction: string;
+  source: string;
+}
+
+function mapInteraction(i: InteractionWithPaths): MappedInteraction {
+  return {
+    id: i.id,
+    fromModulePath: i.fromModulePath,
+    toModulePath: i.toModulePath,
+    pattern: i.pattern,
+    semantic: i.semantic,
+    weight: i.weight,
+    direction: i.direction,
+    source: i.source,
+  };
+}
+
 export default class Show extends Command {
-  static override description = 'Show detailed information about a symbol';
+  static override description = 'Show detailed information about a symbol or file';
 
   static override examples = [
     '<%= config.bin %> symbols show parseFile',
@@ -29,6 +55,7 @@ export default class Show extends Command {
     '<%= config.bin %> symbols show MyClass --file src/models/user.ts',
     '<%= config.bin %> symbols show parseFile --json',
     '<%= config.bin %> symbols show foo -c 5',
+    '<%= config.bin %> symbols show --file src/auth/service.ts',
   ];
 
   static override args = {
@@ -39,7 +66,7 @@ export default class Show extends Command {
     database: SharedFlags.database,
     file: Flags.string({
       char: 'f',
-      description: 'Filter to specific file (for disambiguation)',
+      description: 'Filter to specific file (for disambiguation or file-level aggregation)',
     }),
     id: Flags.integer({
       description: 'Look up by definition ID directly',
@@ -55,9 +82,17 @@ export default class Show extends Command {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(Show);
 
-    // Validate arguments
+    // File aggregation mode: --file without name or --id
+    if (flags.file && !args.name && flags.id === undefined) {
+      await withDatabase(flags.database, this, async (db) => {
+        await this.runFileMode(db, flags.file!, flags.json);
+      });
+      return;
+    }
+
+    // Validate arguments for single-symbol mode
     if (!args.name && flags.id === undefined) {
-      this.error('Either provide a symbol name or use --id');
+      this.error('Either provide a symbol name, use --id, or use --file for file-level aggregation');
     }
 
     await withDatabase(flags.database, this, async (db) => {
@@ -101,6 +136,16 @@ export default class Show extends Command {
 
       // Get flows involving this definition
       const flows = db.flows.getFlowsWithDefinition(definition.id);
+
+      // Get interactions involving this symbol
+      const moduleId = moduleResult?.module.id;
+      let incomingInteractions: InteractionWithPaths[] = [];
+      let outgoingInteractions: InteractionWithPaths[] = [];
+      if (moduleId) {
+        const depNames = dependencies.map((d) => d.name);
+        incomingInteractions = db.interactions.getIncomingForSymbols(moduleId, [defDetails.name]);
+        outgoingInteractions = db.interactions.getOutgoingForSymbols(moduleId, depNames);
+      }
 
       const jsonData = {
         id: defDetails.id,
@@ -153,6 +198,10 @@ export default class Show extends Command {
           slug: f.slug,
           stakeholder: f.stakeholder,
         })),
+        interactions: {
+          incoming: incomingInteractions.map(mapInteraction),
+          outgoing: outgoingInteractions.map(mapInteraction),
+        },
         sourceCode,
         callSites,
       };
@@ -166,10 +215,252 @@ export default class Show extends Command {
           dependents,
           dependentCount,
           flows,
-          moduleResult
+          moduleResult,
+          incomingInteractions,
+          outgoingInteractions
         );
       });
     });
+  }
+
+  private async runFileMode(db: IndexDatabase, filePath: string, jsonFlag: boolean | undefined): Promise<void> {
+    // Resolve file path
+    const resolvedPath = path.resolve(filePath);
+    const relativePath = db.toRelativePath(resolvedPath);
+
+    // Try both relative and resolved paths
+    let fileId = db.files.getIdByPath(relativePath);
+    if (!fileId) {
+      fileId = db.files.getIdByPath(resolvedPath);
+    }
+    if (!fileId) {
+      // Try matching by suffix
+      fileId = db.files.getIdByPath(filePath);
+    }
+    if (!fileId) {
+      this.error(chalk.red(`File not found in index: "${filePath}"`));
+    }
+
+    // Get all definitions in file
+    const fileDefs = db.definitions.getForFile(fileId);
+    if (fileDefs.length === 0) {
+      this.error(chalk.red(`No symbols found in file: "${filePath}"`));
+    }
+
+    // Get all unique modules these definitions belong to
+    const moduleMap = new Map<number, { name: string; fullPath: string }>();
+    for (const def of fileDefs) {
+      const modResult = db.modules.getDefinitionModule(def.id);
+      if (modResult && !moduleMap.has(modResult.module.id)) {
+        moduleMap.set(modResult.module.id, { name: modResult.module.name, fullPath: modResult.module.fullPath });
+      }
+    }
+
+    // Aggregate relationships across all definitions (deduplicate by a composite key)
+    const outRelMap = new Map<string, (typeof outgoingRels)[0]>();
+    const inRelMap = new Map<string, (typeof incomingRels)[0]>();
+    const outgoingRels: Array<{
+      toDefinitionId: number;
+      toName: string;
+      toKind: string;
+      relationshipType: string;
+      semantic: string;
+      toFilePath: string;
+      toLine: number;
+    }> = [];
+    const incomingRels: Array<{
+      fromDefinitionId: number;
+      fromName: string;
+      fromKind: string;
+      relationshipType: string;
+      semantic: string;
+      fromFilePath: string;
+      fromLine: number;
+    }> = [];
+
+    for (const def of fileDefs) {
+      for (const r of db.relationships.getFrom(def.id)) {
+        const key = `${def.id}-${r.toDefinitionId}-${r.relationshipType}`;
+        if (!outRelMap.has(key)) {
+          const mapped = {
+            toDefinitionId: r.toDefinitionId,
+            toName: r.toName,
+            toKind: r.toKind,
+            relationshipType: r.relationshipType,
+            semantic: r.semantic,
+            toFilePath: r.toFilePath,
+            toLine: r.toLine,
+          };
+          outRelMap.set(key, mapped);
+          outgoingRels.push(mapped);
+        }
+      }
+      for (const r of db.relationships.getTo(def.id)) {
+        const key = `${r.fromDefinitionId}-${def.id}-${r.relationshipType}`;
+        if (!inRelMap.has(key)) {
+          const mapped = {
+            fromDefinitionId: r.fromDefinitionId,
+            fromName: r.fromName,
+            fromKind: r.fromKind,
+            relationshipType: r.relationshipType,
+            semantic: r.semantic,
+            fromFilePath: r.fromFilePath,
+            fromLine: r.fromLine,
+          };
+          inRelMap.set(key, mapped);
+          incomingRels.push(mapped);
+        }
+      }
+    }
+
+    // Aggregate flows (deduplicate by flow id)
+    const flowMap = new Map<number, { id: number; name: string; slug: string; stakeholder: string | null }>();
+    for (const def of fileDefs) {
+      for (const f of db.flows.getFlowsWithDefinition(def.id)) {
+        if (!flowMap.has(f.id)) {
+          flowMap.set(f.id, { id: f.id, name: f.name, slug: f.slug, stakeholder: f.stakeholder });
+        }
+      }
+    }
+
+    // Aggregate interactions using all file symbol names
+    const allSymbolNames = fileDefs.map((d) => d.name);
+    // Collect all dependency names across all definitions for outgoing
+    const allDepNames: string[] = [];
+    for (const def of fileDefs) {
+      for (const dep of db.dependencies.getForDefinition(def.id)) {
+        allDepNames.push(dep.name);
+      }
+    }
+    const uniqueDepNames = [...new Set(allDepNames)];
+
+    const inInteractionMap = new Map<number, MappedInteraction>();
+    const outInteractionMap = new Map<number, MappedInteraction>();
+    for (const [moduleId] of moduleMap) {
+      for (const i of db.interactions.getIncomingForSymbols(moduleId, allSymbolNames)) {
+        if (!inInteractionMap.has(i.id)) {
+          inInteractionMap.set(i.id, mapInteraction(i));
+        }
+      }
+      for (const i of db.interactions.getOutgoingForSymbols(moduleId, uniqueDepNames)) {
+        if (!outInteractionMap.has(i.id)) {
+          outInteractionMap.set(i.id, mapInteraction(i));
+        }
+      }
+    }
+
+    const jsonData = {
+      file: relativePath || filePath,
+      symbols: fileDefs.map((d) => ({
+        id: d.id,
+        name: d.name,
+        kind: d.kind,
+        line: d.line,
+        endLine: d.endLine,
+        isExported: d.isExported,
+      })),
+      modules: [...moduleMap.entries()].map(([, m]) => ({ name: m.name, fullPath: m.fullPath })),
+      relationships: {
+        outgoing: outgoingRels,
+        incoming: incomingRels,
+      },
+      interactions: {
+        incoming: [...inInteractionMap.values()],
+        outgoing: [...outInteractionMap.values()],
+      },
+      flows: [...flowMap.values()],
+    };
+
+    outputJsonOrPlain(this, jsonFlag ?? false, jsonData, () => {
+      this.outputFileModePlainText(jsonData);
+    });
+  }
+
+  private outputFileModePlainText(data: {
+    file: string;
+    symbols: Array<{ id: number; name: string; kind: string; line: number; endLine: number; isExported: boolean }>;
+    modules: Array<{ name: string; fullPath: string }>;
+    relationships: {
+      outgoing: Array<{
+        toName: string;
+        toKind: string;
+        relationshipType: string;
+        semantic: string;
+        toFilePath: string;
+        toLine: number;
+      }>;
+      incoming: Array<{
+        fromName: string;
+        fromKind: string;
+        relationshipType: string;
+        semantic: string;
+        fromFilePath: string;
+        fromLine: number;
+      }>;
+    };
+    interactions: { incoming: MappedInteraction[]; outgoing: MappedInteraction[] };
+    flows: Array<{ id: number; name: string; slug: string; stakeholder: string | null }>;
+  }): void {
+    this.log(chalk.bold(`=== File: ${data.file} ===`));
+
+    // Symbols
+    this.log('');
+    this.log(chalk.bold(`=== Symbols (${data.symbols.length}) ===`));
+    this.log('');
+    for (const s of data.symbols) {
+      const exported = s.isExported ? chalk.green('exported') : chalk.gray('internal');
+      this.log(`  ${chalk.cyan(s.name)} (${s.kind}) ${exported} ${chalk.gray(`L${s.line}-${s.endLine}`)}`);
+    }
+
+    // Modules
+    if (data.modules.length > 0) {
+      this.log('');
+      this.log(chalk.bold(`=== Modules (${data.modules.length}) ===`));
+      this.log('');
+      for (const m of data.modules) {
+        this.log(`  ${chalk.cyan(m.name)} ${chalk.gray(`(${m.fullPath})`)}`);
+      }
+    }
+
+    // Relationships
+    if (data.relationships.outgoing.length > 0) {
+      this.log('');
+      this.log(chalk.bold(`=== Relationships Outgoing (${data.relationships.outgoing.length}) ===`));
+      this.log('');
+      for (const r of data.relationships.outgoing) {
+        const semantic = r.semantic ? ` "${r.semantic}"` : '';
+        this.log(
+          `  -> ${chalk.cyan(r.toName)} (${r.toKind}) [${r.relationshipType}]${chalk.gray(semantic)} ${chalk.gray(`${r.toFilePath}:${r.toLine}`)}`
+        );
+      }
+    }
+
+    if (data.relationships.incoming.length > 0) {
+      this.log('');
+      this.log(chalk.bold(`=== Relationships Incoming (${data.relationships.incoming.length}) ===`));
+      this.log('');
+      for (const r of data.relationships.incoming) {
+        const semantic = r.semantic ? ` "${r.semantic}"` : '';
+        this.log(
+          `  <- ${chalk.cyan(r.fromName)} (${r.fromKind}) [${r.relationshipType}]${chalk.gray(semantic)} ${chalk.gray(`${r.fromFilePath}:${r.fromLine}`)}`
+        );
+      }
+    }
+
+    // Interactions
+    this.printInteractionsSection('Incoming', data.interactions.incoming);
+    this.printInteractionsSection('Outgoing', data.interactions.outgoing);
+
+    // Flows
+    if (data.flows.length > 0) {
+      this.log('');
+      this.log(chalk.bold(`=== Flows (${data.flows.length}) ===`));
+      this.log('');
+      for (const f of data.flows) {
+        const stakeholder = f.stakeholder ? ` [${f.stakeholder}]` : '';
+        this.log(`  ${chalk.cyan(f.name)} (${f.slug})${chalk.gray(stakeholder)}`);
+      }
+    }
   }
 
   private async getCallSitesWithContext(
@@ -240,6 +531,29 @@ export default class Show extends Command {
     return result;
   }
 
+  private printInteractionsSection(label: string, interactions: MappedInteraction[]): void {
+    if (interactions.length === 0) return;
+
+    this.log('');
+    this.log(chalk.bold(`=== Interactions ${label} (${interactions.length}) ===`));
+    this.log('');
+    for (const i of interactions) {
+      const arrow = i.direction === 'bi' ? '\u2194' : '\u2192';
+      const patternLabel =
+        i.pattern === 'business' ? chalk.cyan('[business]') : i.pattern === 'utility' ? chalk.yellow('[utility]') : '';
+      const sourceLabel = i.source === 'llm-inferred' ? chalk.magenta('[inferred]') : chalk.gray('[ast]');
+
+      const fromShort = i.fromModulePath.split('.').slice(-2).join('.');
+      const toShort = i.toModulePath.split('.').slice(-2).join('.');
+
+      this.log(`  ${fromShort} ${arrow} ${toShort} ${patternLabel} ${sourceLabel}`);
+
+      if (i.semantic) {
+        this.log(`    ${chalk.gray(`"${i.semantic}"`)}`);
+      }
+    }
+  }
+
   private outputPlainText(
     info: {
       id: number;
@@ -273,7 +587,9 @@ export default class Show extends Command {
     dependents: Array<{ name: string; kind: string; filePath: string; line: number }>,
     dependentCount: number,
     flows: Array<{ name: string; slug: string; stakeholder: string | null }>,
-    moduleResult: { module: { name: string; fullPath: string } } | null
+    moduleResult: { module: { name: string; fullPath: string } } | null,
+    incomingInteractions: InteractionWithPaths[],
+    outgoingInteractions: InteractionWithPaths[]
   ): void {
     // Definition section
     this.log(chalk.bold('=== Definition ==='));
@@ -363,6 +679,10 @@ export default class Show extends Command {
       }
     }
 
+    // Interactions
+    this.printInteractionsSection('Incoming', incomingInteractions.map(mapInteraction));
+    this.printInteractionsSection('Outgoing', outgoingInteractions.map(mapInteraction));
+
     // Source code section
     this.log('');
     this.log(chalk.bold('=== Source Code ==='));
@@ -388,7 +708,7 @@ export default class Show extends Command {
       const location = `${callSite.filePath}:${callSite.line}`;
       const inFunction = callSite.containingFunction ? ` in ${chalk.cyan(callSite.containingFunction)}()` : '';
       this.log(`${chalk.yellow(location)}${inFunction}`);
-      this.log(chalk.gray('─'.repeat(60)));
+      this.log(chalk.gray('\u2500'.repeat(60)));
 
       for (let i = 0; i < callSite.contextLines.length; i++) {
         const lineNum = callSite.contextStartLine + i;

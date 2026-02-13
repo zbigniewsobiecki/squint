@@ -417,6 +417,88 @@ describe('InteractionRepository', () => {
     });
   });
 
+  describe('symbol-filtered queries', () => {
+    it('getIncomingForSymbols returns interactions where symbol name is in JSON', () => {
+      repo.insert(moduleId1, moduleId2, {
+        symbols: ['AuthService', 'validateToken'],
+        source: 'ast',
+      });
+
+      const results = repo.getIncomingForSymbols(moduleId2, ['AuthService']);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].fromModuleId).toBe(moduleId1);
+      expect(results[0].toModuleId).toBe(moduleId2);
+      expect(results[0].fromModulePath).toBeDefined();
+      expect(results[0].toModulePath).toBeDefined();
+    });
+
+    it('getIncomingForSymbols excludes interactions without matching symbol', () => {
+      repo.insert(moduleId1, moduleId2, {
+        symbols: ['OtherService', 'validateToken'],
+        source: 'ast',
+      });
+
+      const results = repo.getIncomingForSymbols(moduleId2, ['AuthService']);
+
+      expect(results).toHaveLength(0);
+    });
+
+    it('getIncomingForSymbols handles null symbols field', () => {
+      repo.insert(moduleId1, moduleId2, { source: 'ast' });
+
+      const results = repo.getIncomingForSymbols(moduleId2, ['AuthService']);
+
+      expect(results).toHaveLength(0);
+    });
+
+    it('getOutgoingForSymbols returns interactions where called symbol matches', () => {
+      repo.insert(moduleId1, moduleId2, {
+        symbols: ['fetchUser', 'saveUser'],
+        source: 'ast',
+      });
+
+      const results = repo.getOutgoingForSymbols(moduleId1, ['fetchUser']);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].fromModuleId).toBe(moduleId1);
+      expect(results[0].toModuleId).toBe(moduleId2);
+    });
+
+    it('getOutgoingForSymbols with empty calledNames returns empty', () => {
+      repo.insert(moduleId1, moduleId2, {
+        symbols: ['fetchUser'],
+        source: 'ast',
+      });
+
+      const results = repo.getOutgoingForSymbols(moduleId1, []);
+
+      expect(results).toHaveLength(0);
+    });
+
+    it('both methods return InteractionWithPaths with module paths', () => {
+      repo.insert(moduleId1, moduleId2, {
+        symbols: ['AuthService'],
+        pattern: 'business',
+        semantic: 'Authenticates user',
+        source: 'ast',
+      });
+
+      const incoming = repo.getIncomingForSymbols(moduleId2, ['AuthService']);
+      const outgoing = repo.getOutgoingForSymbols(moduleId1, ['AuthService']);
+
+      expect(incoming).toHaveLength(1);
+      expect(incoming[0].fromModulePath).toBeTruthy();
+      expect(incoming[0].toModulePath).toBeTruthy();
+      expect(incoming[0].pattern).toBe('business');
+      expect(incoming[0].semantic).toBe('Authenticates user');
+
+      expect(outgoing).toHaveLength(1);
+      expect(outgoing[0].fromModulePath).toBeTruthy();
+      expect(outgoing[0].toModulePath).toBeTruthy();
+    });
+  });
+
   describe('getBySource', () => {
     it('returns interactions filtered by source', () => {
       repo.insert(moduleId1, moduleId2, { source: 'ast' });

@@ -194,6 +194,46 @@ export class InteractionRepository {
   }
 
   /**
+   * Get interactions TO a module where any of the given symbol names appears in the symbols JSON array.
+   * Used for symbol-level incoming interaction filtering.
+   */
+  getIncomingForSymbols(moduleId: number, symbolNames: string[]): InteractionWithPaths[] {
+    if (symbolNames.length === 0) return [];
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+    const placeholders = symbolNames.map(() => '?').join(', ');
+    return this.db
+      .prepare(
+        `${INTERACTION_WITH_PATHS_SELECT}
+        WHERE i.to_module_id = ?
+          AND i.symbols IS NOT NULL
+          AND EXISTS (SELECT 1 FROM json_each(i.symbols) je WHERE je.value IN (${placeholders}))
+        ORDER BY i.weight DESC`
+      )
+      .all(moduleId, ...symbolNames) as InteractionWithPaths[];
+  }
+
+  /**
+   * Get interactions FROM a module where any of the given called symbol names appears in the symbols JSON array.
+   * Used for symbol-level outgoing interaction filtering.
+   */
+  getOutgoingForSymbols(moduleId: number, calledSymbolNames: string[]): InteractionWithPaths[] {
+    if (calledSymbolNames.length === 0) return [];
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+    const placeholders = calledSymbolNames.map(() => '?').join(', ');
+    return this.db
+      .prepare(
+        `${INTERACTION_WITH_PATHS_SELECT}
+        WHERE i.from_module_id = ?
+          AND i.symbols IS NOT NULL
+          AND EXISTS (SELECT 1 FROM json_each(i.symbols) je WHERE je.value IN (${placeholders}))
+        ORDER BY i.weight DESC`
+      )
+      .all(moduleId, ...calledSymbolNames) as InteractionWithPaths[];
+  }
+
+  /**
    * Update an interaction.
    */
   update(id: number, updates: InteractionUpdateOptions): boolean {

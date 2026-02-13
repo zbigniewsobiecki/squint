@@ -213,11 +213,17 @@ squint symbols [flags]
 
 #### `squint symbols show`
 
-Shows detailed information about a symbol including source code, callsites, and metadata.
+Shows detailed information about a symbol including source code, callsites, metadata, and interactions. Also supports file-level aggregation when `--file` is used without a symbol name.
 
 ```bash
+# Single symbol
 squint symbols show <name> [--id <id>] [-f <file>] [-c <context-lines>] [--json]
+
+# File aggregation (all symbols, relationships, interactions, flows for a file)
+squint symbols show --file <path> [--json]
 ```
+
+In single-symbol mode, interactions are filtered to symbol-level precision: incoming interactions where the symbol's name appears in the interaction's `symbols` JSON field, and outgoing interactions where any of the symbol's dependencies appear. In file mode, data is aggregated and deduplicated across all symbols in the file.
 
 #### `squint symbols set`
 
@@ -871,7 +877,8 @@ The recommended approach is a **top-down drill-down**: start with the highest-le
 3. **Drill into flows**: `squint flows show <slug> --json` returns features, an entry point (with definition details and metadata), ordered interaction steps, modules involved, and the definition trace (function-level call chain).
 4. **Drill into interactions**: `squint interactions show <id> --json` returns module descriptions, resolved symbols (matched to definitions), related interactions from the same source module, flows using this interaction, and features.
 5. **Drill into modules**: `squint modules show <path> --json` returns parent, children, outgoing/incoming interactions, flows, features, and all member symbols.
-6. **Drill into symbols**: `squint symbols show <name> --json` returns module, outgoing/incoming relationships, dependencies, dependents (with count), flows, source code, and call sites.
+6. **Drill into symbols**: `squint symbols show <name> --json` returns module, outgoing/incoming relationships, dependencies, dependents (with count), flows, symbol-level interactions, source code, and call sites.
+6b. **Drill into files**: `squint symbols show --file <path> --json` aggregates all symbols, relationships, interactions, and flows for every symbol in the file — useful for understanding a file's full role.
 7. **Drill into files**: `squint files show <path> --json` returns definitions (enriched with module and metadata), imports, imported-by, and relationships.
 8. **Drill into relationships**: `squint relationships show --from <id> --to <id> --json` returns metadata for both symbols, module context, the module interaction, and flows.
 9. **Drill into domains**: `squint domains show <name> --json` returns symbols, module distribution, and intra-domain relationships.
@@ -961,8 +968,34 @@ Each `show` command returns a JSON object. The schemas below document the top-le
   "dependencies": [{ "id": 20, "name": "authenticate", "kind": "function", "filePath": "...", "line": 10 }],
   "dependents": { "count": 3, "sample": [{ "id": 5, "name": "router", "kind": "variable", "filePath": "...", "line": 3 }] },
   "flows": [{ "id": 1, "name": "UserLoginFlow", "slug": "user-login", "stakeholder": "user" }],
+  "interactions": {
+    "incoming": [{ "id": 1, "fromModulePath": "project.api.routes", "toModulePath": "project.api.controllers", "pattern": "business", "semantic": "...", "weight": 3, "direction": "uni", "source": "ast" }],
+    "outgoing": [{ "id": 2, "fromModulePath": "project.api.controllers", "toModulePath": "project.services", "pattern": "business", "semantic": "...", "weight": 5, "direction": "uni", "source": "ast" }]
+  },
   "sourceCode": ["export async function handleLogin(req) {", "  ..."],
   "callSites": [{ "filePath": "...", "line": 20, "containingFunction": "router", "contextLines": ["..."], "contextStartLine": 18 }]
+}
+```
+
+#### `squint symbols show --file <path> --json`
+
+```json
+{
+  "file": "src/controllers/auth.ts",
+  "symbols": [
+    { "id": 10, "name": "handleLogin", "kind": "function", "line": 5, "endLine": 15, "isExported": true },
+    { "id": 11, "name": "handleRegister", "kind": "function", "line": 20, "endLine": 35, "isExported": true }
+  ],
+  "modules": [{ "name": "Controllers", "fullPath": "project.api.controllers" }],
+  "relationships": {
+    "outgoing": [{ "toDefinitionId": 20, "toName": "authenticate", "toKind": "function", "relationshipType": "calls", "semantic": "...", "toFilePath": "...", "toLine": 10 }],
+    "incoming": [{ "fromDefinitionId": 5, "fromName": "router", "fromKind": "variable", "relationshipType": "calls", "semantic": "...", "fromFilePath": "...", "fromLine": 3 }]
+  },
+  "interactions": {
+    "incoming": [{ "id": 1, "fromModulePath": "project.api.routes", "toModulePath": "project.api.controllers", "pattern": "business", "semantic": "...", "weight": 3, "direction": "uni", "source": "ast" }],
+    "outgoing": [{ "id": 2, "fromModulePath": "project.api.controllers", "toModulePath": "project.services", "pattern": "business", "semantic": "...", "weight": 5, "direction": "uni", "source": "ast" }]
+  },
+  "flows": [{ "id": 1, "name": "UserLoginFlow", "slug": "user-login", "stakeholder": "user" }]
 }
 ```
 
@@ -1033,7 +1066,11 @@ squint modules show project.api.controllers --json
 
 # 6. Deep-dive into a specific symbol
 squint symbols show handleRegister --json
-# -> See module, relationships, dependencies, dependents, flows, source code
+# -> See module, relationships, dependencies, dependents, flows, interactions, source code
+
+# 7. Or view everything for a file at once
+squint symbols show --file src/controllers/auth.ts --json
+# -> See all symbols, aggregated relationships, interactions, and flows for the file
 ```
 
 ---
