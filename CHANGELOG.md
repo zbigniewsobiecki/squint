@@ -1,3 +1,9 @@
+## [1.5.0](https://github.com/zbigniewsobiecki/squint/compare/v1.4.2...v1.5.0) (2026-02-13)
+
+### Features
+
+* add symbol-level interactions to symbols show + file aggregation mode ([#16](https://github.com/zbigniewsobiecki/squint/issues/16)) ([4a22c02](https://github.com/zbigniewsobiecki/squint/commit/4a22c02b7d8bd2e257fa3a59ae567a3155141ffb))
+
 ## [1.4.2](https://github.com/zbigniewsobiecki/squint/compare/v1.4.1...v1.4.2) (2026-02-12)
 
 ### Bug Fixes

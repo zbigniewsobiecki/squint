@@ -1,6 +1,6 @@
 {
   "name": "@zbigniewsobiecki/squint",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "Squint — AST + LLM driven codebase analysis and visualization",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -35,7 +35,12 @@
     "commands": {
       "strategy": "pattern",
       "target": "./dist/commands",
-      "globPatterns": ["**/*.js", "!**/_shared/**", "!**/llm/flows/**", "!**/llm/features/**"]
+      "globPatterns": [
+        "**/*.js",
+        "!**/_shared/**",
+        "!**/llm/flows/**",
+        "!**/llm/features/**"
+      ]
     },
     "default": "parse",
     "topicSeparator": " "
@@ -43,7 +48,11 @@
   "publishConfig": {
     "access": "public"
   },
-  "files": ["/bin", "/dist", "/ui/dist"],
+  "files": [
+    "/bin",
+    "/dist",
+    "/ui/dist"
+  ],
   "dependencies": {
     "@oclif/core": "^4.0.0",
     "better-sqlite3": "^12.6.2",
@@ -74,12 +83,24 @@
     "node": ">=18.0.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["better-sqlite3", "tree-sitter", "tree-sitter-javascript", "tree-sitter-typescript"]
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "tree-sitter",
+      "tree-sitter-javascript",
+      "tree-sitter-typescript"
+    ]
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/zbigniewsobiecki/squint.git"
   },
-  "keywords": ["ast", "codebase", "analysis", "llm", "visualization", "cli"],
+  "keywords": [
+    "ast",
+    "codebase",
+    "analysis",
+    "llm",
+    "visualization",
+    "cli"
+  ],
   "license": "MIT"
 }
