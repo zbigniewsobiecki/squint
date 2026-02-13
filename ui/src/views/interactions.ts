@@ -1,6 +1,7 @@
 import type { ApiClient } from '../api/client';
+import { clearDag, clearDagHighlight, highlightDagLink, renderDagView } from '../d3/interaction-dag';
+import type { DagCallbacks } from '../d3/interaction-dag';
 import type { AggregatedEdge } from '../d3/interaction-map';
-import { clearArrows, renderInteractionArrows } from '../d3/interaction-map';
 import { buildModuleTree, getBoxColors } from '../d3/module-dag';
 import type { ModuleTreeNode } from '../d3/module-dag';
 import type { Store } from '../state/store';
@@ -286,53 +287,6 @@ export function initInteractions(store: Store, _api: ApiClient) {
     }
   }
 
-  function applySelectionHighlight(moduleId: number) {
-    const connected = new Set<number>();
-    for (const e of currentEdges) {
-      if (e.fromId === moduleId) connected.add(e.toId);
-      if (e.toId === moduleId) connected.add(e.fromId);
-    }
-
-    for (const [id, card] of cardElements) {
-      card.classList.toggle('selected', id === moduleId);
-      card.classList.toggle('dimmed', id !== moduleId && !connected.has(id));
-    }
-
-    // Restore full opacity on all arrows and labels
-    const arrows = svgOverlay.querySelectorAll('.ixmap-arrow');
-    for (const arrow of arrows) {
-      (arrow as SVGElement).style.strokeOpacity = '';
-    }
-    const labels = svgOverlay.querySelectorAll('.ixmap-arrow-label');
-    for (const label of labels) {
-      (label as SVGElement).style.opacity = '';
-    }
-  }
-
-  function highlightForEdge(fromVis: number, toVis: number) {
-    const involved = new Set([fromVis, toVis]);
-    for (const [id, card] of cardElements) {
-      card.classList.remove('selected');
-      card.classList.toggle('dimmed', !involved.has(id));
-    }
-
-    const arrows = svgOverlay.querySelectorAll('.ixmap-arrow');
-    for (const arrow of arrows) {
-      const af = Number(arrow.getAttribute('data-from-id'));
-      const at = Number(arrow.getAttribute('data-to-id'));
-      const match = (af === fromVis && at === toVis) || (af === toVis && at === fromVis);
-      (arrow as SVGElement).style.strokeOpacity = match ? '0.85' : '0.1';
-    }
-
-    const labels = svgOverlay.querySelectorAll('.ixmap-arrow-label');
-    for (const label of labels) {
-      const af = Number(label.getAttribute('data-from-id'));
-      const at = Number(label.getAttribute('data-to-id'));
-      const match = (af === fromVis && at === toVis) || (af === toVis && at === fromVis);
-      (label as SVGElement).style.opacity = match ? '1' : '0.1';
-    }
-  }
-
   function setupSidebarEvents() {
     const listItems = sidebar.querySelector('.chord-sidebar-list-items');
     if (!listItems) return;
@@ -352,28 +306,45 @@ export function initInteractions(store: Store, _api: ApiClient) {
       if (item === hoveredItem) return;
       hoveredItem = item;
       if (!item || selectedModuleId === null) {
-        applySelectionHighlight(selectedModuleId!);
+        clearDagHighlight(svgOverlay);
         return;
       }
       const fromVis = Number(item.dataset.fromVis);
       const toVis = Number(item.dataset.toVis);
       if (fromVis === toVis) return; // internal, no arrow
-      highlightForEdge(fromVis, toVis);
+      highlightDagLink(svgOverlay, fromVis, toVis);
     });
 
     listItems.addEventListener('mouseleave', () => {
       hoveredItem = null;
-      if (selectedModuleId !== null) {
-        applySelectionHighlight(selectedModuleId);
-      }
+      clearDagHighlight(svgOverlay);
     });
   }
+
+  const dagCallbacks: DagCallbacks = {
+    onNodeClick: (id: number) => {
+      if (selectedModuleId === id) {
+        clearSelection();
+      } else {
+        applySelection(id);
+      }
+    },
+    onLinkHover: (fromId: number | null, toId: number | null) => {
+      if (fromId !== null && toId !== null) {
+        highlightDagLink(svgOverlay, fromId, toId);
+      } else {
+        clearDagHighlight(svgOverlay);
+      }
+    },
+  };
 
   function applySelection(moduleId: number) {
     selectedModuleId = moduleId;
 
-    applySelectionHighlight(moduleId);
-    renderInteractionArrows(svgOverlay, cardElements, currentEdges, moduleId, gridArea);
+    // Hide grid, show DAG
+    grid.style.display = 'none';
+    svgOverlay.style.pointerEvents = 'auto';
+    renderDagView(svgOverlay, moduleId, currentEdges, visibleModules, gridArea, dagCallbacks);
 
     const mod = visibleModules.find((m) => m.id === moduleId);
     if (mod) {
@@ -414,10 +385,15 @@ export function initInteractions(store: Store, _api: ApiClient) {
 
   function clearSelection() {
     selectedModuleId = null;
+
+    // Show grid, disable SVG pointer events
+    grid.style.display = '';
+    svgOverlay.style.pointerEvents = 'none';
+    clearDag(svgOverlay);
+
     for (const card of cardElements.values()) {
       card.classList.remove('selected', 'dimmed');
     }
-    clearArrows(svgOverlay);
     sidebar.classList.add('hidden');
   }
 
@@ -517,11 +493,11 @@ export function initInteractions(store: Store, _api: ApiClient) {
     renderCards();
   });
 
-  // ResizeObserver to recalculate layout and re-render arrows
+  // ResizeObserver to recalculate layout and re-render DAG/grid
   const resizeObserver = new ResizeObserver(() => {
     updateGridLayout();
     if (selectedModuleId !== null) {
-      renderInteractionArrows(svgOverlay, cardElements, currentEdges, selectedModuleId, gridArea);
+      renderDagView(svgOverlay, selectedModuleId, currentEdges, visibleModules, gridArea, dagCallbacks);
     }
   });
   resizeObserver.observe(gridArea);
