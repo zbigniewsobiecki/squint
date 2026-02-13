@@ -976,3 +976,51 @@ marker path {
 .ixmap-arrow-label {
   transition: opacity var(--transition-fast);
 }
+
+/* ==============================
+   Interaction DAG (Layered view)
+   ============================== */
+.ixmap-dag-link {
+  fill: none;
+  stroke-opacity: 0.5;
+  transition: stroke-opacity var(--transition-fast);
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.ixmap-dag-link:hover {
+  stroke-opacity: 0.8;
+}
+.ixmap-dag-link.highlighted {
+  stroke-opacity: 0.9;
+}
+.ixmap-dag-link.dimmed {
+  stroke-opacity: 0.08;
+}
+.ixmap-dag-link.utility {
+  stroke-dasharray: 6, 3;
+}
+
+.ixmap-dag-node rect {
+  stroke-width: 2;
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+.ixmap-dag-node:hover rect {
+  filter: brightness(1.3);
+}
+.ixmap-dag-node.selected rect {
+  stroke: var(--accent-blue);
+  filter: drop-shadow(0 0 8px rgba(79, 193, 255, 0.4));
+}
+
+.ixmap-dag-label {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--text-primary);
+  pointer-events: none;
+}
+.ixmap-dag-sublabel {
+  font-size: 10px;
+  fill: var(--text-muted);
+  pointer-events: none;
+}
