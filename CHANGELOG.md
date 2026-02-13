@@ -1,3 +1,16 @@
+## [1.6.0](https://github.com/zbigniewsobiecki/squint/compare/v1.5.0...v1.6.0) (2026-02-13)
+
+### Features
+
+* **cli:** add --json flag to symbols list command ([46a10bc](https://github.com/zbigniewsobiecki/squint/commit/46a10bc089666842317ebe04e7b9218f320f66e5))
+* **ui:** add d3-dag layered layout for interaction map ([d1e7192](https://github.com/zbigniewsobiecki/squint/commit/d1e71926ff85496176c5e43f15131a2023e35310))
+* **ui:** rewrite interaction map as card grid with SVG arrow overlay ([e830184](https://github.com/zbigniewsobiecki/squint/commit/e830184cc0c7076f9b81054bee55743d06feabfc))
+* **ui:** rewrite interaction map as card grid with SVG arrow overlay ([#17](https://github.com/zbigniewsobiecki/squint/issues/17)) ([6cc18dc](https://github.com/zbigniewsobiecki/squint/commit/6cc18dca90ebc9e04ecbfa580c8d02fa6013f7e5))
+
+### Bug Fixes
+
+* format package.json for biome compliance ([7d07612](https://github.com/zbigniewsobiecki/squint/commit/7d076128f1eddac9d8b42d5a411d4e039f629e76))
+
 ## [1.5.0](https://github.com/zbigniewsobiecki/squint/compare/v1.4.2...v1.5.0) (2026-02-13)
 
 ### Features
