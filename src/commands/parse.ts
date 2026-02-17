@@ -226,7 +226,11 @@ export default class Parse extends Command {
     const { args, flags } = await this.parse(Parse);
 
     const directory = path.resolve(args.directory);
-    const outputPath = flags.output ? path.resolve(flags.output) : path.join(directory, '.squint.db');
+    const outputPath = flags.output
+      ? path.resolve(flags.output)
+      : process.env.SQUINT_DB_PATH
+        ? path.resolve(process.env.SQUINT_DB_PATH)
+        : path.join(directory, '.squint.db');
 
     // Check if directory exists
     try {

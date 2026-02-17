@@ -44,6 +44,32 @@ describe('db-helper', () => {
     db.close();
   }
 
+  describe('resolveDbPath via SQUINT_DB_PATH', () => {
+    const originalEnv = process.env.SQUINT_DB_PATH;
+
+    afterEach(() => {
+      process.env.SQUINT_DB_PATH = originalEnv;
+    });
+
+    it('uses SQUINT_DB_PATH when no explicit path given', async () => {
+      await createTestDatabase();
+      process.env.SQUINT_DB_PATH = testDbPath;
+
+      const db = await openDatabase(undefined, mockCommand);
+      expect(db).toBeDefined();
+      db.close();
+    });
+
+    it('explicit path overrides SQUINT_DB_PATH', async () => {
+      await createTestDatabase();
+      process.env.SQUINT_DB_PATH = path.join(tempDir, 'should-not-be-used.db');
+
+      const db = await openDatabase(testDbPath, mockCommand);
+      expect(db).toBeDefined();
+      db.close();
+    });
+  });
+
   describe('openDatabase', () => {
     it('opens an existing database successfully', async () => {
       await createTestDatabase();

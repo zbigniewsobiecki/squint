@@ -118,6 +118,14 @@ squint overview
 
 All commands accept `-d, --database <path>` (default: `<directory>/.squint.db`) and most accept `--json` for machine-readable output.
 
+The database path can also be set via the `SQUINT_DB_PATH` environment variable, which takes precedence over the default walk-up discovery but is overridden by an explicit `-d` flag:
+
+```bash
+export SQUINT_DB_PATH=/path/to/my-project.db
+squint flows list   # uses SQUINT_DB_PATH
+squint flows list -d other.db  # explicit flag wins
+```
+
 ---
 
 ### Top-Level Commands
@@ -132,7 +140,7 @@ squint parse <directory> [-o <output.db>]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-o, --output` | `.squint.db` | Output database file path |
+| `-o, --output` | `.squint.db` or `$SQUINT_DB_PATH` | Output database file path |
 
 #### `squint ingest` — Full Analysis Pipeline
 
