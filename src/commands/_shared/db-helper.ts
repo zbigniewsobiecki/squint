@@ -24,16 +24,18 @@ function findDatabase(): string | null {
 
 /**
  * Resolve the database path from the flag value.
- * If no explicit path is given, walk up from CWD to find .squint.db.
+ * Priority: explicit flag > SQUINT_DB_PATH env var > walk-up discovery.
  */
 export function resolveDbPath(dbPath: string | undefined, command: Command): string {
   if (dbPath) return path.resolve(dbPath);
+  const envPath = process.env.SQUINT_DB_PATH;
+  if (envPath) return path.resolve(envPath);
   const found = findDatabase();
   if (!found) {
     command.error(
       chalk.red(
         'No .squint.db found in current directory or any parent.\n' +
-          "Run 'squint parse <directory>' first, or specify -d <path>."
+          "Run 'squint parse <directory>' first, or specify -d <path> or set SQUINT_DB_PATH."
       )
     );
   }

@@ -111,7 +111,11 @@ export default class Ingest extends Command {
     const { args, flags } = await this.parse(Ingest);
 
     const directory = path.resolve(args.directory);
-    const dbPath = flags.output ? path.resolve(flags.output) : path.join(directory, '.squint.db');
+    const dbPath = flags.output
+      ? path.resolve(flags.output)
+      : process.env.SQUINT_DB_PATH
+        ? path.resolve(process.env.SQUINT_DB_PATH)
+        : path.join(directory, '.squint.db');
     const model = flags.model!;
     const batchSize = String(flags['batch-size']!);
     const maxIterations = String(flags['max-iterations']!);
