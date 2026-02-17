@@ -59,7 +59,11 @@ export default class Sync extends Command {
     const { args, flags } = await this.parse(Sync);
 
     const directory = path.resolve(args.directory);
-    const dbPath = flags.database ? path.resolve(flags.database) : path.join(directory, '.squint.db');
+    const dbPath = flags.database
+      ? path.resolve(flags.database)
+      : process.env.SQUINT_DB_PATH
+        ? path.resolve(process.env.SQUINT_DB_PATH)
+        : path.join(directory, '.squint.db');
 
     // Handle --install-hook
     if (flags['install-hook']) {
