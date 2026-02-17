@@ -1,3 +1,9 @@
+## [1.7.0](https://github.com/zbigniewsobiecki/squint/compare/v1.6.0...v1.7.0) (2026-02-17)
+
+### Features
+
+* add SQUINT_DB_PATH environment variable support ([#20](https://github.com/zbigniewsobiecki/squint/issues/20)) ([08845ae](https://github.com/zbigniewsobiecki/squint/commit/08845aeb72fdb0402b67c30e0d1c9700e6679016))
+
 ## [1.6.0](https://github.com/zbigniewsobiecki/squint/compare/v1.5.0...v1.6.0) (2026-02-13)
 
 ### Features
