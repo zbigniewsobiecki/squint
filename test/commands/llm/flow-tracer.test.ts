@@ -44,6 +44,47 @@ function makeAtomicFlow(
   };
 }
 
+function makeDefLink(
+  overrides: Partial<InteractionDefinitionLink & { toModuleId: number; source: string }> & {
+    interactionId: number;
+    fromDefinitionId: number;
+    toDefinitionId: number;
+    toModuleId: number;
+    source: string;
+  }
+): InteractionDefinitionLink & { toModuleId: number; source: string } {
+  return {
+    contractId: 0,
+    ...overrides,
+  };
+}
+
+function makeEntryPoint(
+  overrides: Partial<EntryPointModuleInfo> & {
+    moduleId: number;
+    modulePath: string;
+    memberDefinitions: EntryPointModuleInfo['memberDefinitions'];
+  }
+): EntryPointModuleInfo {
+  return {
+    moduleName: overrides.modulePath.split('.').pop() ?? '',
+    ...overrides,
+  };
+}
+
+function makeMember(
+  overrides: Partial<EntryPointModuleInfo['memberDefinitions'][0]> & { id: number; name: string }
+): EntryPointModuleInfo['memberDefinitions'][0] {
+  return {
+    kind: 'function',
+    actionType: null,
+    targetEntity: null,
+    stakeholder: null,
+    traceFromDefinition: null,
+    ...overrides,
+  };
+}
+
 describe('flow-tracer', () => {
   // ============================================
   // buildFlowTracingContext
@@ -81,17 +122,6 @@ describe('flow-tracer', () => {
       const inferred = ctx.inferredFromModule.get(1) ?? [];
       expect(inferred).toHaveLength(1);
       expect(inferred[0].id).toBe(100);
-    });
-
-    it('builds allInteractionsFromModule lookup', () => {
-      const interactions = [
-        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2 }),
-        makeInteraction({ id: 101, fromModuleId: 1, toModuleId: 3 }),
-        makeInteraction({ id: 102, fromModuleId: 2, toModuleId: 3 }),
-      ];
-      const ctx = buildFlowTracingContext(new Map(), [], interactions);
-      expect(ctx.allInteractionsFromModule.get(1)).toHaveLength(2);
-      expect(ctx.allInteractionsFromModule.get(2)).toHaveLength(1);
     });
 
     it('builds defIdToName lookup', () => {
@@ -159,23 +189,15 @@ describe('flow-tracer', () => {
       const ctx = buildSimpleContext();
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            {
-              id: 10,
-              name: 'handleCreate',
-              kind: 'function',
-              actionType: 'create',
-              targetEntity: 'customer',
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
+            makeMember({ id: 10, name: 'handleCreate', actionType: 'create', targetEntity: 'customer' }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, simpleAtomics);
@@ -189,23 +211,15 @@ describe('flow-tracer', () => {
       const ctx = buildSimpleContext();
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            {
-              id: 10,
-              name: 'handleCreate',
-              kind: 'function',
-              actionType: 'create',
-              targetEntity: 'customer',
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
+            makeMember({ id: 10, name: 'handleCreate', actionType: 'create', targetEntity: 'customer' }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, simpleAtomics);
@@ -218,23 +232,15 @@ describe('flow-tracer', () => {
       const ctx = buildSimpleContext();
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            {
-              id: 10,
-              name: 'handleCreate',
-              kind: 'function',
-              actionType: 'create',
-              targetEntity: 'customer',
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
+            makeMember({ id: 10, name: 'handleCreate', actionType: 'create', targetEntity: 'customer' }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, simpleAtomics);
@@ -246,23 +252,15 @@ describe('flow-tracer', () => {
       const ctx = buildSimpleContext();
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            {
-              id: 10,
-              name: 'handleCreate',
-              kind: 'function',
-              actionType: 'create',
-              targetEntity: 'customer',
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
+            makeMember({ id: 10, name: 'handleCreate', actionType: 'create', targetEntity: 'customer' }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, simpleAtomics);
@@ -274,23 +272,13 @@ describe('flow-tracer', () => {
       const ctx = buildSimpleContext();
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'handlePayment',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'handlePayment' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -301,23 +289,12 @@ describe('flow-tracer', () => {
       const ctx = buildSimpleContext();
       const tracer = new FlowTracer(ctx);
 
-      const adminEntry: EntryPointModuleInfo[] = [
-        {
+      const adminEntry = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.admin.panel',
-          moduleName: 'Admin',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'Dashboard',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: 'admin',
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'Dashboard', stakeholder: 'admin' })],
+        }),
       ];
       expect(tracer.traceFlowsFromEntryPoints(adminEntry, simpleAtomics)[0].stakeholder).toBe('admin');
     });
@@ -340,23 +317,13 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, []);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'test',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'test' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -381,23 +348,13 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'test',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'test' })],
+        }),
       ];
 
       // Should not hang - visited set prevents revisiting
@@ -409,23 +366,13 @@ describe('flow-tracer', () => {
       const ctx = buildSimpleContext();
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'Home',
-              kind: 'function',
-              actionType: 'view',
-              targetEntity: 'dashboard',
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'Home', actionType: 'view', targetEntity: 'dashboard' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, simpleAtomics);
@@ -460,32 +407,16 @@ describe('flow-tracer', () => {
 
       const atomics = [makeAtomicFlow({ slug: 'fe-be', interactionIds: [100] })];
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.frontend',
           moduleName: 'Frontend',
           memberDefinitions: [
-            {
-              id: 10,
-              name: 'listUsers',
-              kind: 'function',
-              actionType: 'view',
-              targetEntity: 'user',
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-            {
-              id: 11,
-              name: 'createUser',
-              kind: 'function',
-              actionType: 'create',
-              targetEntity: 'user',
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
+            makeMember({ id: 10, name: 'listUsers', actionType: 'view', targetEntity: 'user' }),
+            makeMember({ id: 11, name: 'createUser', actionType: 'create', targetEntity: 'user' }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, atomics);
@@ -522,23 +453,12 @@ describe('flow-tracer', () => {
         makeAtomicFlow({ slug: 'm3-m4', interactionIds: [102] }),
       ];
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.m1',
-          moduleName: 'M1',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'start',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'start' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, atomics);
@@ -582,23 +502,12 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.m1',
-          moduleName: 'M1',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'start',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'start' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -629,23 +538,12 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.m1',
-          moduleName: 'M1',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'start',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'start' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -673,23 +571,12 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.m1',
-          moduleName: 'M1',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'start',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'start' })],
+        }),
       ];
 
       // Should not hang
@@ -727,23 +614,12 @@ describe('flow-tracer', () => {
         makeAtomicFlow({ slug: 'm3-m4', interactionIds: [102] }),
       ];
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.m1',
-          moduleName: 'M1',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'start',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'start' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, atomics);
@@ -785,23 +661,12 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions, entryPointModuleIds);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.m1',
-          moduleName: 'M1',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'appRouter',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'appRouter' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -836,23 +701,14 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions, entryPointModuleIds);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.pages',
-          moduleName: 'Pages',
           memberDefinitions: [
-            {
-              id: 10,
-              name: 'SalesPage',
-              kind: 'function',
-              actionType: 'view',
-              targetEntity: 'sale',
-              stakeholder: 'user',
-              traceFromDefinition: null,
-            },
+            makeMember({ id: 10, name: 'SalesPage', actionType: 'view', targetEntity: 'sale', stakeholder: 'user' }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -885,23 +741,12 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions, entryPointModuleIds);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.m1',
-          moduleName: 'M1',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'start',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'start' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -933,23 +778,12 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions, entryPointModuleIds);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.m1',
-          moduleName: 'M1',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'start',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'start' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -993,23 +827,13 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.frontend',
           moduleName: 'Frontend',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'page',
-              kind: 'function',
-              actionType: 'view',
-              targetEntity: 'vehicle',
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'page', actionType: 'view', targetEntity: 'vehicle' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1048,23 +872,12 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.m1',
-          moduleName: 'M1',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'start',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'start' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1092,21 +905,6 @@ describe('flow-tracer', () => {
   // Definition-level bridge precision
   // ============================================
   describe('definition-level bridge precision', () => {
-    function makeDefLink(
-      overrides: Partial<InteractionDefinitionLink & { toModuleId: number; source: string }> & {
-        interactionId: number;
-        fromDefinitionId: number;
-        toDefinitionId: number;
-        toModuleId: number;
-        source: string;
-      }
-    ): InteractionDefinitionLink & { toModuleId: number; source: string } {
-      return {
-        contractId: 0,
-        ...overrides,
-      };
-    }
-
     it('narrows fan-out: each leaf def bridges only to its own target', () => {
       // M1 has two leaf defs (20, 21) each with different definition-level bridges
       // def 20 → M3.controller, def 21 → M4.controller
@@ -1155,23 +953,13 @@ describe('flow-tracer', () => {
 
       // Trace from page → vehiclesService path (def 10 calls def 20)
       // vehiclesService should ONLY bridge to VehiclesController, not SalesController
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.frontend',
           moduleName: 'Frontend',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'page',
-              kind: 'function',
-              actionType: 'view',
-              targetEntity: 'vehicle',
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'page', actionType: 'view', targetEntity: 'vehicle' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1210,23 +998,13 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions, undefined, []);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.frontend',
           moduleName: 'Frontend',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'page',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'page' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1281,23 +1059,13 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions, undefined, definitionLinks);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.frontend',
           moduleName: 'Frontend',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'page',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'page' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1346,23 +1114,13 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions, undefined, definitionLinks);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'mod.frontend',
           moduleName: 'Frontend',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'page',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'page' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1377,21 +1135,6 @@ describe('flow-tracer', () => {
   // E2E bridge continuation
   // ============================================
   describe('e2e bridge continuation', () => {
-    function makeDefLink(
-      overrides: Partial<InteractionDefinitionLink & { toModuleId: number; source: string }> & {
-        interactionId: number;
-        fromDefinitionId: number;
-        toDefinitionId: number;
-        toModuleId: number;
-        source: string;
-      }
-    ): InteractionDefinitionLink & { toModuleId: number; source: string } {
-      return {
-        contractId: 0,
-        ...overrides,
-      };
-    }
-
     it('definition-level bridge continues into backend call graph', () => {
       // Full e2e chain: M1(page) → M2(service) → M3(controller) → M4(backend-svc) → M5(repository)
       // Call graph: 10→20 (M1→M2), 30→40 (M3→M4), 40→50 (M4→M5)
@@ -1429,23 +1172,20 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions, undefined, definitionLinks);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'app.pages',
-          moduleName: 'Pages',
           memberDefinitions: [
-            {
+            makeMember({
               id: 10,
               name: 'VehiclesPage',
-              kind: 'function',
               actionType: 'create',
               targetEntity: 'vehicle',
               stakeholder: 'user',
-              traceFromDefinition: null,
-            },
+            }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1487,23 +1227,12 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions, undefined, []);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'app.pages',
-          moduleName: 'Pages',
-          memberDefinitions: [
-            {
-              id: 10,
-              name: 'VehiclesPage',
-              kind: 'function',
-              actionType: null,
-              targetEntity: null,
-              stakeholder: null,
-              traceFromDefinition: null,
-            },
-          ],
-        },
+          memberDefinitions: [makeMember({ id: 10, name: 'VehiclesPage' })],
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1555,23 +1284,14 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions, entryPointModuleIds, definitionLinks);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'app.pages',
-          moduleName: 'Pages',
           memberDefinitions: [
-            {
-              id: 10,
-              name: 'SalesPage',
-              kind: 'function',
-              actionType: 'create',
-              targetEntity: 'sale',
-              stakeholder: 'user',
-              traceFromDefinition: null,
-            },
+            makeMember({ id: 10, name: 'SalesPage', actionType: 'create', targetEntity: 'sale', stakeholder: 'user' }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1628,32 +1348,29 @@ describe('flow-tracer', () => {
       const tracer = new FlowTracer(ctx);
 
       // Two entry points from same page: create traces from useCreateVehicle, delete from useDeleteVehicle
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.pages',
-          moduleName: 'Pages',
           memberDefinitions: [
-            {
+            makeMember({
               id: 10,
               name: 'VehiclesPage',
-              kind: 'function',
               actionType: 'create',
               targetEntity: 'vehicle',
               stakeholder: 'user',
               traceFromDefinition: 'useCreateVehicle',
-            },
-            {
+            }),
+            makeMember({
               id: 10,
               name: 'VehiclesPage',
-              kind: 'function',
               actionType: 'delete',
               targetEntity: 'vehicle',
               stakeholder: 'user',
               traceFromDefinition: 'useDeleteVehicle',
-            },
+            }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1690,23 +1407,21 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.pages',
-          moduleName: 'Pages',
           memberDefinitions: [
-            {
+            makeMember({
               id: 10,
               name: 'VehiclesPage',
-              kind: 'function',
               actionType: 'create',
               targetEntity: 'vehicle',
               stakeholder: 'user',
               traceFromDefinition: 'useNonExistentHook', // Does not match any callee
-            },
+            }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1738,23 +1453,21 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.pages',
-          moduleName: 'Pages',
           memberDefinitions: [
-            {
+            makeMember({
               id: 10,
               name: 'SalesPage',
-              kind: 'function',
               actionType: 'view',
               targetEntity: 'sale',
               stakeholder: 'user',
               traceFromDefinition: 'useSales', // LLM incorrectly set this
-            },
+            }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1789,23 +1502,21 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.pages',
-          moduleName: 'Pages',
           memberDefinitions: [
-            {
+            makeMember({
               id: 10,
               name: 'SalesPage',
-              kind: 'function',
               actionType: 'create',
               targetEntity: 'sale',
               stakeholder: 'user',
               traceFromDefinition: 'useSales', // Narrow to hook only
-            },
+            }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
@@ -1839,23 +1550,20 @@ describe('flow-tracer', () => {
       const ctx = buildFlowTracingContext(callGraph, modules, interactions);
       const tracer = new FlowTracer(ctx);
 
-      const entryPoints: EntryPointModuleInfo[] = [
-        {
+      const entryPoints = [
+        makeEntryPoint({
           moduleId: 1,
           modulePath: 'project.pages',
-          moduleName: 'Pages',
           memberDefinitions: [
-            {
+            makeMember({
               id: 10,
               name: 'VehiclesPage',
-              kind: 'function',
               actionType: 'view',
               targetEntity: 'vehicle',
               stakeholder: 'user',
-              traceFromDefinition: null, // View traces from page itself
-            },
+            }),
           ],
-        },
+        }),
       ];
 
       const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);

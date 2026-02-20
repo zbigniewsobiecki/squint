@@ -3,7 +3,8 @@ import chalk from 'chalk';
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
 import { computeProcessGroups } from '../llm/_shared/process-utils.js';
-import { checkInteractionQuality, checkReferentialIntegrity } from '../llm/_shared/verify/coverage-checker.js';
+import { checkReferentialIntegrity } from '../llm/_shared/verify/integrity-checker.js';
+import { checkInteractionQuality } from '../llm/_shared/verify/interaction-checker.js';
 
 export default class InteractionsVerify extends BaseLlmCommand {
   static override description = 'Verify existing interactions';

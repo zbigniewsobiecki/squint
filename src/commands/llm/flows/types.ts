@@ -84,7 +84,6 @@ export interface FlowTracingContext {
   defToModule: Map<number, { moduleId: number; modulePath: string }>;
   interactionByModulePair: Map<string, number>;
   inferredFromModule: Map<number, InteractionWithPaths[]>;
-  allInteractionsFromModule: Map<number, InteractionWithPaths[]>;
   moduleToDefIds: Map<number, number[]>;
   defIdToName: Map<number, string>;
   entryPointModuleIds: Set<number>;
