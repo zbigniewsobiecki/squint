@@ -6,6 +6,7 @@ import type { FileReference, ImportedSymbol, SymbolUsage } from '../parser/refer
 import { type CallsiteResult, type FileInsert, type IIndexWriter, SCHEMA } from './schema.js';
 
 import { CallGraphService } from './repositories/call-graph-service.js';
+import { ContractRepository } from './repositories/contract-repository.js';
 import { DefinitionRepository } from './repositories/definition-repository.js';
 import { DependencyRepository } from './repositories/dependency-repository.js';
 import { DomainRepository } from './repositories/domain-repository.js';
@@ -36,6 +37,7 @@ export class IndexDatabase implements IIndexWriter {
   public readonly domains: DomainRepository;
   public readonly modules: ModuleRepository;
   public readonly interactions: InteractionRepository;
+  public readonly contracts: ContractRepository;
   public readonly features: FeatureRepository;
   public readonly flows: FlowRepository;
   public readonly graph: GraphRepository;
@@ -55,6 +57,7 @@ export class IndexDatabase implements IIndexWriter {
     this.domains = new DomainRepository(this.conn);
     this.modules = new ModuleRepository(this.conn);
     this.interactions = new InteractionRepository(this.conn);
+    this.contracts = new ContractRepository(this.conn);
     this.features = new FeatureRepository(this.conn);
     this.flows = new FlowRepository(this.conn);
     this.graph = new GraphRepository(this.conn);

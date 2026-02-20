@@ -14,6 +14,7 @@ import {
   getProcessDescription,
   getProcessGroupLabel,
 } from '../llm/_shared/process-utils.js';
+import { ContractMatcher } from './contract-matcher.js';
 
 interface InteractionSuggestion {
   fromModuleId: number;
@@ -243,8 +244,49 @@ export default class InteractionsGenerate extends BaseLlmCommand {
       }
     }
 
-    // Compute process groups for Steps 3 and 4
+    // Compute process groups for Steps 2.5, 3, and 4
     const processGroups = computeProcessGroups(db);
+
+    // Step 2.5: Contract-Based Matching (Deterministic)
+    let contractMatchedCount = 0;
+    let contractLinkedCount = 0;
+    if (!dryRun && db.contracts.getCount() > 0) {
+      // Backfill any NULL module_ids before matching
+      const backfilled = db.contracts.backfillModuleIds();
+      if (backfilled > 0 && !isJson && verbose) {
+        this.log(chalk.gray(`  Backfilled ${backfilled} contract participant module_id(s)`));
+      }
+
+      if (!isJson) {
+        this.log('');
+        this.log(chalk.bold('Step 2.5: Contract-Based Matching (Deterministic)'));
+      }
+
+      const matcher = new ContractMatcher();
+      const contractMatches = matcher.match(db, processGroups);
+      const matchResult = matcher.materializeInteractions(db, contractMatches);
+      contractMatchedCount = matchResult.created;
+      contractLinkedCount = matchResult.linked;
+
+      if (!isJson) {
+        this.log(
+          chalk.green(
+            `  Added ${contractMatchedCount} contract-matched interactions (${contractLinkedCount} definition links)`
+          )
+        );
+
+        // Per-protocol breakdown
+        const stats = matcher.getStats(db, processGroups);
+        if (stats.byProtocol.size > 0) {
+          for (const [protocol, count] of stats.byProtocol) {
+            this.log(chalk.gray(`    ${protocol}: ${count} contracts`));
+          }
+        }
+        if (stats.unmatched > 0) {
+          this.log(chalk.yellow(`  Unmatched contracts (one-sided): ${stats.unmatched}`));
+        }
+      }
+    }
 
     // Step 3: Infer cross-process (non-AST) interactions
     if (!isJson) {
@@ -485,6 +527,7 @@ export default class InteractionsGenerate extends BaseLlmCommand {
       totalEdges: enrichedEdges.length,
       interactions: interactions.length,
       importBasedInteractions: importBasedCount,
+      contractMatchedInteractions: contractMatchedCount,
       inferredInteractions: inferredCount,
       businessCount,
       utilityCount,
@@ -501,6 +544,11 @@ export default class InteractionsGenerate extends BaseLlmCommand {
       this.log(`  Business: ${businessCount}`);
       this.log(`  Utility: ${utilityCount}`);
       this.log(`Import-based interactions: ${result.importBasedInteractions}`);
+      if (contractMatchedCount > 0) {
+        this.log(
+          `Contract-matched interactions: ${result.contractMatchedInteractions} (${contractLinkedCount} definition links)`
+        );
+      }
       this.log(`LLM-inferred interactions: ${result.inferredInteractions}`);
 
       // Display relationship coverage
@@ -713,7 +761,8 @@ Generate semantic descriptions for each interaction in CSV format.`;
         labelB,
         existingEdges,
         modules,
-        membersMap
+        membersMap,
+        db
       );
 
       if (showLlmRequests) {
@@ -963,7 +1012,8 @@ DO NOT report:
     labelB: string,
     existingEdges: ModuleCallEdge[],
     allModules: Module[],
-    membersMap: Map<number, ModuleWithMembers>
+    membersMap: Map<number, ModuleWithMembers>,
+    db?: IndexDatabase
   ): string {
     const parts: string[] = [];
 
@@ -1048,8 +1098,51 @@ DO NOT report:
       }
     }
 
-    parts.push('');
-    parts.push('Identify runtime connections between these two process groups.');
+    // Contract context (if available)
+    if (db && db.contracts.getCount() > 0) {
+      const allGroupIds = new Set([...groupAIds, ...groupBIds]);
+      const contractMatched = db.interactions.getBySource('contract-matched');
+      const relevantMatched = contractMatched.filter(
+        (i) => allGroupIds.has(i.fromModuleId) && allGroupIds.has(i.toModuleId)
+      );
+
+      if (relevantMatched.length > 0) {
+        parts.push('');
+        parts.push('## Contract-Matched Connections (already resolved)');
+        // Group by protocol
+        const byProtocol = new Map<string, string[]>();
+        for (const i of relevantMatched) {
+          // Extract protocol from semantic (format: "protocol: key1, key2; ...")
+          const match = i.semantic?.match(/^(\w+):/);
+          const protocol = match ? match[1] : 'unknown';
+          const existing = byProtocol.get(protocol) ?? [];
+          existing.push(`${i.fromModulePath} → ${i.toModulePath}`);
+          byProtocol.set(protocol, existing);
+        }
+        for (const [protocol, connections] of byProtocol) {
+          parts.push(`- ${protocol}: ${connections.length} contracts`);
+        }
+      }
+
+      const unmatchedContracts = db.contracts.getUnmatchedContracts();
+      const relevantUnmatched = unmatchedContracts.filter((c) =>
+        c.participants.some((p) => p.moduleId !== null && allGroupIds.has(p.moduleId))
+      );
+      if (relevantUnmatched.length > 0) {
+        parts.push('');
+        parts.push('## Unmatched Contracts (may need inference)');
+        for (const c of relevantUnmatched.slice(0, 10)) {
+          const roles = c.participants.map((p) => p.role).join(', ');
+          parts.push(`- ${c.protocol}:${c.normalizedKey} (${roles})`);
+        }
+      }
+
+      parts.push('');
+      parts.push('Focus inference on connections NOT already covered by contracts.');
+    } else {
+      parts.push('');
+      parts.push('Identify runtime connections between these two process groups.');
+    }
 
     return parts.join('\n');
   }

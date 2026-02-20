@@ -635,8 +635,8 @@ function renderInteractionItem(ix: Interaction, fromVis: number, toVis: number):
   const patternClass = ix.pattern === 'business' ? 'business' : 'utility';
   const dirLabel = ix.direction === 'bi' ? '\u2194' : '\u2192';
   const symbols = ix.symbols ? ix.symbols.split(',').map((s) => s.trim()) : [];
-  const sourceLabel = ix.source === 'llm-inferred' ? 'inferred' : 'ast';
-  const sourceClass = ix.source === 'llm-inferred' ? 'inferred' : 'ast';
+  const sourceLabel = ix.source === 'contract-matched' ? 'contract' : ix.source === 'llm-inferred' ? 'inferred' : 'ast';
+  const sourceClass = ix.source === 'contract-matched' ? 'contract' : ix.source === 'llm-inferred' ? 'inferred' : 'ast';
   const summary = ix.semantic ? escapeHtml(ix.semantic) : `${escapeHtml(fromName)} ${dirLabel} ${escapeHtml(toName)}`;
 
   return `
