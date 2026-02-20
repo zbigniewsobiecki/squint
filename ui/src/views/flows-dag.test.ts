@@ -187,7 +187,6 @@ describe('remapSteps', () => {
     expect(remapped).toHaveLength(2);
     expect(remapped[0].fromVisibleId).toBe(4); // LoginPage
     expect(remapped[0].toVisibleId).toBe(6); // AuthService
-    expect(remapped[0].isSelfCall).toBe(false);
     expect(remapped[0].labels).toEqual(['login request']);
     expect(remapped[1].fromVisibleId).toBe(6);
     expect(remapped[1].toVisibleId).toBe(7);
@@ -222,7 +221,6 @@ describe('remapSteps', () => {
 
     const remapped = remapSteps(steps, ancestorMap);
     expect(remapped).toHaveLength(1);
-    expect(remapped[0].isSelfCall).toBe(true);
     expect(remapped[0].fromVisibleId).toBe(2);
     expect(remapped[0].toVisibleId).toBe(2);
   });
@@ -238,7 +236,6 @@ describe('remapSteps', () => {
 
     const remapped = remapSteps(steps, ancestorMap);
     expect(remapped).toHaveLength(1);
-    expect(remapped[0].isSelfCall).toBe(false); // no longer a self-call
     expect(remapped[0].fromVisibleId).toBe(6); // AuthService
     expect(remapped[0].toVisibleId).toBe(7); // UserService
   });
@@ -294,7 +291,6 @@ describe('getRemappedLabel', () => {
       toVisibleId: 2,
       originalIndices: [0],
       labels: ['login request'],
-      isSelfCall: false,
     };
     expect(getRemappedLabel(rs)).toBe('login request');
   });
@@ -305,7 +301,6 @@ describe('getRemappedLabel', () => {
       toVisibleId: 2,
       originalIndices: [0, 1],
       labels: ['login', 'signup'],
-      isSelfCall: false,
     };
     expect(getRemappedLabel(rs)).toBe('login (+1 more)');
   });
@@ -316,7 +311,6 @@ describe('getRemappedLabel', () => {
       toVisibleId: 2,
       originalIndices: [0, 1, 2, 3],
       labels: ['a', 'b', 'c', 'd'],
-      isSelfCall: false,
     };
     expect(getRemappedLabel(rs)).toBe('a (+3 more)');
   });

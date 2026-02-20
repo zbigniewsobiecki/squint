@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "ignore": ["dist", "ui/dist", "node_modules", "*.db", "*.jsonl"]
+    "ignore": ["dist", "ui/dist", "node_modules", "*.db", "*.jsonl", "package.json"]
   },
   "formatter": {
     "enabled": true,
