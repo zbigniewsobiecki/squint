@@ -1,3 +1,10 @@
+## [1.8.0](https://github.com/zbigniewsobiecki/squint/compare/v1.7.0...v1.8.0) (2026-02-20)
+
+### Features
+
+* contracts system — extraction, matching, CLI, API, and UI ([#23](https://github.com/zbigniewsobiecki/squint/issues/23)) ([2b7508e](https://github.com/zbigniewsobiecki/squint/commit/2b7508e577638c5fe1ab5a3cf7f3df478b7938d6))
+* selective depth control for flows sequence diagram and UI overhaul ([#22](https://github.com/zbigniewsobiecki/squint/issues/22)) ([69426fe](https://github.com/zbigniewsobiecki/squint/commit/69426fe29e21489407b2ccfc596687690d2ad8f5))
+
 ## [1.7.0](https://github.com/zbigniewsobiecki/squint/compare/v1.6.0...v1.7.0) (2026-02-17)
 
 ### Features
