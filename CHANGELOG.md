@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/zbigniewsobiecki/squint/compare/v1.8.0...v1.8.1) (2026-02-20)
+
+### Bug Fixes
+
+* format package.json to satisfy biome linter ([a01ad8f](https://github.com/zbigniewsobiecki/squint/commit/a01ad8f4f00a9567d498e1326761cac0b6099da1))
+* move contract-matcher to _shared to avoid oclif command discovery ([7661546](https://github.com/zbigniewsobiecki/squint/commit/76615465f53ecfd6ade1d6aa8cce8191fbac0d59))
+
 ## [1.8.0](https://github.com/zbigniewsobiecki/squint/compare/v1.7.0...v1.8.0) (2026-02-20)
 
 ### Features
