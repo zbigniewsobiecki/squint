@@ -3,7 +3,8 @@ import chalk from 'chalk';
 
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
-import { checkModuleAssignments, checkReferentialIntegrity } from '../llm/_shared/verify/coverage-checker.js';
+import { checkReferentialIntegrity } from '../llm/_shared/verify/integrity-checker.js';
+import { checkModuleAssignments } from '../llm/_shared/verify/module-checker.js';
 
 export default class ModulesVerify extends BaseLlmCommand {
   static override description = 'Verify existing module assignments';

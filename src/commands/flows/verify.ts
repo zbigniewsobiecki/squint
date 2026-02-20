@@ -6,7 +6,8 @@ import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
-import { checkFlowQuality, checkReferentialIntegrity } from '../llm/_shared/verify/coverage-checker.js';
+import { checkFlowQuality } from '../llm/_shared/verify/flow-checker.js';
+import { checkReferentialIntegrity } from '../llm/_shared/verify/integrity-checker.js';
 
 export default class FlowsVerify extends BaseLlmCommand {
   static override description = 'Verify existing flows';

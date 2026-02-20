@@ -15,8 +15,8 @@ import {
   buildSystemPrompt,
   buildUserPromptEnhanced,
 } from '../llm/_shared/prompts.js';
+import { checkAnnotationCoverage } from '../llm/_shared/verify/annotation-checker.js';
 import { verifyAnnotationContent } from '../llm/_shared/verify/content-verifier.js';
-import { checkAnnotationCoverage } from '../llm/_shared/verify/coverage-checker.js';
 import type { VerifyReport } from '../llm/_shared/verify/verify-types.js';
 
 interface EnhancedSymbol extends ReadySymbolInfo {
