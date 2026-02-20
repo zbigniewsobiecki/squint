@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearFlowSelection, createStore, selectAllFlows, toggleFlow, toggleModule } from './store';
+import {
+  clearFlowSelection,
+  createStore,
+  selectAllFlows,
+  selectFlow,
+  toggleFlow,
+  toggleModule,
+  toggleSymbolKind,
+} from './store';
 import type { Store } from './store';
 
 describe('store', () => {
@@ -197,6 +205,66 @@ describe('store', () => {
 
       const state = store.getState();
       expect(state.selectedFlows.size).toBe(0);
+    });
+  });
+
+  describe('selectFlow', () => {
+    it('sets selectedFlowId and adds to selectedFlows', () => {
+      selectFlow(store, 42);
+
+      const state = store.getState();
+      expect(state.selectedFlowId).toBe(42);
+      expect(state.selectedFlows.has(42)).toBe(true);
+    });
+
+    it('clears selectedFlowId when passed null', () => {
+      selectFlow(store, 42);
+      selectFlow(store, null);
+
+      const state = store.getState();
+      expect(state.selectedFlowId).toBeNull();
+    });
+
+    it('replaces previous flow selection', () => {
+      selectFlow(store, 1);
+      selectFlow(store, 2);
+
+      const state = store.getState();
+      expect(state.selectedFlowId).toBe(2);
+      expect(state.selectedFlows.has(2)).toBe(true);
+    });
+  });
+
+  describe('toggleSymbolKind', () => {
+    it('adds kind to hiddenSymbolKinds when not present', () => {
+      toggleSymbolKind(store, 'function');
+
+      const state = store.getState();
+      expect(state.hiddenSymbolKinds.has('function')).toBe(true);
+    });
+
+    it('removes kind from hiddenSymbolKinds when present', () => {
+      store.setState({ hiddenSymbolKinds: new Set(['function', 'class']) });
+
+      toggleSymbolKind(store, 'function');
+
+      const state = store.getState();
+      expect(state.hiddenSymbolKinds.has('function')).toBe(false);
+      expect(state.hiddenSymbolKinds.has('class')).toBe(true);
+    });
+
+    it('toggles same kind multiple times', () => {
+      toggleSymbolKind(store, 'interface');
+      expect(store.getState().hiddenSymbolKinds.has('interface')).toBe(true);
+
+      toggleSymbolKind(store, 'interface');
+      expect(store.getState().hiddenSymbolKinds.has('interface')).toBe(false);
+    });
+
+    it('initial state has empty hiddenSymbolKinds', () => {
+      const state = store.getState();
+      expect(state.hiddenSymbolKinds).toBeInstanceOf(Set);
+      expect(state.hiddenSymbolKinds.size).toBe(0);
     });
   });
 });

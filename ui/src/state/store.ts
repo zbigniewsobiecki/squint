@@ -1,4 +1,5 @@
 import type {
+  ContractsResponse,
   FlowsDagResponse,
   FlowsResponse,
   InteractionsResponse,
@@ -14,9 +15,10 @@ export interface AppState {
   flowsData: FlowsResponse | null;
   flowsDagData: FlowsDagResponse | null;
   interactionsData: InteractionsResponse | null;
+  contractsData: ContractsResponse | null;
 
   // UI state
-  currentView: 'symbols' | 'modules' | 'flows' | 'interactions' | 'files';
+  currentView: 'symbols' | 'modules' | 'flows' | 'interactions' | 'files' | 'contracts';
   selectedRelationshipType: string | null;
   selectedFlowId: number | null; // Currently viewed flow (for detail view)
   selectedFlows: Set<number>;
@@ -24,6 +26,7 @@ export interface AppState {
   sidebarCollapsed: boolean;
   selectedSymbolId: number | null;
   symbolSearchQuery: string;
+  hiddenSymbolKinds: Set<string>;
 
   // Loading states
   loading: boolean;
@@ -48,6 +51,7 @@ export function createStore(): Store {
     flowsData: null,
     flowsDagData: null,
     interactionsData: null,
+    contractsData: null,
     currentView: 'symbols',
     selectedRelationshipType: null,
     selectedFlowId: null,
@@ -56,6 +60,7 @@ export function createStore(): Store {
     sidebarCollapsed: false,
     selectedSymbolId: null,
     symbolSearchQuery: '',
+    hiddenSymbolKinds: new Set(),
     loading: true,
     error: null,
   };
@@ -140,6 +145,19 @@ export function selectSymbol(store: Store, id: number | null) {
 
 export function setSymbolSearch(store: Store, query: string) {
   store.setState({ symbolSearchQuery: query });
+}
+
+export function toggleSymbolKind(store: Store, kind: string) {
+  const state = store.getState();
+  const hiddenSymbolKinds = new Set(state.hiddenSymbolKinds);
+
+  if (hiddenSymbolKinds.has(kind)) {
+    hiddenSymbolKinds.delete(kind);
+  } else {
+    hiddenSymbolKinds.add(kind);
+  }
+
+  store.setState({ hiddenSymbolKinds });
 }
 
 export function setRelationshipFilter(store: Store, type: string | null) {

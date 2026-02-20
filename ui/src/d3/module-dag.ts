@@ -162,14 +162,26 @@ export function renderModuleDag(
     .style('fill-opacity', (d) => (d.parent === root ? 1 : 0))
     .text((d) => d.data.name);
 
+  // Description labels for modules that have one
+  const descLabel = labelNode
+    .filter((d) => d !== root && d.data.description != null && d.data.description.length > 0)
+    .append('text')
+    .attr('class', 'module-circle-desc')
+    .style('display', (d) => (d.parent === root ? 'inline' : 'none'))
+    .style('fill-opacity', (d) => (d.parent === root ? 1 : 0))
+    .attr('dy', '1.2em')
+    .text((d) => d.data.description!);
+
   // Count labels for all non-root circles with symbols
+  const hasDesc = (d: d3.HierarchyCircularNode<ModuleTreeNode>) =>
+    d.data.description != null && d.data.description.length > 0;
   const countLabel = labelNode
     .filter((d) => d !== root && (d.data._value ?? 0) > 0)
     .append('text')
     .attr('class', 'module-circle-count')
     .style('display', (d) => (d.parent === root ? 'inline' : 'none'))
     .style('fill-opacity', (d) => (d.parent === root ? 1 : 0))
-    .attr('dy', '1.2em')
+    .attr('dy', (d) => (hasDesc(d) ? '2.4em' : '1.2em'))
     .text((d) => `${d.data._value ?? 0} symbols`);
 
   // Click-to-zoom interaction
@@ -223,6 +235,19 @@ export function renderModuleDag(
     updateCircleVisibility(focus, true);
 
     label
+      .filter(function (d) {
+        return d.parent === focus || (this as SVGTextElement).style.display === 'inline';
+      })
+      .transition(transition as any)
+      .style('fill-opacity', (d) => (d.parent === focus ? 1 : 0))
+      .on('start', function (d) {
+        if (d.parent === focus) (this as SVGTextElement).style.display = 'inline';
+      })
+      .on('end', function (d) {
+        if (d.parent !== focus) (this as SVGTextElement).style.display = 'none';
+      });
+
+    descLabel
       .filter(function (d) {
         return d.parent === focus || (this as SVGTextElement).style.display === 'inline';
       })

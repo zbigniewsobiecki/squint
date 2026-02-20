@@ -1,7 +1,7 @@
 import type { ApiClient } from '../api/client';
-import { clearDag, clearDagHighlight, highlightDagLink, renderDagView } from '../d3/interaction-dag';
-import type { DagCallbacks } from '../d3/interaction-dag';
 import type { AggregatedEdge } from '../d3/interaction-map';
+import { clearSankey, getMaxRelativeDepth, renderOverviewSankey, renderSankeyView } from '../d3/interaction-sankey';
+import type { SankeyRenderResult } from '../d3/interaction-sankey';
 import { buildModuleTree, getBoxColors } from '../d3/module-dag';
 import type { ModuleTreeNode } from '../d3/module-dag';
 import type { Store } from '../state/store';
@@ -81,17 +81,6 @@ export function initInteractions(store: Store, _api: ApiClient) {
 
   rebuildAncestorMap();
 
-  // Filter state
-  const activeFilters = { business: true, utility: true };
-
-  function getFilteredInteractions(): Interaction[] {
-    return data!.interactions.filter((ix) => {
-      if (ix.pattern === 'business' && !activeFilters.business) return false;
-      if (ix.pattern !== 'business' && !activeFilters.utility) return false;
-      return true;
-    });
-  }
-
   // Aggregate interactions to visible module level
   function aggregateToVisible(interactions: Interaction[]): {
     edges: AggregatedEdge[];
@@ -136,85 +125,55 @@ export function initInteractions(store: Store, _api: ApiClient) {
     return { edges: [...edgeMap.values()], countByModule };
   }
 
-  // Build process group summary
-  const pg = data.processGroups;
-  const processGroupHtml =
-    pg && pg.groupCount >= 2
-      ? `<div class="process-group-summary">${pg.groupCount} process groups: ${pg.groups.map((g) => g.label).join(', ')}</div>`
-      : '';
-
   container.innerHTML = `
-    ${processGroupHtml}
     <div class="ixmap-container">
-      <div class="ixmap-controls">
-        <button class="ixmap-filter-btn active" data-filter="business">Business</button>
-        <button class="ixmap-filter-btn active" data-filter="utility">Utility</button>
-        <div class="ixmap-depth-control">
-          <button class="ixmap-depth-btn" id="ixmap-depth-minus">&minus;</button>
-          <span class="ixmap-depth-label" id="ixmap-depth-label">Depth ${currentDepth}</span>
-          <button class="ixmap-depth-btn" id="ixmap-depth-plus">+</button>
-        </div>
+      <div class="ix-module-sidebar">
+        <div class="ix-module-sidebar-header"><h3>Modules</h3></div>
+        <div class="ix-module-sidebar-content" id="ix-module-sidebar-content"></div>
       </div>
-      <div class="ixmap-grid-area" id="ixmap-grid-area">
-        <div class="ixmap-grid" id="ixmap-grid"></div>
-        <svg class="ixmap-svg-overlay" id="ixmap-svg-overlay"></svg>
+      <div class="ixmap-main">
+        <div class="ixmap-controls">
+          <div class="ixmap-depth-control">
+            <button class="ixmap-depth-btn" id="ixmap-depth-minus">&minus;</button>
+            <span class="ixmap-depth-label" id="ixmap-depth-label">Depth ${currentDepth}</span>
+            <button class="ixmap-depth-btn" id="ixmap-depth-plus">+</button>
+          </div>
+        </div>
+        <div class="ixmap-grid-area" id="ixmap-grid-area">
+          <div class="ixmap-placeholder" id="ixmap-placeholder"><span>Select a module to view interactions</span></div>
+          <svg class="ixmap-svg-overlay" id="ixmap-svg-overlay"></svg>
+        </div>
       </div>
       <div class="chord-sidebar hidden" id="imap-sidebar"></div>
     </div>
   `;
 
+  const moduleSidebarContent = document.getElementById('ix-module-sidebar-content') as HTMLElement;
   const gridArea = document.getElementById('ixmap-grid-area') as HTMLElement;
-  const grid = document.getElementById('ixmap-grid') as HTMLElement;
+  const placeholder = document.getElementById('ixmap-placeholder') as HTMLElement;
   const svgOverlay = document.getElementById('ixmap-svg-overlay') as unknown as SVGSVGElement;
   const sidebar = document.getElementById('imap-sidebar') as HTMLElement;
   const depthLabel = document.getElementById('ixmap-depth-label') as HTMLElement;
   const depthMinus = document.getElementById('ixmap-depth-minus') as HTMLButtonElement;
   const depthPlus = document.getElementById('ixmap-depth-plus') as HTMLButtonElement;
 
-  // Card element lookup (only leaf-level visible modules)
-  const cardElements = new Map<number, HTMLElement>();
-
   // Selection state
   let selectedModuleId: number | null = null;
   let currentEdges: AggregatedEdge[] = [];
 
-  const GAP = 36;
-  const PAD_X = 32;
-  const PAD_TOP = 48;
-  const PAD_BOTTOM = 32;
-  const TARGET_RATIO = 4 / 3;
+  // Link focus (Sankey drill-down) state
+  let linkFocus: {
+    moduleA: ModuleTreeNode;
+    moduleB: ModuleTreeNode;
+    interactions: Interaction[];
+    sankeyDepth: number;
+    sankeyMaxDepth: number;
+  } | null = null;
+  let sankeyResult: SankeyRenderResult | null = null;
+  let escapeHandler: ((e: KeyboardEvent) => void) | null = null;
 
-  // Top-level grid layout uses depth-1 module count (always the outer containers)
-  function updateGridLayout() {
-    const n = rootModule!.children.length;
-    if (n === 0) return;
-
-    const areaW = gridArea.clientWidth;
-    const areaH = gridArea.clientHeight;
-    const usableW = areaW - PAD_X * 2;
-    const usableH = areaH - PAD_TOP - PAD_BOTTOM;
-
-    let bestCols = 1;
-    let bestDelta = Number.POSITIVE_INFINITY;
-
-    for (let cols = 1; cols <= n; cols++) {
-      const rows = Math.ceil(n / cols);
-      const cardW = (usableW - (cols - 1) * GAP) / cols;
-      const cardH = (usableH - (rows - 1) * GAP) / rows;
-      if (cardW <= 0 || cardH <= 0) continue;
-
-      const ratio = cardW / cardH;
-      const delta = Math.abs(ratio - TARGET_RATIO);
-      if (delta < bestDelta) {
-        bestDelta = delta;
-        bestCols = cols;
-      }
-    }
-
-    const rows = Math.ceil(n / bestCols);
-    grid.style.gridTemplateColumns = `repeat(${bestCols}, 1fr)`;
-    grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-  }
+  // Track which branch nodes are expanded (by module id); depth-1 nodes start expanded
+  const expandedNodes = new Set<number>(rootModule.children.map((c) => c.id));
 
   function updateDepthButtons() {
     depthLabel.textContent = `Depth ${currentDepth}`;
@@ -222,68 +181,86 @@ export function initInteractions(store: Store, _api: ApiClient) {
     depthPlus.disabled = currentDepth >= maxDepth;
   }
 
-  // Recursively create a card element for a module node.
-  // Leaf nodes (at target depth or with no children) become selectable cards.
-  // Non-leaf nodes become parent containers with nested children.
-  function createModuleCard(node: ModuleTreeNode, depth: number, countByModule: Map<number, number>): HTMLElement {
-    const isLeaf = depth >= currentDepth || node.children.length === 0;
-    const colors = getBoxColors(depth, node.colorIndex ?? 0);
-
-    if (isLeaf) {
-      const card = document.createElement('div');
-      card.className = 'ixmap-card';
-      card.dataset.moduleId = String(node.id);
-      card.style.background = colors.fill;
-      card.style.borderColor = colors.stroke;
-
-      const count = countByModule.get(node.id) ?? 0;
-      card.innerHTML = `
-        <div class="ixmap-card-title">${escapeHtml(node.name)}</div>
-        <div class="ixmap-card-count">${count} interaction${count !== 1 ? 's' : ''}</div>
-      `;
-
-      cardElements.set(node.id, card);
-      return card;
-    }
-
-    // Parent container
-    const parent = document.createElement('div');
-    parent.className = 'ixmap-card-parent';
-    parent.style.background = colors.fill;
-    parent.style.borderColor = colors.stroke;
-
-    const header = document.createElement('div');
-    header.className = 'ixmap-card-header';
-    header.textContent = node.name;
-    parent.appendChild(header);
-
-    const childrenGrid = document.createElement('div');
-    childrenGrid.className = 'ixmap-card-children';
-    for (const child of node.children) {
-      childrenGrid.appendChild(createModuleCard(child, depth + 1, countByModule));
-    }
-    parent.appendChild(childrenGrid);
-
-    return parent;
-  }
-
-  function renderCards() {
-    const { edges, countByModule } = aggregateToVisible(getFilteredInteractions());
+  function renderModuleSidebar() {
+    const { edges, countByModule } = aggregateToVisible(data!.interactions);
     currentEdges = edges;
 
-    grid.innerHTML = '';
-    cardElements.clear();
+    moduleSidebarContent.innerHTML = '';
 
-    for (const d1 of rootModule!.children) {
-      grid.appendChild(createModuleCard(d1, 1, countByModule));
+    function renderNode(node: ModuleTreeNode, depth: number, parent: HTMLElement) {
+      const hasChildren = node.children.length > 0;
+      const isVisibleModule = countByModule.has(node.id);
+      const colors = getBoxColors(depth, node.colorIndex ?? 0);
+      const indent = 8 + (depth - 1) * 16;
+
+      const row = document.createElement('div');
+      row.className = 'ix-module-item';
+      if (selectedModuleId === node.id) row.classList.add('selected');
+      row.dataset.moduleId = String(node.id);
+      row.style.paddingLeft = `${indent}px`;
+
+      let html = '';
+      if (hasChildren) {
+        const isExpanded = expandedNodes.has(node.id);
+        html += `<span class="ix-module-toggle ${isExpanded ? 'expanded' : ''}">\u25b6</span>`;
+      } else {
+        html += `<span class="ix-module-toggle-spacer"></span>`;
+      }
+      html += `<span class="ix-module-color" style="background: ${colors.stroke}"></span>`;
+      html += `<span class="ix-module-name${!isVisibleModule && hasChildren ? ' branch-label' : ''}">${escapeHtml(node.name)}</span>`;
+      if (isVisibleModule) {
+        const count = countByModule.get(node.id) ?? 0;
+        html += `<span class="ix-module-count">${count}</span>`;
+      }
+      row.innerHTML = html;
+
+      // Toggle click for nodes with children — expand/collapse only
+      if (hasChildren) {
+        const toggle = row.querySelector('.ix-module-toggle') as HTMLElement;
+        toggle.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (expandedNodes.has(node.id)) {
+            expandedNodes.delete(node.id);
+          } else {
+            expandedNodes.add(node.id);
+          }
+          renderModuleSidebar();
+        });
+      }
+
+      // Row click — always select/deselect
+      row.addEventListener('click', () => {
+        if (linkFocus) exitLinkFocus();
+        if (selectedModuleId === node.id) {
+          clearSelection();
+          renderModuleSidebar();
+          return;
+        }
+        // If this module isn't visible at current depth, adjust depth to include it
+        if (!isVisibleModule) {
+          currentDepth = depth;
+          rebuildAncestorMap();
+          updateDepthButtons();
+          renderModuleSidebar();
+        }
+        applySelection(node.id);
+      });
+
+      parent.appendChild(row);
+
+      // Render children if expanded
+      if (hasChildren && expandedNodes.has(node.id)) {
+        const childrenContainer = document.createElement('div');
+        childrenContainer.className = 'ix-module-children';
+        for (const child of node.children) {
+          renderNode(child, depth + 1, childrenContainer);
+        }
+        parent.appendChild(childrenContainer);
+      }
     }
 
-    updateGridLayout();
-
-    if (selectedModuleId !== null && cardElements.has(selectedModuleId)) {
-      applySelection(selectedModuleId);
-    } else {
-      clearSelection();
+    for (const child of rootModule!.children) {
+      renderNode(child, 1, moduleSidebarContent);
     }
   }
 
@@ -298,56 +275,70 @@ export function initInteractions(store: Store, _api: ApiClient) {
       item.classList.toggle('expanded');
     });
 
-    // Hover to highlight specific edge
+    // Hover to highlight Sankey band
     let hoveredItem: HTMLElement | null = null;
 
     listItems.addEventListener('mouseover', (event) => {
       const item = (event.target as HTMLElement).closest('.chord-sidebar-item') as HTMLElement | null;
       if (item === hoveredItem) return;
       hoveredItem = item;
-      if (!item || selectedModuleId === null) {
-        clearDagHighlight(svgOverlay);
+      if (!item) {
+        if (sankeyResult) sankeyResult.clearHighlight();
         return;
       }
       const fromVis = Number(item.dataset.fromVis);
       const toVis = Number(item.dataset.toVis);
-      if (fromVis === toVis) return; // internal, no arrow
-      highlightDagLink(svgOverlay, fromVis, toVis);
+      if (sankeyResult) {
+        sankeyResult.highlightBand(fromVis, toVis);
+      }
     });
 
     listItems.addEventListener('mouseleave', () => {
       hoveredItem = null;
-      clearDagHighlight(svgOverlay);
+      if (sankeyResult) sankeyResult.clearHighlight();
     });
   }
-
-  const dagCallbacks: DagCallbacks = {
-    onNodeClick: (id: number) => {
-      if (selectedModuleId === id) {
-        clearSelection();
-      } else {
-        applySelection(id);
-      }
-    },
-    onLinkHover: (fromId: number | null, toId: number | null) => {
-      if (fromId !== null && toId !== null) {
-        highlightDagLink(svgOverlay, fromId, toId);
-      } else {
-        clearDagHighlight(svgOverlay);
-      }
-    },
-  };
 
   function applySelection(moduleId: number) {
     selectedModuleId = moduleId;
 
-    // Hide grid, show DAG
-    grid.style.display = 'none';
+    // Hide placeholder, enable SVG
+    placeholder.style.display = 'none';
     svgOverlay.style.pointerEvents = 'auto';
-    renderDagView(svgOverlay, moduleId, currentEdges, visibleModules, gridArea, dagCallbacks);
+
+    // Update sidebar selection
+    for (const el of moduleSidebarContent.querySelectorAll('.ix-module-item')) {
+      el.classList.toggle('selected', (el as HTMLElement).dataset.moduleId === String(moduleId));
+    }
 
     const mod = visibleModules.find((m) => m.id === moduleId);
-    if (mod) {
+    if (!mod) return;
+
+    // Find connected peer modules
+    const connectedPeerIds = new Set<number>();
+    for (const edge of currentEdges) {
+      if (edge.fromId === moduleId) connectedPeerIds.add(edge.toId);
+      if (edge.toId === moduleId) connectedPeerIds.add(edge.fromId);
+    }
+    const peerMods = visibleModules.filter((m) => connectedPeerIds.has(m.id));
+
+    sankeyResult = renderOverviewSankey(svgOverlay, mod, data!.interactions, peerMods, ancestorMap, gridArea, {
+      onBandHover: (_subId, _peerId) => {
+        const items = sidebar.querySelectorAll('.chord-sidebar-item');
+        for (const item of items) {
+          item.classList.remove('highlighted');
+        }
+      },
+      onBandClick: (peerMod, ixs) => {
+        enterLinkFocus(mod, peerMod, ixs);
+      },
+      onNodeClick: (id) => {
+        applySelection(id);
+        renderModuleSidebar();
+      },
+    });
+
+    {
       const grouped = collectGroupedInteractions(moduleId);
       const totalCount = grouped.reduce((s, g) => s + g.interactions.length, 0);
       sidebar.innerHTML = `
@@ -383,17 +374,164 @@ export function initInteractions(store: Store, _api: ApiClient) {
     }
   }
 
+  // ── Link focus (Sankey drill-down) ──────────────────────────────
+
+  function enterLinkFocus(modA: ModuleTreeNode, modB: ModuleTreeNode, interactions: Interaction[]) {
+    const maxA = getMaxRelativeDepth(modA);
+    const maxB = getMaxRelativeDepth(modB);
+    const sankeyMaxDepth = Math.max(maxA, maxB);
+
+    if (sankeyMaxDepth === 0) {
+      // Neither has children — nothing to drill into
+      return;
+    }
+
+    linkFocus = { moduleA: modA, moduleB: modB, interactions, sankeyDepth: 1, sankeyMaxDepth };
+    renderLinkFocusView();
+  }
+
+  function renderLinkFocusView() {
+    if (!linkFocus) return;
+
+    const { moduleA: modA, moduleB: modB, interactions } = linkFocus;
+
+    // Hide placeholder, enable SVG
+    placeholder.style.display = 'none';
+    svgOverlay.style.pointerEvents = 'auto';
+
+    clearSankey(svgOverlay);
+
+    // Create/update sankey header
+    let header = gridArea.querySelector('.sankey-header') as HTMLElement | null;
+    if (!header) {
+      header = document.createElement('div');
+      header.className = 'sankey-header';
+      gridArea.appendChild(header);
+    }
+
+    const colorsA = getBoxColors(modA.depth, modA.colorIndex ?? 0);
+    const colorsB = getBoxColors(modB.depth, modB.colorIndex ?? 0);
+
+    header.innerHTML = `
+      <button class="sankey-back-btn" id="sankey-back-btn">\u2190 Back</button>
+      <div class="sankey-title">
+        <span style="color: ${colorsA.stroke}">${escapeHtml(modA.name)}</span>
+        <span class="sankey-separator">\u2194</span>
+        <span style="color: ${colorsB.stroke}">${escapeHtml(modB.name)}</span>
+      </div>
+      <div class="ixmap-depth-control">
+        <button class="ixmap-depth-btn" id="sankey-depth-minus">\u2212</button>
+        <span class="ixmap-depth-label" id="sankey-depth-label">Detail ${linkFocus.sankeyDepth}</span>
+        <button class="ixmap-depth-btn" id="sankey-depth-plus">+</button>
+      </div>
+    `;
+
+    // Wire header buttons
+    header.querySelector('#sankey-back-btn')!.addEventListener('click', () => exitLinkFocus());
+
+    const sDepthMinus = header.querySelector('#sankey-depth-minus') as HTMLButtonElement;
+    const sDepthPlus = header.querySelector('#sankey-depth-plus') as HTMLButtonElement;
+    const sDepthLabel = header.querySelector('#sankey-depth-label') as HTMLElement;
+
+    sDepthMinus.disabled = linkFocus.sankeyDepth <= 1;
+    sDepthPlus.disabled = linkFocus.sankeyDepth >= linkFocus.sankeyMaxDepth;
+
+    sDepthMinus.addEventListener('click', () => {
+      if (!linkFocus || linkFocus.sankeyDepth <= 1) return;
+      linkFocus.sankeyDepth--;
+      renderLinkFocusView();
+    });
+    sDepthPlus.addEventListener('click', () => {
+      if (!linkFocus || linkFocus.sankeyDepth >= linkFocus.sankeyMaxDepth) return;
+      linkFocus.sankeyDepth++;
+      renderLinkFocusView();
+    });
+
+    sDepthLabel.textContent = `Detail ${linkFocus.sankeyDepth}`;
+
+    // Highlight both modules in left sidebar
+    for (const el of moduleSidebarContent.querySelectorAll('.ix-module-item')) {
+      const id = (el as HTMLElement).dataset.moduleId;
+      el.classList.toggle('selected', id === String(modA.id) || id === String(modB.id));
+    }
+
+    // Render Sankey
+    sankeyResult = renderSankeyView(svgOverlay, modA, modB, interactions, linkFocus.sankeyDepth, gridArea, {
+      onBandHover: (_fromSubId, _toSubId) => {
+        const items = sidebar.querySelectorAll('.chord-sidebar-item');
+        for (const item of items) {
+          item.classList.remove('highlighted');
+        }
+        if (_fromSubId === null || _toSubId === null) return;
+      },
+      onBandClick: (leftMod, rightMod, bandInteractions) => {
+        enterLinkFocus(leftMod, rightMod, bandInteractions);
+      },
+    });
+
+    // Populate right sidebar with interactions between A and B
+    const totalCount = interactions.length;
+    sidebar.innerHTML = `
+      <div class="chord-sidebar-header">
+        <h3>${escapeHtml(modA.name)} \u2194 ${escapeHtml(modB.name)}</h3>
+        <span class="chord-sidebar-path">${escapeHtml(modA.fullPath)} \u2194 ${escapeHtml(modB.fullPath)}</span>
+      </div>
+      <div class="chord-sidebar-list">
+        <div class="chord-sidebar-list-title">${totalCount} interaction${totalCount !== 1 ? 's' : ''}</div>
+        <div class="chord-sidebar-list-items">
+          ${interactions.map((ix) => renderInteractionItem(ix, modA.id, modB.id)).join('')}
+        </div>
+      </div>
+    `;
+    sidebar.classList.remove('hidden');
+    setupSidebarEvents();
+
+    // Escape key handler
+    if (escapeHandler) document.removeEventListener('keydown', escapeHandler);
+    escapeHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') exitLinkFocus();
+    };
+    document.addEventListener('keydown', escapeHandler);
+  }
+
+  function exitLinkFocus() {
+    // Remove sankey header
+    const header = gridArea.querySelector('.sankey-header');
+    if (header) header.remove();
+
+    clearSankey(svgOverlay);
+
+    // Remove escape listener
+    if (escapeHandler) {
+      document.removeEventListener('keydown', escapeHandler);
+      escapeHandler = null;
+    }
+
+    linkFocus = null;
+    sankeyResult = null;
+
+    // Restore previous state
+    if (selectedModuleId !== null) {
+      applySelection(selectedModuleId);
+    } else {
+      clearSelection();
+      renderModuleSidebar();
+    }
+  }
+
   function clearSelection() {
     selectedModuleId = null;
 
-    // Show grid, disable SVG pointer events
-    grid.style.display = '';
+    // Show placeholder, disable SVG
+    placeholder.style.display = '';
     svgOverlay.style.pointerEvents = 'none';
-    clearDag(svgOverlay);
+    clearSankey(svgOverlay);
 
-    for (const card of cardElements.values()) {
-      card.classList.remove('selected', 'dimmed');
+    // Remove sidebar selection highlight
+    for (const el of moduleSidebarContent.querySelectorAll('.ix-module-item.selected')) {
+      el.classList.remove('selected');
     }
+
     sidebar.classList.add('hidden');
   }
 
@@ -403,7 +541,7 @@ export function initInteractions(store: Store, _api: ApiClient) {
     moduleId: number
   ): { otherId: number; otherName: string; interactions: Interaction[] }[] {
     const groups = new Map<number, Interaction[]>();
-    const filtered = getFilteredInteractions();
+    const filtered = data!.interactions;
 
     for (const ix of filtered) {
       const fromVis = ancestorMap.get(ix.fromModuleId);
@@ -442,69 +580,53 @@ export function initInteractions(store: Store, _api: ApiClient) {
       .sort((a, b) => b.interactions.length - a.interactions.length);
   }
 
-  // Card click handler — only leaf cards (.ixmap-card) have data-module-id
-  grid.addEventListener('click', (event) => {
-    const card = (event.target as HTMLElement).closest('.ixmap-card') as HTMLElement | null;
-    if (!card || !card.dataset.moduleId) return;
-
-    const moduleId = Number(card.dataset.moduleId);
-
-    if (selectedModuleId === moduleId) {
-      clearSelection();
-    } else {
-      applySelection(moduleId);
+  // Click background to deselect
+  gridArea.addEventListener('click', (event) => {
+    if (event.target !== gridArea) return;
+    if (linkFocus) {
+      exitLinkFocus();
+      return;
     }
-
-    event.stopPropagation();
-  });
-
-  // Click background / parent container to deselect
-  gridArea.addEventListener('click', () => {
     if (selectedModuleId !== null) {
       clearSelection();
+      renderModuleSidebar();
     }
   });
-
-  // Filter button handlers
-  const filterBtns = container.querySelectorAll('.ixmap-filter-btn');
-  for (const btn of filterBtns) {
-    btn.addEventListener('click', () => {
-      const filter = (btn as HTMLElement).dataset.filter as 'business' | 'utility';
-      activeFilters[filter] = !activeFilters[filter];
-      btn.classList.toggle('active', activeFilters[filter]);
-      renderCards();
-    });
-  }
 
   // Depth control handlers
   depthMinus.addEventListener('click', () => {
     if (currentDepth <= 1) return;
+    if (linkFocus) exitLinkFocus();
     currentDepth--;
     rebuildAncestorMap();
     updateDepthButtons();
-    renderCards();
+    clearSelection();
+    renderModuleSidebar();
   });
 
   depthPlus.addEventListener('click', () => {
     if (currentDepth >= maxDepth) return;
+    if (linkFocus) exitLinkFocus();
     currentDepth++;
     rebuildAncestorMap();
     updateDepthButtons();
-    renderCards();
+    clearSelection();
+    renderModuleSidebar();
   });
 
-  // ResizeObserver to recalculate layout and re-render DAG/grid
+  // ResizeObserver — re-render on resize
   const resizeObserver = new ResizeObserver(() => {
-    updateGridLayout();
-    if (selectedModuleId !== null) {
-      renderDagView(svgOverlay, selectedModuleId, currentEdges, visibleModules, gridArea, dagCallbacks);
+    if (linkFocus) {
+      renderLinkFocusView();
+    } else if (selectedModuleId !== null) {
+      applySelection(selectedModuleId);
     }
   });
   resizeObserver.observe(gridArea);
 
   // Initial render
   updateDepthButtons();
-  renderCards();
+  renderModuleSidebar();
 }
 
 function renderInteractionItem(ix: Interaction, fromVis: number, toVis: number): string {
@@ -513,8 +635,8 @@ function renderInteractionItem(ix: Interaction, fromVis: number, toVis: number):
   const patternClass = ix.pattern === 'business' ? 'business' : 'utility';
   const dirLabel = ix.direction === 'bi' ? '\u2194' : '\u2192';
   const symbols = ix.symbols ? ix.symbols.split(',').map((s) => s.trim()) : [];
-  const sourceLabel = ix.source === 'llm-inferred' ? 'inferred' : 'ast';
-  const sourceClass = ix.source === 'llm-inferred' ? 'inferred' : 'ast';
+  const sourceLabel = ix.source === 'contract-matched' ? 'contract' : ix.source === 'llm-inferred' ? 'inferred' : 'ast';
+  const sourceClass = ix.source === 'contract-matched' ? 'contract' : ix.source === 'llm-inferred' ? 'inferred' : 'ast';
   const summary = ix.semantic ? escapeHtml(ix.semantic) : `${escapeHtml(fromName)} ${dirLabel} ${escapeHtml(toName)}`;
 
   return `

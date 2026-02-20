@@ -235,6 +235,7 @@ function isValidUsage(node: SyntaxNode): boolean {
     parentType === 'function_declaration' ||
     parentType === 'method_definition' ||
     parentType === 'class_declaration' ||
+    parentType === 'abstract_class_declaration' ||
     parentType === 'variable_declarator'
   ) {
     const nameNode = parent.childForFieldName('name');

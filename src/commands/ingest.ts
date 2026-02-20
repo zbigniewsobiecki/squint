@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
+import ContractsExtract from './contracts/extract.js';
 import DomainsConsolidate from './domains/consolidate.js';
 import FeaturesGenerate from './features/generate.js';
 import FlowsGenerate from './flows/generate.js';
@@ -31,6 +32,7 @@ const STAGE_IDS = [
   'relationships-verify',
   'modules',
   'modules-verify',
+  'contracts',
   'interactions',
   'interactions-verify',
   'flows',
@@ -206,6 +208,11 @@ export default class Ingest extends Command {
         id: 'modules-verify',
         label: 'Verify modules',
         run: () => ModulesVerify.run(['--fix', ...llmFlags, ...debugFlags]),
+      },
+      {
+        id: 'contracts',
+        label: 'Extract contracts',
+        run: () => ContractsExtract.run(['--batch-size', batchSize, '--force', ...llmFlags, ...debugFlags]),
       },
       {
         id: 'interactions',

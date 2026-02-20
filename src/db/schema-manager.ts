@@ -410,6 +410,71 @@ export function ensureDeclarationEndColumns(db: Database.Database): void {
 }
 
 /**
+ * Ensure the contracts and contract_participants tables exist.
+ */
+export function ensureContractsTables(db: Database.Database): void {
+  const tableExists = db
+    .prepare(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='contracts'
+  `)
+    .get();
+
+  if (!tableExists) {
+    db.exec(`
+      CREATE TABLE contracts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        protocol TEXT NOT NULL,
+        key TEXT NOT NULL,
+        normalized_key TEXT NOT NULL,
+        description TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(protocol, normalized_key)
+      );
+
+      CREATE INDEX idx_contracts_protocol ON contracts(protocol);
+
+      CREATE TABLE contract_participants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+        definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+        module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL,
+        role TEXT NOT NULL,
+        UNIQUE(contract_id, definition_id)
+      );
+
+      CREATE INDEX idx_cp_contract ON contract_participants(contract_id);
+      CREATE INDEX idx_cp_definition ON contract_participants(definition_id);
+      CREATE INDEX idx_cp_module ON contract_participants(module_id);
+    `);
+  }
+}
+
+/**
+ * Ensure the interaction_definition_links table exists.
+ */
+export function ensureInteractionDefinitionLinks(db: Database.Database): void {
+  const tableExists = db
+    .prepare(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='interaction_definition_links'
+  `)
+    .get();
+
+  if (!tableExists) {
+    db.exec(`
+      CREATE TABLE interaction_definition_links (
+        interaction_id INTEGER NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
+        from_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+        to_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+        contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL,
+        PRIMARY KEY (interaction_id, from_definition_id, to_definition_id)
+      );
+
+      CREATE INDEX idx_idl_interaction ON interaction_definition_links(interaction_id);
+    `);
+  }
+}
+
+/**
  * Ensure the relationship_type column exists on relationship_annotations.
  */
 export function ensureRelationshipTypeColumn(db: Database.Database): void {

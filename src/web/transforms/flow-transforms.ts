@@ -178,6 +178,7 @@ export function getFlowsDagData(database: IndexDatabase): {
     parentId: number | null;
     name: string;
     fullPath: string;
+    description: string | null;
     depth: number;
     colorIndex: number;
     memberCount: number;
@@ -219,6 +220,7 @@ export function getFlowsDagData(database: IndexDatabase): {
       parentId: m.parentId,
       name: m.name,
       fullPath: m.fullPath,
+      description: m.description,
       depth: m.depth,
       colorIndex: m.colorIndex,
       memberCount: m.members.length,

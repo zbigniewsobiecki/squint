@@ -104,6 +104,38 @@ export interface DomainWithCount extends Domain {
 }
 
 // ============================================================
+// Contract Types (Cross-Process Communication Channels)
+// ============================================================
+
+export interface Contract {
+  id: number;
+  protocol: string;
+  key: string;
+  normalizedKey: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface ContractParticipant {
+  id: number;
+  contractId: number;
+  definitionId: number;
+  moduleId: number | null;
+  role: string;
+}
+
+export interface ContractWithParticipants extends Contract {
+  participants: ContractParticipant[];
+}
+
+export interface InteractionDefinitionLink {
+  interactionId: number;
+  fromDefinitionId: number;
+  toDefinitionId: number;
+  contractId: number | null;
+}
+
+// ============================================================
 // Module Tree Types
 // ============================================================
 
@@ -155,7 +187,7 @@ export interface CallGraphEdge {
 /**
  * Interaction source type: how the interaction was detected.
  */
-export type InteractionSource = 'ast' | 'ast-import' | 'llm-inferred';
+export type InteractionSource = 'ast' | 'ast-import' | 'llm-inferred' | 'contract-matched';
 
 /**
  * Interaction: Point-to-point module connection.
@@ -644,6 +676,33 @@ CREATE TABLE module_members (
 
 CREATE INDEX idx_module_members_module ON module_members(module_id);
 
+-- Communication contracts between process groups
+CREATE TABLE contracts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  protocol TEXT NOT NULL,
+  key TEXT NOT NULL,
+  normalized_key TEXT NOT NULL,
+  description TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(protocol, normalized_key)
+);
+
+CREATE INDEX idx_contracts_protocol ON contracts(protocol);
+
+-- Contract participants (definitions participating in a contract)
+CREATE TABLE contract_participants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+  module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL,
+  role TEXT NOT NULL,
+  UNIQUE(contract_id, definition_id)
+);
+
+CREATE INDEX idx_cp_contract ON contract_participants(contract_id);
+CREATE INDEX idx_cp_definition ON contract_participants(definition_id);
+CREATE INDEX idx_cp_module ON contract_participants(module_id);
+
 -- Interactions: module-to-module edges (flat, not hierarchical)
 CREATE TABLE interactions (
   id INTEGER PRIMARY KEY,
@@ -664,6 +723,17 @@ CREATE INDEX idx_interactions_from_module ON interactions(from_module_id);
 CREATE INDEX idx_interactions_to_module ON interactions(to_module_id);
 CREATE INDEX idx_interactions_pattern ON interactions(pattern);
 CREATE INDEX idx_interactions_source ON interactions(source);
+
+-- Links contract-matched interactions to specific definition pairs
+CREATE TABLE interaction_definition_links (
+  interaction_id INTEGER NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
+  from_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+  to_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+  contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL,
+  PRIMARY KEY (interaction_id, from_definition_id, to_definition_id)
+);
+
+CREATE INDEX idx_idl_interaction ON interaction_definition_links(interaction_id);
 
 -- Flows: user journeys with entry points
 CREATE TABLE flows (
@@ -712,7 +782,7 @@ CREATE INDEX idx_flow_def_steps_to ON flow_definition_steps(to_definition_id);
 
 /**
  * Predicate that identifies runtime interactions (as opposed to static import edges).
- * Keeps 'ast' and 'llm-inferred' sources, excludes 'ast-import' source and 'test-internal' pattern.
+ * Keeps 'ast', 'llm-inferred', and 'contract-matched' sources; excludes 'ast-import' source and 'test-internal' pattern.
  * This is the single source of truth for "meaningful interaction" across the entire pipeline.
  */
 export function isRuntimeInteraction(i: Pick<Interaction, 'source' | 'pattern'>): boolean {

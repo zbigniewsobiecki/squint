@@ -303,6 +303,85 @@ export default class DefaultError extends Error {
   });
 });
 
+describe('abstract class declarations', () => {
+  it('extracts abstract class as a class definition', () => {
+    const content = `
+abstract class BaseService {
+  abstract execute(): void;
+  log(msg: string) { console.log(msg); }
+}
+`;
+    const filePath = '/project/base-service.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.definitions).toHaveLength(1);
+    const def = result.definitions[0];
+    expect(def.name).toBe('BaseService');
+    expect(def.kind).toBe('class');
+  });
+
+  it('extracts exported abstract class', () => {
+    const content = `
+export abstract class Repository<T> {
+  abstract findById(id: string): T | null;
+}
+`;
+    const filePath = '/project/repository.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.definitions).toHaveLength(1);
+    const def = result.definitions[0];
+    expect(def.name).toBe('Repository');
+    expect(def.kind).toBe('class');
+    expect(def.isExported).toBe(true);
+  });
+
+  it('extracts abstract class with extends clause', () => {
+    const content = `
+abstract class HttpClient extends BaseClient {
+  abstract request(url: string): Promise<Response>;
+}
+`;
+    const filePath = '/project/http-client.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.definitions).toHaveLength(1);
+    const def = result.definitions[0];
+    expect(def.name).toBe('HttpClient');
+    expect(def.kind).toBe('class');
+    expect(def.extends).toBe('BaseClient');
+  });
+
+  it('extracts abstract class with implements clause', () => {
+    const content = `
+abstract class BaseHandler implements Handler, Disposable {
+  abstract handle(): void;
+  dispose() {}
+}
+`;
+    const filePath = '/project/handler.ts';
+    const knownFiles = new Set<string>();
+    const metadata = { sizeBytes: content.length, modifiedAt: '2024-01-01T00:00:00.000Z' };
+
+    const result = parseContent(content, filePath, knownFiles, metadata);
+
+    expect(result.definitions).toHaveLength(1);
+    const def = result.definitions[0];
+    expect(def.name).toBe('BaseHandler');
+    expect(def.kind).toBe('class');
+    expect(def.implements).toEqual(['Handler', 'Disposable']);
+  });
+});
+
 describe('module-level definition ranges', () => {
   it('extends const endPosition to end of file for module-level usage capture', () => {
     const content = `import express from 'express';

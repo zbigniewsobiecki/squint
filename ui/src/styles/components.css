@@ -929,3 +929,200 @@
   color: var(--text-dimmed);
   font-size: 14px;
 }
+
+/* ── Contracts View ─────────────────────────────────────────── */
+
+.contracts-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.contracts-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  border-bottom: 1px solid var(--border-primary);
+  flex-shrink: 0;
+}
+
+.contracts-filters {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.contracts-filter-btn {
+  background: transparent;
+  border: 1px solid var(--border-primary);
+  color: var(--text-muted);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 11px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.contracts-filter-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.contracts-filter-btn.active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--accent-blue);
+}
+
+.contracts-protocol-tabs {
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+}
+
+.contracts-protocol-btn {
+  background: transparent;
+  border: 1px solid var(--border-primary);
+  color: var(--text-muted);
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-size: 10px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.contracts-protocol-btn:hover {
+  color: var(--text-primary);
+}
+
+.contracts-protocol-btn.active {
+  background: var(--bg-elevated);
+  color: var(--accent-blue);
+  border-color: var(--accent-blue);
+}
+
+.contracts-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-sm);
+}
+
+.contracts-table-header {
+  display: grid;
+  grid-template-columns: 50px 1fr 80px 120px 1fr;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-primary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.contracts-row {
+  border-radius: var(--radius-sm);
+  margin-bottom: 1px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.contracts-row:hover {
+  background: var(--bg-hover);
+}
+
+.contracts-row-summary {
+  display: grid;
+  grid-template-columns: 50px 1fr 80px 120px 1fr;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  align-items: center;
+  font-size: 12px;
+}
+
+.contract-matched {
+  color: var(--accent-green);
+  font-weight: bold;
+}
+
+.contract-unmatched {
+  color: var(--accent-orange);
+}
+
+.contracts-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+}
+
+.contracts-badge.protocol {
+  background: var(--bg-elevated);
+  color: var(--accent-blue);
+}
+
+.contracts-badge.module {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.contracts-row-details {
+  display: none;
+  padding: var(--spacing-sm) var(--spacing-sm) var(--spacing-sm) 62px;
+  font-size: 11px;
+}
+
+.contracts-row.expanded .contracts-row-details {
+  display: block;
+}
+
+.contracts-detail-desc {
+  color: var(--text-muted);
+  margin-bottom: var(--spacing-sm);
+}
+
+.contracts-participants {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.contracts-participant {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+.contracts-participant-role {
+  font-weight: bold;
+  color: var(--accent-purple);
+  min-width: 80px;
+}
+
+.contracts-participant-name {
+  color: var(--accent-yellow);
+}
+
+.contracts-participant-module {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+/* Contract source badge in interaction sidebar */
+.chord-sidebar-badge.contract {
+  background: rgba(79, 193, 255, 0.15);
+  color: var(--accent-blue);
+}
+
+/* Contract badge in interactions view */
+.interaction-contract-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 9px;
+  background: rgba(79, 193, 255, 0.15);
+  color: var(--accent-blue);
+  margin-left: var(--spacing-xs);
+}

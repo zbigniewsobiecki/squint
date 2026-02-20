@@ -1,10 +1,11 @@
 import * as d3 from 'd3';
 import type { ApiClient } from '../api/client';
 import { getFlowColor } from '../d3/colors';
-import { getBoxColors } from '../d3/module-dag';
+import { buildModuleTree, getBoxColors } from '../d3/module-dag';
+import type { ModuleTreeNode } from '../d3/module-dag';
 import type { Store } from '../state/store';
 import { selectFlow } from '../state/store';
-import type { DagFlow, DagModule } from '../types/api';
+import type { DagFlow, DagFlowStep, DagModule } from '../types/api';
 
 let originalSidebarHtml: string | null = null;
 
@@ -16,6 +17,107 @@ const MESSAGE_ROW_HEIGHT = 60;
 const TOP_PADDING = 80;
 const SELF_CALL_WIDTH = 30;
 const SELF_CALL_HEIGHT = 30;
+const GROUP_HEADER_HEIGHT = 22;
+
+// Expansion state — reset on flow change
+let expandedModules = new Set<number>();
+
+// Mapping from original step index to remapped step index (for sidebar hover)
+let originalToRemappedIdx = new Map<number, number>();
+
+export interface RemappedStep {
+  fromVisibleId: number;
+  toVisibleId: number;
+  originalIndices: number[];
+  labels: string[];
+  isSelfCall: boolean;
+}
+
+// --- Selective depth helpers ---
+
+export function getSelectiveVisibleModules(root: ModuleTreeNode, expanded: Set<number>): ModuleTreeNode[] {
+  const result: ModuleTreeNode[] = [];
+  function walk(node: ModuleTreeNode) {
+    if (node.children.length === 0 || !expanded.has(node.id)) {
+      result.push(node);
+      return;
+    }
+    for (const child of node.children) walk(child);
+  }
+  for (const child of root.children) walk(child);
+  return result;
+}
+
+export function buildSelectiveAncestorMap(visibleModules: ModuleTreeNode[]): Map<number, number> {
+  const map = new Map<number, number>();
+  function mapDesc(node: ModuleTreeNode, visId: number) {
+    map.set(node.id, visId);
+    for (const child of node.children) mapDesc(child, visId);
+  }
+  for (const mod of visibleModules) mapDesc(mod, mod.id);
+  return map;
+}
+
+export function remapSteps(steps: DagFlowStep[], ancestorMap: Map<number, number>): RemappedStep[] {
+  const groupMap = new Map<string, RemappedStep>();
+  const groupOrder: string[] = [];
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const fromVis = ancestorMap.get(step.fromModuleId);
+    const toVis = ancestorMap.get(step.toModuleId);
+    if (fromVis === undefined || toVis === undefined) continue;
+
+    const key = `${fromVis}->${toVis}`;
+    const existing = groupMap.get(key);
+    if (existing) {
+      existing.originalIndices.push(i);
+      const label = step.semantic || step.toDefName || `Step ${i + 1}`;
+      existing.labels.push(label);
+    } else {
+      const label = step.semantic || step.toDefName || `Step ${i + 1}`;
+      const remapped: RemappedStep = {
+        fromVisibleId: fromVis,
+        toVisibleId: toVis,
+        originalIndices: [i],
+        labels: [label],
+        isSelfCall: fromVis === toVis,
+      };
+      groupMap.set(key, remapped);
+      groupOrder.push(key);
+    }
+  }
+
+  // Sort by first original index
+  return groupOrder.map((k) => groupMap.get(k)!);
+}
+
+export function getRemappedLabel(remapped: RemappedStep): string {
+  if (remapped.labels.length === 1) return remapped.labels[0];
+  return `${remapped.labels[0]} (+${remapped.labels.length - 1} more)`;
+}
+
+/** Find the nearest expanded ancestor for a visible module */
+export function buildVisibleToExpandedParent(
+  visibleModules: ModuleTreeNode[],
+  expanded: Set<number>,
+  nodeById: Map<number, ModuleTreeNode>
+): Map<number, number> {
+  const result = new Map<number, number>();
+  for (const mod of visibleModules) {
+    // Walk up looking for an expanded ancestor
+    let parentId = mod.parentId;
+    while (parentId !== null) {
+      if (expanded.has(parentId)) {
+        result.set(mod.id, parentId);
+        break;
+      }
+      const parent = nodeById.get(parentId);
+      parentId = parent?.parentId ?? null;
+    }
+  }
+  return result;
+}
 
 export function initFlowsDag(store: Store, _api: ApiClient) {
   const state = store.getState();
@@ -219,23 +321,49 @@ function renderSequenceDiagram(store: Store) {
   const svg = d3.select<SVGSVGElement, unknown>('#flows-dag-svg');
   svg.selectAll('*').remove();
 
-  // Build module lookup
+  // Build module tree and lookup
   const moduleById = new Map<number, DagModule>();
   for (const m of flowsDagData.modules) {
     moduleById.set(m.id, m);
   }
 
-  // Determine unique participants (modules involved in this flow), preserving first-appearance order
+  const rootModule = buildModuleTree(flowsDagData.modules);
+  if (!rootModule) return;
+
+  // Build a node-by-id map from the tree for parent lookups
+  const treeNodeById = new Map<number, ModuleTreeNode>();
+  function indexTree(node: ModuleTreeNode) {
+    treeNodeById.set(node.id, node);
+    for (const child of node.children) indexTree(child);
+  }
+  indexTree(rootModule);
+
+  // Get visible modules based on expansion state
+  const visibleModules = getSelectiveVisibleModules(rootModule, expandedModules);
+  const ancestorMap = buildSelectiveAncestorMap(visibleModules);
+
+  // Remap steps
+  const remappedSteps = remapSteps(flow.steps, ancestorMap);
+
+  // Build original-to-remapped index mapping for sidebar hover
+  originalToRemappedIdx = new Map();
+  for (let ri = 0; ri < remappedSteps.length; ri++) {
+    for (const oi of remappedSteps[ri].originalIndices) {
+      originalToRemappedIdx.set(oi, ri);
+    }
+  }
+
+  // Extract participant order from remapped steps (first-appearance)
   const participantIds: number[] = [];
   const participantSet = new Set<number>();
-  for (const step of flow.steps) {
-    if (!participantSet.has(step.fromModuleId)) {
-      participantSet.add(step.fromModuleId);
-      participantIds.push(step.fromModuleId);
+  for (const rs of remappedSteps) {
+    if (!participantSet.has(rs.fromVisibleId)) {
+      participantSet.add(rs.fromVisibleId);
+      participantIds.push(rs.fromVisibleId);
     }
-    if (!participantSet.has(step.toModuleId)) {
-      participantSet.add(step.toModuleId);
-      participantIds.push(step.toModuleId);
+    if (!participantSet.has(rs.toVisibleId)) {
+      participantSet.add(rs.toVisibleId);
+      participantIds.push(rs.toVisibleId);
     }
   }
 
@@ -244,8 +372,32 @@ function renderSequenceDiagram(store: Store) {
     participantIndexMap.set(participantIds[i], i);
   }
 
+  // Determine which visible modules belong to which expanded parent
+  const visibleToParent = buildVisibleToExpandedParent(visibleModules, expandedModules, treeNodeById);
+
+  // Identify group spans for expanded parents
+  const groupSpans = new Map<number, { first: number; last: number; name: string; node: ModuleTreeNode }>();
+  for (let i = 0; i < participantIds.length; i++) {
+    const parentId = visibleToParent.get(participantIds[i]);
+    if (parentId === undefined) continue;
+    const existing = groupSpans.get(parentId);
+    if (existing) {
+      existing.last = i;
+    } else {
+      const parentNode = treeNodeById.get(parentId);
+      groupSpans.set(parentId, {
+        first: i,
+        last: i,
+        name: parentNode?.name ?? `Module ${parentId}`,
+        node: parentNode!,
+      });
+    }
+  }
+
   // Calculate diagram dimensions
   const diagramWidth = participantIds.length * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) - PARTICIPANT_GAP;
+  const hasGroupHeaders = groupSpans.size > 0;
+  const headerOffset = hasGroupHeaders ? GROUP_HEADER_HEIGHT + 4 : 0;
 
   // Create zoom group
   const g = svg.append('g');
@@ -282,11 +434,12 @@ function renderSequenceDiagram(store: Store) {
   const initialY = 20;
   svg.call(zoom.transform, d3.zoomIdentity.translate(initialX, initialY));
 
-  // Get branch-colored fill/stroke for participant box using data-driven color index
+  // Get branch-colored fill/stroke for participant box using tree node data
   function getParticipantColors(moduleId: number): { fill: string; stroke: string } {
+    const treeNode = treeNodeById.get(moduleId);
     const mod = moduleById.get(moduleId);
-    const depth = mod?.depth ?? 1;
-    const colorIndex = mod?.colorIndex || 0;
+    const depth = treeNode?.depth ?? mod?.depth ?? 1;
+    const colorIndex = treeNode?.colorIndex ?? mod?.colorIndex ?? 0;
     return getBoxColors(depth, colorIndex);
   }
 
@@ -296,18 +449,68 @@ function renderSequenceDiagram(store: Store) {
     .append('text')
     .attr('class', 'seq-title-text')
     .attr('x', diagramWidth / 2)
-    .attr('y', -20)
+    .attr('y', -20 - headerOffset)
     .attr('text-anchor', 'middle')
     .text(flow.name);
 
+  // Draw group headers for expanded modules
+  for (const [parentId, span] of groupSpans) {
+    const parentNode = span.node;
+    const colors = getBoxColors(parentNode.depth, parentNode.colorIndex ?? 0);
+    const x1 = span.first * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) - 4;
+    const x2 = span.last * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) + PARTICIPANT_WIDTH + 4;
+    const headerY = -GROUP_HEADER_HEIGHT - 2;
+
+    const headerGroup = g.append('g').attr('class', 'seq-group-header');
+
+    headerGroup
+      .append('rect')
+      .attr('x', x1)
+      .attr('y', headerY)
+      .attr('width', x2 - x1)
+      .attr('height', GROUP_HEADER_HEIGHT)
+      .attr('rx', 4)
+      .attr('ry', 4)
+      .attr('fill', colors.fill)
+      .attr('stroke', colors.stroke)
+      .attr('stroke-width', 1);
+
+    headerGroup
+      .append('text')
+      .attr('x', (x1 + x2) / 2)
+      .attr('y', headerY + GROUP_HEADER_HEIGHT / 2)
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
+      .text(`${span.name} ▾`);
+
+    // Click to collapse
+    headerGroup.style('cursor', 'pointer').on('click', () => {
+      expandedModules.delete(parentId);
+      // Also remove any expanded descendants
+      function removeDescendants(node: ModuleTreeNode) {
+        for (const child of node.children) {
+          expandedModules.delete(child.id);
+          removeDescendants(child);
+        }
+      }
+      removeDescendants(parentNode);
+      renderSequenceDiagram(store);
+      // Re-wire sidebar hover handlers with updated mapping
+      rewireSidebarStepHovers(store);
+    });
+  }
+
   // Draw participant boxes and lifelines
+  const lifelineEnd = TOP_PADDING + remappedSteps.length * MESSAGE_ROW_HEIGHT + 20;
   for (let i = 0; i < participantIds.length; i++) {
     const moduleId = participantIds[i];
+    const treeNode = treeNodeById.get(moduleId);
     const mod = moduleById.get(moduleId);
-    const name = mod?.name || `Module ${moduleId}`;
+    const name = treeNode?.name ?? mod?.name ?? `Module ${moduleId}`;
     const x = i * (PARTICIPANT_WIDTH + PARTICIPANT_GAP);
+    const hasChildren = (treeNode?.children.length ?? 0) > 0;
 
-    const participantGroup = g.append('g').attr('class', 'seq-participant');
+    const participantGroup = g.append('g').attr('class', `seq-participant${hasChildren ? ' expandable' : ''}`);
 
     // Participant box
     participantGroup
@@ -347,8 +550,25 @@ function renderSequenceDiagram(store: Store) {
     }
     textEl.append('title').text(name);
 
+    // Expand indicator for modules with children
+    if (hasChildren) {
+      participantGroup
+        .append('text')
+        .attr('class', 'seq-expand-indicator')
+        .attr('x', x + PARTICIPANT_WIDTH - 10)
+        .attr('y', PARTICIPANT_HEIGHT - 6)
+        .attr('text-anchor', 'middle')
+        .text('▸');
+
+      // Click to expand
+      participantGroup.style('cursor', 'pointer').on('click', () => {
+        expandedModules.add(moduleId);
+        renderSequenceDiagram(store);
+        rewireSidebarStepHovers(store);
+      });
+    }
+
     // Lifeline
-    const lifelineEnd = TOP_PADDING + flow.steps.length * MESSAGE_ROW_HEIGHT + 20;
     g.append('line')
       .attr('class', 'seq-lifeline')
       .attr('x1', x + PARTICIPANT_WIDTH / 2)
@@ -357,11 +577,11 @@ function renderSequenceDiagram(store: Store) {
       .attr('y2', lifelineEnd);
   }
 
-  // Draw message arrows
-  for (let stepIdx = 0; stepIdx < flow.steps.length; stepIdx++) {
-    const step = flow.steps[stepIdx];
-    const fromIdx = participantIndexMap.get(step.fromModuleId);
-    const toIdx = participantIndexMap.get(step.toModuleId);
+  // Draw remapped message arrows
+  for (let stepIdx = 0; stepIdx < remappedSteps.length; stepIdx++) {
+    const rs = remappedSteps[stepIdx];
+    const fromIdx = participantIndexMap.get(rs.fromVisibleId);
+    const toIdx = participantIndexMap.get(rs.toVisibleId);
     if (fromIdx === undefined || toIdx === undefined) continue;
 
     const y = TOP_PADDING + stepIdx * MESSAGE_ROW_HEIGHT;
@@ -370,9 +590,7 @@ function renderSequenceDiagram(store: Store) {
 
     const messageGroup = g.append('g').attr('class', 'seq-message').attr('data-step-idx', stepIdx);
 
-    const isSelfCall = step.fromModuleId === step.toModuleId;
-
-    if (isSelfCall) {
+    if (rs.isSelfCall) {
       // Self-call: draw a loop arc
       const loopPath = `M${fromX},${y} h${SELF_CALL_WIDTH} v${SELF_CALL_HEIGHT} h${-SELF_CALL_WIDTH}`;
       messageGroup
@@ -390,7 +608,7 @@ function renderSequenceDiagram(store: Store) {
         .attr('x', fromX + SELF_CALL_WIDTH + 8)
         .attr('y', y + SELF_CALL_HEIGHT / 2)
         .attr('dominant-baseline', 'central')
-        .text(step.semantic || step.toDefName || `Step ${stepIdx + 1}`);
+        .text(getRemappedLabel(rs));
     } else {
       // Normal arrow between two lifelines
       const arrowMargin = 2;
@@ -415,21 +633,52 @@ function renderSequenceDiagram(store: Store) {
         .attr('x', labelX)
         .attr('y', y - 10)
         .attr('text-anchor', 'middle')
-        .text(step.semantic || step.toDefName || `Step ${stepIdx + 1}`);
+        .text(getRemappedLabel(rs));
     }
 
-    // Step number badge
-    const badgeX = fromX + (isSelfCall ? -16 : -16);
-    messageGroup.append('circle').attr('class', 'seq-step-badge-circle').attr('cx', badgeX).attr('cy', y).attr('r', 10);
+    // Step badge
+    const badgeX = fromX - 16;
+    const mergedCount = rs.originalIndices.length;
 
-    messageGroup
-      .append('text')
-      .attr('class', 'seq-step-badge')
-      .attr('x', badgeX)
-      .attr('y', y)
-      .attr('text-anchor', 'middle')
-      .attr('dominant-baseline', 'central')
-      .text(stepIdx + 1);
+    if (mergedCount > 1) {
+      // Merged step: pill-shaped badge with xN
+      const badgeGroup = messageGroup.append('g').attr('class', 'seq-merged-badge');
+      const label = `\u00d7${mergedCount}`;
+      const pillWidth = 28;
+      const pillHeight = 18;
+      badgeGroup
+        .append('rect')
+        .attr('x', badgeX - pillWidth / 2)
+        .attr('y', y - pillHeight / 2)
+        .attr('width', pillWidth)
+        .attr('height', pillHeight)
+        .attr('rx', pillHeight / 2)
+        .attr('ry', pillHeight / 2);
+      badgeGroup
+        .append('text')
+        .attr('x', badgeX)
+        .attr('y', y)
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'central')
+        .text(label);
+    } else {
+      // Single step: circle badge with step number
+      messageGroup
+        .append('circle')
+        .attr('class', 'seq-step-badge-circle')
+        .attr('cx', badgeX)
+        .attr('cy', y)
+        .attr('r', 10);
+
+      messageGroup
+        .append('text')
+        .attr('class', 'seq-step-badge')
+        .attr('x', badgeX)
+        .attr('y', y)
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'central')
+        .text(rs.originalIndices[0] + 1);
+    }
   }
 }
 
@@ -443,8 +692,7 @@ function wrapText(text: string, maxCharsPerLine: number): [string] | [string, st
   return [text.slice(0, breakIdx).trim(), text.slice(breakIdx).trim()];
 }
 
-function highlightStep(_store: Store, stepIdx: number) {
-  // Dim all arrows except the hovered one
+function highlightRemappedStep(stepIdx: number) {
   d3.selectAll('.seq-message').classed('dimmed', function () {
     return Number.parseInt(d3.select(this).attr('data-step-idx') || '-1') !== stepIdx;
   });
@@ -452,6 +700,30 @@ function highlightStep(_store: Store, stepIdx: number) {
 
 function clearStepHighlight() {
   d3.selectAll('.seq-message').classed('dimmed', false);
+}
+
+/** Re-wire sidebar step hover handlers after diagram re-render */
+function rewireSidebarStepHovers(store: Store) {
+  const state = store.getState();
+  const flowId = state.selectedFlowId;
+  if (!flowId) return;
+
+  document.querySelectorAll('.step-item').forEach((item) => {
+    const newItem = item.cloneNode(true) as HTMLElement;
+    item.parentNode?.replaceChild(newItem, item);
+
+    newItem.addEventListener('mouseenter', () => {
+      const origIdx = Number.parseInt(newItem.getAttribute('data-step-idx') || '0');
+      const remappedIdx = originalToRemappedIdx.get(origIdx);
+      if (remappedIdx !== undefined) {
+        highlightRemappedStep(remappedIdx);
+      }
+    });
+
+    newItem.addEventListener('mouseleave', () => {
+      clearStepHighlight();
+    });
+  });
 }
 
 function setupSidebarInteractions(store: Store) {
@@ -485,6 +757,9 @@ function setupSidebarInteractions(store: Store) {
   document.querySelectorAll('.flow-item').forEach((item) => {
     item.addEventListener('click', () => {
       const flowId = Number.parseInt(item.getAttribute('data-flow-id') || '0');
+
+      // Reset expansion state on flow change
+      expandedModules = new Set<number>();
 
       // Single-select: clear others, select this one
       selectFlow(store, flowId);
@@ -562,7 +837,7 @@ function showFlowSteps(store: Store, flowId: number) {
           </div>
           <div class="step-tree-path">
             <span class="step-module from">${step.fromDefName || fromModule?.name || 'Unknown'}</span>
-            <span class="step-arrow">→</span>
+            <span class="step-arrow">\u2192</span>
             <span class="step-module to">${step.toDefName || toModule?.name || 'Unknown'}</span>
           </div>
         </div>
@@ -572,7 +847,7 @@ function showFlowSteps(store: Store, flowId: number) {
 
   sidebarContent.innerHTML = `
     <div class="steps-back-btn" id="steps-back-btn">
-      <span class="back-icon">←</span>
+      <span class="back-icon">\u2190</span>
       <span>Back to flows</span>
     </div>
     <div class="steps-flow-title">${flow.name}</div>
@@ -587,11 +862,14 @@ function showFlowSteps(store: Store, flowId: number) {
     goBackToFlowsList(store);
   });
 
-  // Setup step hover handlers
+  // Setup step hover handlers — use remapped index for highlight
   document.querySelectorAll('.step-item').forEach((item) => {
     item.addEventListener('mouseenter', () => {
-      const stepIdx = Number.parseInt(item.getAttribute('data-step-idx') || '0');
-      highlightStep(store, stepIdx);
+      const origIdx = Number.parseInt(item.getAttribute('data-step-idx') || '0');
+      const remappedIdx = originalToRemappedIdx.get(origIdx);
+      if (remappedIdx !== undefined) {
+        highlightRemappedStep(remappedIdx);
+      }
     });
 
     item.addEventListener('mouseleave', () => {
@@ -609,6 +887,9 @@ function goBackToFlowsList(store: Store) {
 
   // Clear selection
   selectFlow(store, null);
+
+  // Reset expansion state
+  expandedModules = new Set<number>();
 
   // Re-setup event handlers
   setupSidebarInteractions(store);
