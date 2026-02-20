@@ -7,24 +7,7 @@ import type { Command } from '@oclif/core';
 import type { InteractionWithPaths } from '../../../db/schema.js';
 import { parseRow } from '../_shared/csv-utils.js';
 import { type LlmLogOptions, completeWithLogging, logLlmRequest, logLlmResponse } from '../_shared/llm-utils.js';
-import type { ActionType, FlowSuggestion, LlmOptions } from './types.js';
-
-const VERB_TO_ACTION: Record<string, ActionType> = {
-  views: 'view',
-  lists: 'view',
-  browses: 'view',
-  creates: 'create',
-  adds: 'create',
-  registers: 'create',
-  updates: 'update',
-  edits: 'update',
-  modifies: 'update',
-  deletes: 'delete',
-  removes: 'delete',
-  processes: 'process',
-  authenticates: 'process',
-  'logs into': 'process',
-};
+import type { FlowSuggestion, LlmOptions } from './types.js';
 
 export class FlowEnhancer {
   constructor(
@@ -111,12 +94,12 @@ BAD (DO NOT produce):
 ## Output
 \`\`\`csv
 entry_point,name,description
-handleItemCreate,"admin creates new item","Validates and persists item record"
-ListView,"user views item list","Displays available items with filters"
-handleRemove,"user deletes record","Removes record after confirmation"
+handleItemCreate::create,"admin creates new item","Validates and persists item record"
+ListView::view,"user views item list","Displays available items with filters"
+handleRemove::delete,"user deletes record","Removes record after confirmation"
 \`\`\`
 
-IMPORTANT: The entry_point column MUST match the entry point value from the input exactly. This is used to match responses back to flows.`;
+IMPORTANT: The entry_point column MUST match the entry point value from the input exactly (including the ::actionType suffix). This is used to match responses back to flows.`;
   }
 
   private buildEnhancementUserPrompt(
@@ -142,7 +125,7 @@ IMPORTANT: The entry_point column MUST match the entry point value from the inpu
         const actionLine = f.actionType ? `Action: ${f.actionType}` : 'Action: unknown';
         const entityLine = f.targetEntity ? `Entity: ${f.targetEntity}` : 'Entity: (derive from code context)';
 
-        return `${i + 1}. ${actionLine}, ${entityLine}, Actor: ${actor}\n   Entry: ${f.entryPath}\n   Steps: ${steps}${defStepInfo}`;
+        return `${i + 1}. ${actionLine}, ${entityLine}, Actor: ${actor}\n   Entry: ${f.entryPath}::${f.actionType || 'unknown'}\n   Steps: ${steps}${defStepInfo}`;
       })
       .join('\n\n');
 
@@ -202,8 +185,9 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
 
     // Match each original flow to its enhancement by entry_point key
     return originalFlows.map((original) => {
-      // Try matching by entryPath (the key we emit in the user prompt)
-      const enhancement = enhancementByKey.get(original.entryPath);
+      // Try matching by entryPath::actionType (the compound key we emit in the user prompt)
+      const key = `${original.entryPath}::${original.actionType || 'unknown'}`;
+      const enhancement = enhancementByKey.get(key);
       if (!enhancement) return original;
 
       const newName = enhancement.name;
@@ -214,7 +198,6 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
 
       const firstWord = newName.split(' ')[0]?.toLowerCase();
       const derivedStakeholder = validStakeholders[firstWord] ?? null;
-      const derived = this.parseNameMetadata(newName);
 
       return {
         ...original,
@@ -222,28 +205,7 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
         slug: newSlug || original.slug,
         description: enhancement.description || original.description,
         ...(derivedStakeholder ? { stakeholder: derivedStakeholder } : {}),
-        ...(derived.actionType ? { actionType: derived.actionType } : {}),
-        ...(derived.targetEntity ? { targetEntity: derived.targetEntity } : {}),
       };
     });
-  }
-
-  private parseNameMetadata(name: string): { actionType: ActionType | null; targetEntity: string | null } {
-    const words = name.toLowerCase().split(/\s+/);
-    if (words.length < 3) return { actionType: null, targetEntity: null };
-
-    // Check multi-word verbs first (e.g. "logs into")
-    const twoWordVerb = `${words[1]} ${words[2]}`;
-    if (VERB_TO_ACTION[twoWordVerb]) {
-      const entity = words.slice(3).join('_') || null;
-      const filtered = entity === 'unknown' ? null : entity;
-      return { actionType: VERB_TO_ACTION[twoWordVerb], targetEntity: filtered };
-    }
-
-    // Single-word verb
-    const actionType = VERB_TO_ACTION[words[1]] ?? null;
-    const entity = words.slice(2).join('_') || null;
-    const filtered = entity === 'unknown' ? null : entity;
-    return { actionType, targetEntity: filtered };
   }
 }

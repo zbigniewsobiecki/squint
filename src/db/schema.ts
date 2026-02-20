@@ -132,7 +132,7 @@ export interface InteractionDefinitionLink {
   interactionId: number;
   fromDefinitionId: number;
   toDefinitionId: number;
-  contractId: number | null;
+  contractId: number;
 }
 
 // ============================================================
