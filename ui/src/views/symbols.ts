@@ -3,7 +3,7 @@ import type { ApiClient } from '../api/client';
 import { getKindColor, getNodeRadius } from '../d3/colors';
 import { setupZoom } from '../d3/zoom';
 import type { Store } from '../state/store';
-import { selectSymbol, setRelationshipFilter, setSymbolSearch } from '../state/store';
+import { selectSymbol, setRelationshipFilter, setSymbolSearch, toggleSymbolKind } from '../state/store';
 import type { SymbolNode } from '../types/api';
 
 interface SimulationNode extends SymbolNode, d3.SimulationNodeDatum {}
@@ -61,6 +61,7 @@ function renderSymbolsView(store: Store) {
         <div class="symbols-search">
           <input type="text" id="symbols-search-input" placeholder="Search symbols..." value="${escapeHtml(state.symbolSearchQuery)}" />
         </div>
+        <div class="symbol-kind-toggles" id="symbol-kind-toggles"></div>
         <div class="symbols-sidebar-content" id="symbols-list"></div>
       </div>
       <div class="symbols-main">
@@ -71,6 +72,7 @@ function renderSymbolsView(store: Store) {
     </div>
   `;
 
+  renderKindToggles(store);
   renderSidebarList(store);
   setupEventHandlers(store);
 
@@ -83,6 +85,40 @@ function renderSymbolsView(store: Store) {
   }
 }
 
+function renderKindToggles(store: Store) {
+  const state = store.getState();
+  const data = state.graphData;
+  if (!data) return;
+
+  const togglesEl = document.getElementById('symbol-kind-toggles');
+  if (!togglesEl) return;
+
+  // Compute distinct kinds with counts from the full (unfiltered) node list
+  const kindCounts = new Map<string, number>();
+  for (const node of data.nodes) {
+    kindCounts.set(node.kind, (kindCounts.get(node.kind) || 0) + 1);
+  }
+  const sortedKinds = [...kindCounts.keys()].sort();
+
+  let html = '';
+  for (const kind of sortedKinds) {
+    const count = kindCounts.get(kind)!;
+    const isActive = !state.hiddenSymbolKinds.has(kind);
+    html += `<div class="filter-chip${isActive ? ' active' : ''}" data-kind="${escapeHtml(kind)}"><span class="chip-dot" style="background: ${getKindColor(kind)};"></span><span>${escapeHtml(kind)} (${count})</span></div>`;
+  }
+  togglesEl.innerHTML = html;
+
+  // Attach click handlers
+  togglesEl.querySelectorAll('.filter-chip[data-kind]').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const kind = (chip as HTMLElement).dataset.kind!;
+      toggleSymbolKind(store, kind);
+      renderKindToggles(store);
+      renderSidebarList(store);
+    });
+  });
+}
+
 function renderSidebarList(store: Store) {
   const state = store.getState();
   const data = state.graphData;
@@ -92,7 +128,7 @@ function renderSidebarList(store: Store) {
   if (!listEl) return;
 
   const query = state.symbolSearchQuery.toLowerCase();
-  const filtered = query
+  let filtered = query
     ? data.nodes.filter(
         (n) =>
           n.name.toLowerCase().includes(query) ||
@@ -101,38 +137,27 @@ function renderSidebarList(store: Store) {
       )
     : data.nodes;
 
-  // Group by kind
-  const byKind = new Map<string, SymbolNode[]>();
-  for (const node of filtered) {
-    const kind = node.kind;
-    if (!byKind.has(kind)) byKind.set(kind, []);
-    byKind.get(kind)!.push(node);
+  // Filter out hidden kinds
+  if (state.hiddenSymbolKinds.size > 0) {
+    filtered = filtered.filter((n) => !state.hiddenSymbolKinds.has(n.kind));
   }
 
-  // Sort kinds and symbols within
-  const sortedKinds = [...byKind.keys()].sort();
+  // Sort alphabetically by name (flat list)
+  const sorted = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
 
   let html = '';
-  for (const kind of sortedKinds) {
-    const nodes = byKind.get(kind)!;
-    nodes.sort((a, b) => a.name.localeCompare(b.name));
-
-    html += `<div class="symbol-kind-header">${kind} (${nodes.length})</div>`;
-    for (const node of nodes) {
-      const fileParts = node.filePath.split('/');
-      const shortPath = fileParts.slice(-2).join('/');
-      const isSelected = node.id === state.selectedSymbolId;
-      html += `
-        <div class="symbol-item${isSelected ? ' selected' : ''}" data-symbol-id="${node.id}">
-          <span class="symbol-item-kind kind-${kind}" style="background: ${getKindColor(kind)}; color: #fff;">${kind}</span>
-          <span class="symbol-item-name">${escapeHtml(node.name)}</span>
-          <span class="symbol-item-file" title="${escapeHtml(node.filePath)}">${escapeHtml(shortPath)}</span>
-        </div>
-      `;
-    }
+  for (const node of sorted) {
+    const kind = node.kind;
+    const isSelected = node.id === state.selectedSymbolId;
+    html += `
+      <div class="symbol-item${isSelected ? ' selected' : ''}" data-symbol-id="${node.id}">
+        <span class="symbol-item-kind kind-${kind}" style="background: ${getKindColor(kind)}; color: #fff;">${kind}</span>
+        <span class="symbol-item-name">${escapeHtml(node.name)}</span>
+      </div>
+    `;
   }
 
-  if (filtered.length === 0) {
+  if (sorted.length === 0) {
     html =
       '<div style="padding: 16px; color: var(--text-dimmed); text-align: center; font-size: 12px;">No symbols match your search</div>';
   }

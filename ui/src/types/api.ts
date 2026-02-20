@@ -155,6 +155,7 @@ export interface DagModule {
   parentId: number | null;
   name: string;
   fullPath: string;
+  description: string | null;
   depth: number;
   colorIndex: number;
   memberCount: number;

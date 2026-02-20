@@ -289,6 +289,32 @@ describe('api-transforms', () => {
       freshDb.close();
     });
 
+    it('modules include description field', () => {
+      const rootId = db.modules.ensureRoot();
+      const modA = db.modules.insert(rootId, 'mod-a', 'ModA', 'Handles authentication');
+
+      const fileA = insertFile('/src/a.ts');
+      const defA = insertDefinition(fileA, 'funcA');
+      db.modules.assignSymbol(defA, modA);
+
+      const result = getFlowsDagData(db);
+      const mod = result.modules.find((m) => m.id === modA);
+      expect(mod).toBeDefined();
+      expect(mod!.description).toBe('Handles authentication');
+    });
+
+    it('modules with null description', () => {
+      const { modA } = setupModuleHierarchy();
+      const fileA = insertFile('/src/a.ts');
+      const defA = insertDefinition(fileA, 'funcA');
+      db.modules.assignSymbol(defA, modA);
+
+      const result = getFlowsDagData(db);
+      const mod = result.modules.find((m) => m.id === modA);
+      expect(mod).toBeDefined();
+      expect(mod!.description).toBeNull();
+    });
+
     it('modules with call graph edges', () => {
       const { modA, modB } = setupModuleHierarchy();
       const fileA = insertFile('/src/a.ts');
@@ -373,7 +399,7 @@ describe('api-transforms', () => {
       freshDb.close();
     });
 
-    it('groups with isolated singleton filtering', () => {
+    it('groups with singleton filtering (only 2+ module groups kept)', () => {
       const { modA, modB } = setupModuleHierarchy();
       const fileA = insertFile('/src/a.ts');
       const fileB = insertFile('/src/b.ts');
@@ -392,11 +418,11 @@ describe('api-transforms', () => {
       });
 
       const result = getProcessGroupsData(db);
-      // Should have at least one group, isolated singletons with negative groupId filtered
+      // All groups should have 2+ modules (singletons are filtered out)
       expect(result.groupCount).toBeGreaterThanOrEqual(1);
       for (const group of result.groups) {
         expect(group.label).toBeDefined();
-        expect(group.moduleIds.length).toBeGreaterThanOrEqual(1);
+        expect(group.moduleIds.length).toBeGreaterThanOrEqual(2);
       }
     });
   });

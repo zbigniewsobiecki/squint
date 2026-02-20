@@ -71,9 +71,9 @@ export function getProcessGroupsData(database: IndexDatabase): {
   try {
     const processGroups = computeProcessGroups(database);
 
-    // Filter out isolated singleton groups (negative groupId = module with no files)
+    // Filter out singleton groups — only groups with 2+ modules are meaningful
     const groups = Array.from(processGroups.groupToModules.entries())
-      .filter(([groupId, modules]) => groupId >= 0 || modules.length > 1)
+      .filter(([_groupId, modules]) => modules.length > 1)
       .map(([groupId, modules]) => ({
         id: groupId,
         label: getProcessGroupLabel(modules),

@@ -290,7 +290,8 @@ export function extractDefinitions(rootNode: SyntaxNode): Definition[] {
         break;
       }
 
-      case 'class_declaration': {
+      case 'class_declaration':
+      case 'abstract_class_declaration': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
           const name = nameNode.text;
