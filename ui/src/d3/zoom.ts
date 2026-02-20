@@ -52,8 +52,7 @@ export function fitToViewport(
 
   const scale = Math.min(
     (svgWidth - padding * 2) / contentBounds.width,
-    (svgHeight - padding * 2) / contentBounds.height,
-    1
+    (svgHeight - padding * 2) / contentBounds.height
   );
 
   const translateX = svgWidth / 2 - (contentBounds.x + contentBounds.width / 2) * scale;

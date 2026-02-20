@@ -3,6 +3,7 @@ import type { ApiClient } from '../api/client';
 import { getFlowColor } from '../d3/colors';
 import { buildModuleTree, getBoxColors } from '../d3/module-dag';
 import type { ModuleTreeNode } from '../d3/module-dag';
+import { fitToViewport } from '../d3/zoom';
 import type { Store } from '../state/store';
 import { selectFlow } from '../state/store';
 import type { DagFlow, DagFlowStep, DagModule } from '../types/api';
@@ -15,8 +16,6 @@ const PARTICIPANT_GAP = 40;
 const PARTICIPANT_HEIGHT = 48;
 const MESSAGE_ROW_HEIGHT = 60;
 const TOP_PADDING = 80;
-const SELF_CALL_WIDTH = 30;
-const SELF_CALL_HEIGHT = 30;
 const GROUP_HEADER_HEIGHT = 22;
 
 // Expansion state — reset on flow change
@@ -30,7 +29,6 @@ export interface RemappedStep {
   toVisibleId: number;
   originalIndices: number[];
   labels: string[];
-  isSelfCall: boolean;
 }
 
 // --- Selective depth helpers ---
@@ -81,7 +79,6 @@ export function remapSteps(steps: DagFlowStep[], ancestorMap: Map<number, number
         toVisibleId: toVis,
         originalIndices: [i],
         labels: [label],
-        isSelfCall: fromVis === toVis,
       };
       groupMap.set(key, remapped);
       groupOrder.push(key);
@@ -342,13 +339,16 @@ function renderSequenceDiagram(store: Store) {
   const visibleModules = getSelectiveVisibleModules(rootModule, expandedModules);
   const ancestorMap = buildSelectiveAncestorMap(visibleModules);
 
-  // Remap steps
+  // Remap steps (includes internal self-calls for participant extraction)
   const remappedSteps = remapSteps(flow.steps, ancestorMap);
 
-  // Build original-to-remapped index mapping for sidebar hover
+  // Filter to renderable steps — hide internal flows within collapsed modules
+  const renderableSteps = remappedSteps.filter((rs) => rs.fromVisibleId !== rs.toVisibleId);
+
+  // Build original-to-renderable index mapping for sidebar hover
   originalToRemappedIdx = new Map();
-  for (let ri = 0; ri < remappedSteps.length; ri++) {
-    for (const oi of remappedSteps[ri].originalIndices) {
+  for (let ri = 0; ri < renderableSteps.length; ri++) {
+    for (const oi of renderableSteps[ri].originalIndices) {
       originalToRemappedIdx.set(oi, ri);
     }
   }
@@ -428,12 +428,6 @@ function renderSequenceDiagram(store: Store) {
 
   svg.call(zoom);
 
-  // Center the diagram
-  const containerWidth = mainContainer.clientWidth;
-  const initialX = Math.max(20, (containerWidth - diagramWidth) / 2);
-  const initialY = 20;
-  svg.call(zoom.transform, d3.zoomIdentity.translate(initialX, initialY));
-
   // Get branch-colored fill/stroke for participant box using tree node data
   function getParticipantColors(moduleId: number): { fill: string; stroke: string } {
     const treeNode = treeNodeById.get(moduleId);
@@ -453,38 +447,42 @@ function renderSequenceDiagram(store: Store) {
     .attr('text-anchor', 'middle')
     .text(flow.name);
 
-  // Draw group headers for expanded modules
+  // Draw nesting containers for expanded modules (behind participant boxes)
+  const CONTAINER_PAD = 8;
   for (const [parentId, span] of groupSpans) {
     const parentNode = span.node;
     const colors = getBoxColors(parentNode.depth, parentNode.colorIndex ?? 0);
-    const x1 = span.first * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) - 4;
-    const x2 = span.last * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) + PARTICIPANT_WIDTH + 4;
-    const headerY = -GROUP_HEADER_HEIGHT - 2;
+    const x1 = span.first * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) - CONTAINER_PAD;
+    const x2 = span.last * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) + PARTICIPANT_WIDTH + CONTAINER_PAD;
+    const containerY = -(GROUP_HEADER_HEIGHT + CONTAINER_PAD);
+    const containerHeight = GROUP_HEADER_HEIGHT + PARTICIPANT_HEIGHT + CONTAINER_PAD * 2;
 
-    const headerGroup = g.append('g').attr('class', 'seq-group-header');
+    const containerGroup = g.append('g').attr('class', 'seq-group-container');
 
-    headerGroup
+    // Background rectangle wrapping the child participants
+    containerGroup
       .append('rect')
       .attr('x', x1)
-      .attr('y', headerY)
+      .attr('y', containerY)
       .attr('width', x2 - x1)
-      .attr('height', GROUP_HEADER_HEIGHT)
-      .attr('rx', 4)
-      .attr('ry', 4)
+      .attr('height', containerHeight)
+      .attr('rx', 8)
+      .attr('ry', 8)
       .attr('fill', colors.fill)
       .attr('stroke', colors.stroke)
-      .attr('stroke-width', 1);
+      .attr('stroke-width', 1.5);
 
-    headerGroup
+    // Parent name label at top of container
+    containerGroup
       .append('text')
-      .attr('x', (x1 + x2) / 2)
-      .attr('y', headerY + GROUP_HEADER_HEIGHT / 2)
-      .attr('text-anchor', 'middle')
+      .attr('class', 'seq-group-label')
+      .attr('x', x1 + CONTAINER_PAD + 2)
+      .attr('y', containerY + GROUP_HEADER_HEIGHT / 2 + CONTAINER_PAD / 2)
       .attr('dominant-baseline', 'central')
       .text(`${span.name} ▾`);
 
     // Click to collapse
-    headerGroup.style('cursor', 'pointer').on('click', () => {
+    containerGroup.style('cursor', 'pointer').on('click', () => {
       expandedModules.delete(parentId);
       // Also remove any expanded descendants
       function removeDescendants(node: ModuleTreeNode) {
@@ -501,7 +499,7 @@ function renderSequenceDiagram(store: Store) {
   }
 
   // Draw participant boxes and lifelines
-  const lifelineEnd = TOP_PADDING + remappedSteps.length * MESSAGE_ROW_HEIGHT + 20;
+  const lifelineEnd = TOP_PADDING + renderableSteps.length * MESSAGE_ROW_HEIGHT + 20;
   for (let i = 0; i < participantIds.length; i++) {
     const moduleId = participantIds[i];
     const treeNode = treeNodeById.get(moduleId);
@@ -577,9 +575,9 @@ function renderSequenceDiagram(store: Store) {
       .attr('y2', lifelineEnd);
   }
 
-  // Draw remapped message arrows
-  for (let stepIdx = 0; stepIdx < remappedSteps.length; stepIdx++) {
-    const rs = remappedSteps[stepIdx];
+  // Draw renderable message arrows (self-calls hidden until expanded)
+  for (let stepIdx = 0; stepIdx < renderableSteps.length; stepIdx++) {
+    const rs = renderableSteps[stepIdx];
     const fromIdx = participantIndexMap.get(rs.fromVisibleId);
     const toIdx = participantIndexMap.get(rs.toVisibleId);
     if (fromIdx === undefined || toIdx === undefined) continue;
@@ -590,51 +588,30 @@ function renderSequenceDiagram(store: Store) {
 
     const messageGroup = g.append('g').attr('class', 'seq-message').attr('data-step-idx', stepIdx);
 
-    if (rs.isSelfCall) {
-      // Self-call: draw a loop arc
-      const loopPath = `M${fromX},${y} h${SELF_CALL_WIDTH} v${SELF_CALL_HEIGHT} h${-SELF_CALL_WIDTH}`;
-      messageGroup
-        .append('path')
-        .attr('d', loopPath)
-        .attr('fill', 'none')
-        .attr('stroke', flowColor)
-        .attr('stroke-width', 2)
-        .attr('marker-end', 'url(#seq-arrowhead)');
+    // Arrow between two lifelines
+    const arrowMargin = 2;
+    const actualFromX = fromX + (fromIdx < toIdx ? arrowMargin : -arrowMargin);
+    const actualToX = toX + (fromIdx < toIdx ? -arrowMargin : arrowMargin);
 
-      // Label to the right of the loop
-      messageGroup
-        .append('text')
-        .attr('class', 'seq-message-label')
-        .attr('x', fromX + SELF_CALL_WIDTH + 8)
-        .attr('y', y + SELF_CALL_HEIGHT / 2)
-        .attr('dominant-baseline', 'central')
-        .text(getRemappedLabel(rs));
-    } else {
-      // Normal arrow between two lifelines
-      const arrowMargin = 2;
-      const actualFromX = fromX + (fromIdx < toIdx ? arrowMargin : -arrowMargin);
-      const actualToX = toX + (fromIdx < toIdx ? -arrowMargin : arrowMargin);
+    messageGroup
+      .append('line')
+      .attr('x1', actualFromX)
+      .attr('y1', y)
+      .attr('x2', actualToX)
+      .attr('y2', y)
+      .attr('stroke', flowColor)
+      .attr('stroke-width', 2)
+      .attr('marker-end', 'url(#seq-arrowhead)');
 
-      messageGroup
-        .append('line')
-        .attr('x1', actualFromX)
-        .attr('y1', y)
-        .attr('x2', actualToX)
-        .attr('y2', y)
-        .attr('stroke', flowColor)
-        .attr('stroke-width', 2)
-        .attr('marker-end', 'url(#seq-arrowhead)');
-
-      // Label above the arrow, centered between the two lifelines
-      const labelX = (fromX + toX) / 2;
-      messageGroup
-        .append('text')
-        .attr('class', 'seq-message-label')
-        .attr('x', labelX)
-        .attr('y', y - 10)
-        .attr('text-anchor', 'middle')
-        .text(getRemappedLabel(rs));
-    }
+    // Label above the arrow, centered between the two lifelines
+    const labelX = (fromX + toX) / 2;
+    messageGroup
+      .append('text')
+      .attr('class', 'seq-message-label')
+      .attr('x', labelX)
+      .attr('y', y - 10)
+      .attr('text-anchor', 'middle')
+      .text(getRemappedLabel(rs));
 
     // Step badge
     const badgeX = fromX - 16;
@@ -680,6 +657,10 @@ function renderSequenceDiagram(store: Store) {
         .text(rs.originalIndices[0] + 1);
     }
   }
+
+  // Zoom-to-fit after all content is drawn
+  const contentBounds = g.node()!.getBBox();
+  fitToViewport(svg, zoom, contentBounds);
 }
 
 function wrapText(text: string, maxCharsPerLine: number): [string] | [string, string] {
