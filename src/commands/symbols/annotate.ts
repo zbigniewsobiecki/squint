@@ -1034,6 +1034,32 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
           return 'purpose must be at least 5 characters';
         }
         break;
+
+      case 'contracts':
+        if (value === 'null') break;
+        try {
+          const parsed = JSON.parse(value);
+          if (!Array.isArray(parsed)) {
+            return 'contracts must be a JSON array or "null"';
+          }
+          for (const entry of parsed) {
+            if (typeof entry !== 'object' || entry === null) {
+              return 'each contract entry must be an object';
+            }
+            if (!entry.protocol || typeof entry.protocol !== 'string') {
+              return 'each contract entry must have a non-empty "protocol" string';
+            }
+            if (!entry.role || typeof entry.role !== 'string') {
+              return 'each contract entry must have a non-empty "role" string';
+            }
+            if (!entry.key || typeof entry.key !== 'string') {
+              return 'each contract entry must have a non-empty "key" string';
+            }
+          }
+        } catch {
+          return 'contracts must be valid JSON array or "null"';
+        }
+        break;
     }
 
     return null;

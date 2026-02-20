@@ -1,6 +1,12 @@
 import type Database from 'better-sqlite3';
-import { ensureInteractionsTables, ensureModulesTables } from '../schema-manager.js';
-import type { CallGraphEdge, Interaction, InteractionSource, InteractionWithPaths } from '../schema.js';
+import { ensureInteractionDefinitionLinks, ensureInteractionsTables, ensureModulesTables } from '../schema-manager.js';
+import type {
+  CallGraphEdge,
+  Interaction,
+  InteractionDefinitionLink,
+  InteractionSource,
+  InteractionWithPaths,
+} from '../schema.js';
 import { queryCallGraphEdges } from './_shared/call-graph-query.js';
 
 export interface InteractionInsertOptions {
@@ -561,6 +567,82 @@ export class InteractionRepository {
     `);
 
     return stmt.all(fromModuleId, toModuleId) as Array<{ name: string; kind: string }>;
+  }
+
+  // ============================================================
+  // Interaction Definition Links (for flow stitching)
+  // ============================================================
+
+  /**
+   * Insert a definition-level link for a contract-matched interaction.
+   */
+  insertDefinitionLink(
+    interactionId: number,
+    fromDefinitionId: number,
+    toDefinitionId: number,
+    contractId: number | null
+  ): void {
+    ensureInteractionDefinitionLinks(this.db);
+
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO interaction_definition_links
+         (interaction_id, from_definition_id, to_definition_id, contract_id)
+         VALUES (?, ?, ?, ?)`
+      )
+      .run(interactionId, fromDefinitionId, toDefinitionId, contractId);
+  }
+
+  /**
+   * Get all definition links for a specific interaction.
+   */
+  getDefinitionLinksForInteraction(interactionId: number): InteractionDefinitionLink[] {
+    ensureInteractionDefinitionLinks(this.db);
+
+    return this.db
+      .prepare(
+        `SELECT interaction_id as interactionId, from_definition_id as fromDefinitionId,
+                to_definition_id as toDefinitionId, contract_id as contractId
+         FROM interaction_definition_links WHERE interaction_id = ?`
+      )
+      .all(interactionId) as InteractionDefinitionLink[];
+  }
+
+  /**
+   * Get all definition links originating from definitions in a specific module.
+   * Used by FlowTracer for contract-aware bridge traversal.
+   */
+  getDefinitionLinksFromModule(moduleId: number): Array<
+    InteractionDefinitionLink & {
+      toModuleId: number;
+      protocol: string;
+      contractKey: string;
+    }
+  > {
+    ensureInteractionDefinitionLinks(this.db);
+
+    return this.db
+      .prepare(
+        `SELECT idl.interaction_id as interactionId,
+                idl.from_definition_id as fromDefinitionId,
+                idl.to_definition_id as toDefinitionId,
+                idl.contract_id as contractId,
+                to_mm.module_id as toModuleId,
+                c.protocol,
+                c.normalized_key as contractKey
+         FROM interaction_definition_links idl
+         JOIN module_members from_mm ON idl.from_definition_id = from_mm.definition_id
+         JOIN module_members to_mm ON idl.to_definition_id = to_mm.definition_id
+         LEFT JOIN contracts c ON idl.contract_id = c.id
+         WHERE from_mm.module_id = ?`
+      )
+      .all(moduleId) as Array<
+      InteractionDefinitionLink & {
+        toModuleId: number;
+        protocol: string;
+        contractKey: string;
+      }
+    >;
   }
 
   // ============================================================

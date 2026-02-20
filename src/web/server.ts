@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { IndexDatabase } from '../db/database.js';
 import {
+  getContractsData,
   getFlowsDagData,
   getFlowsData,
   getInteractionsData,
@@ -127,6 +128,8 @@ export function createServer(db: IndexDatabase, port: number): http.Server {
         } else {
           notFound(res, 'Interaction not found');
         }
+      } else if (path === '/api/contracts') {
+        jsonResponse(res, getContractsData(db));
       } else if (path === '/api/flows') {
         jsonResponse(res, getFlowsData(db));
       } else if (path === '/api/flows/stats') {

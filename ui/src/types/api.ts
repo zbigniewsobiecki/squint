@@ -201,6 +201,36 @@ export interface FlowsDagResponse {
   features: DagFeature[];
 }
 
+// Contract types
+export interface ContractParticipantDetail {
+  id: number;
+  definitionId: number;
+  definitionName: string;
+  moduleId: number | null;
+  modulePath: string | null;
+  role: string;
+}
+
+export interface ContractDetail {
+  id: number;
+  protocol: string;
+  key: string;
+  normalizedKey: string;
+  description: string | null;
+  participants: ContractParticipantDetail[];
+  matched: boolean;
+}
+
+export interface ContractsResponse {
+  contracts: ContractDetail[];
+  stats: {
+    total: number;
+    matched: number;
+    unmatched: number;
+    byProtocol: Record<string, number>;
+  };
+}
+
 // Database stats types
 export interface DbStats {
   files: number;

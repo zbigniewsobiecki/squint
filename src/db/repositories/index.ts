@@ -50,6 +50,8 @@ export type {
   IncomingEdge,
 } from './module-repository.js';
 
+export { ContractRepository } from './contract-repository.js';
+
 export { InteractionRepository } from './interaction-repository.js';
 export type {
   InteractionInsertOptions,

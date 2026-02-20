@@ -6,6 +6,7 @@ import './styles/graph.css';
 
 import { createApiClient } from './api/client';
 import { createStore } from './state/store';
+import { initContracts } from './views/contracts';
 import { initFilesTreemap } from './views/files-treemap';
 import { initFlowsDag } from './views/flows-dag';
 import { initInteractions } from './views/interactions';
@@ -22,6 +23,7 @@ const views = {
   modules: initModulesTree,
   flows: initFlowsDag,
   interactions: initInteractions,
+  contracts: initContracts,
   files: initFilesTreemap,
 };
 
@@ -83,6 +85,19 @@ function updateStatsForView(view: string) {
         <span class="stat">Business: <span class="stat-value annotated">${data.stats.businessCount}</span></span>
         <span class="stat">Utility: <span class="stat-value">${data.stats.utilityCount}</span></span>
         <span class="stat">Coverage: <span class="stat-value">${data.relationshipCoverage.coveragePercent.toFixed(0)}%</span></span>
+      `;
+    }
+  } else if (view === 'contracts') {
+    const cData = state.contractsData;
+    if (cData) {
+      statsContainer.innerHTML = `
+        <span class="stat">Contracts: <span class="stat-value">${cData.stats.total}</span></span>
+        <span class="stat">Matched: <span class="stat-value annotated">${cData.stats.matched}</span></span>
+        <span class="stat">Unmatched: <span class="stat-value">${cData.stats.unmatched}</span></span>
+      `;
+    } else {
+      statsContainer.innerHTML = `
+        <span class="stat">Contracts: <span class="stat-value">-</span></span>
       `;
     }
   } else if (view === 'files') {
@@ -147,6 +162,14 @@ async function loadInitialData() {
     // Load interactions data
     const interactionsData = await api.getInteractions();
     store.setState({ interactionsData });
+
+    // Load contracts data
+    try {
+      const contractsData = await api.getContracts();
+      store.setState({ contractsData });
+    } catch {
+      // Contracts may not be available
+    }
 
     // Render initial view
     renderCurrentView();

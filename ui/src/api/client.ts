@@ -1,4 +1,5 @@
 import type {
+  ContractsResponse,
   DbStats,
   FlowsDagResponse,
   FlowsResponse,
@@ -15,6 +16,7 @@ export interface ApiClient {
   getFlows(): Promise<FlowsResponse>;
   getFlowsDag(): Promise<FlowsDagResponse>;
   getInteractions(): Promise<InteractionsResponse>;
+  getContracts(): Promise<ContractsResponse>;
 }
 
 // Create the API client
@@ -52,6 +54,10 @@ export function createApiClient(baseUrl = ''): ApiClient {
 
     getInteractions() {
       return fetchJson<InteractionsResponse>('/api/interactions');
+    },
+
+    getContracts() {
+      return fetchJson<ContractsResponse>('/api/contracts');
     },
   };
 }

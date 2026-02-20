@@ -36,6 +36,16 @@ const ASPECT_DESCRIPTIONS: Record<string, string> = {
   pure: `"true" only if purely functional (deterministic, no side effects). "false" if it: creates objects with mutable state, returns closures with internal state, uses vi.fn()/mock factories, or performs I/O. Most factory functions are NOT pure.
   - Functions returning \`new CustomClass(...)\` create new mutable instance identities each call → impure
   - Exception: constructing immutable value objects like Error subclasses (with only readonly/constructor fields) can be pure`,
+  contracts: `JSON array of boundary communication contracts this definition participates in.
+Each entry: {"protocol":"...", "role":"...", "key":"...", "normalizedKey":"...", "details":"..."}.
+
+protocol: Any communication mechanism — free-form string (e.g., "http", "ws", "grpc", "queue", "pubsub", "event", "email", "file", "ipc", "cli", or any other).
+role: One of: server/client, producer/consumer, emitter/listener, publisher/subscriber, sender/receiver, writer/reader.
+key: The literal identifier as it appears in code (e.g., "/api/vehicles/:id", "vehicle:updated", "order-processing").
+normalizedKey: A canonical form identical on both sides of the same channel.
+  Strip variable segments, normalize casing, produce the same string a matching counterpart would.
+  Examples: "GET /api/vehicles/:id" → "GET /api/vehicles/{param}", "VehicleService.GetVehicle" → "VehicleService/GetVehicle".
+Return "null" if no external communication contracts.`,
 };
 
 /**
