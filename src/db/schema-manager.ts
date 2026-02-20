@@ -465,12 +465,31 @@ export function ensureInteractionDefinitionLinks(db: Database.Database): void {
         interaction_id INTEGER NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
         from_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
         to_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
-        contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL,
-        PRIMARY KEY (interaction_id, from_definition_id, to_definition_id)
+        contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+        PRIMARY KEY (interaction_id, from_definition_id, to_definition_id, contract_id)
       );
 
       CREATE INDEX idx_idl_interaction ON interaction_definition_links(interaction_id);
     `);
+  } else {
+    // Migrate: old PK was (interaction_id, from_definition_id, to_definition_id) without contract_id.
+    // Check by looking for contract_id NOT NULL constraint in table_info.
+    const contractCol = db
+      .prepare("SELECT \"notnull\" FROM pragma_table_info('interaction_definition_links') WHERE name='contract_id'")
+      .get() as { notnull: number } | undefined;
+    if (!contractCol || contractCol.notnull === 0) {
+      db.exec(`
+        DROP TABLE interaction_definition_links;
+        CREATE TABLE interaction_definition_links (
+          interaction_id INTEGER NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
+          from_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+          to_definition_id INTEGER NOT NULL REFERENCES definitions(id) ON DELETE CASCADE,
+          contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+          PRIMARY KEY (interaction_id, from_definition_id, to_definition_id, contract_id)
+        );
+        CREATE INDEX idx_idl_interaction ON interaction_definition_links(interaction_id);
+      `);
+    }
   }
 }
 
