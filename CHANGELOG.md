@@ -1,3 +1,9 @@
+## [1.9.1](https://github.com/zbigniewsobiecki/squint/compare/v1.9.0...v1.9.1) (2026-02-20)
+
+### Bug Fixes
+
+* grow flow sequence diagram containers for nested expanded modules ([f67cd46](https://github.com/zbigniewsobiecki/squint/commit/f67cd46a496d83dec750de0e4c801c7cd861a203))
+
 ## [1.9.0](https://github.com/zbigniewsobiecki/squint/compare/v1.8.1...v1.9.0) (2026-02-20)
 
 ### Features
