@@ -1,6 +1,6 @@
 {
   "name": "@zbigniewsobiecki/squint",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "description": "Squint — AST + LLM driven codebase analysis and visualization",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
