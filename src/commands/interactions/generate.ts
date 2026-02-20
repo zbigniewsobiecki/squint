@@ -14,7 +14,7 @@ import {
   getProcessDescription,
   getProcessGroupLabel,
 } from '../llm/_shared/process-utils.js';
-import { ContractMatcher } from './contract-matcher.js';
+import { ContractMatcher } from './_shared/contract-matcher.js';
 
 interface InteractionSuggestion {
   fromModuleId: number;

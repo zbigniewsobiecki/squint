@@ -1,6 +1,6 @@
-import type { IndexDatabase } from '../../db/database-facade.js';
-import type { ContractParticipant, ContractWithParticipants } from '../../db/schema.js';
-import type { ProcessGroups } from '../llm/_shared/process-utils.js';
+import type { IndexDatabase } from '../../../db/database-facade.js';
+import type { ContractParticipant, ContractWithParticipants } from '../../../db/schema.js';
+import type { ProcessGroups } from '../../llm/_shared/process-utils.js';
 
 /**
  * Complementary role pairs — two participants match when they have

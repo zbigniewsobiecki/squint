@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ContractMatcher } from '../../src/commands/interactions/contract-matcher.js';
+import { ContractMatcher } from '../../src/commands/interactions/_shared/contract-matcher.js';
 import type { ProcessGroups } from '../../src/commands/llm/_shared/process-utils.js';
 import { IndexDatabase } from '../../src/db/database-facade.js';
 
