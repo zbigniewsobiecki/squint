@@ -1,3 +1,9 @@
+## [1.10.0](https://github.com/zbigniewsobiecki/squint/compare/v1.9.1...v1.10.0) (2026-02-20)
+
+### Features
+
+* **flows:** definition-level flow tracing with contract bridges ([#29](https://github.com/zbigniewsobiecki/squint/issues/29)) ([008b7d6](https://github.com/zbigniewsobiecki/squint/commit/008b7d649265b02bc7c79396af0d0a4570bf5fc9))
+
 ## [1.9.1](https://github.com/zbigniewsobiecki/squint/compare/v1.9.0...v1.9.1) (2026-02-20)
 
 ### Bug Fixes
