@@ -1,3 +1,9 @@
+## [1.9.0](https://github.com/zbigniewsobiecki/squint/compare/v1.8.1...v1.9.0) (2026-02-20)
+
+### Features
+
+* **flows:** zoom-to-fit, hide internal flows, nesting containers ([#26](https://github.com/zbigniewsobiecki/squint/issues/26)) ([383bf9e](https://github.com/zbigniewsobiecki/squint/commit/383bf9e4c762efb026e4bd438cc23339bdae064f))
+
 ## [1.8.1](https://github.com/zbigniewsobiecki/squint/compare/v1.8.0...v1.8.1) (2026-02-20)
 
 ### Bug Fixes
