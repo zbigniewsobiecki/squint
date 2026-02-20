@@ -30,6 +30,7 @@ export interface MemberClassification {
   actionType: ActionType | null;
   targetEntity: string | null;
   stakeholder: FlowStakeholder | null;
+  traceFromDefinition: string | null;
   reason: string;
 }
 
@@ -44,6 +45,7 @@ export interface EntryPointModuleInfo {
     actionType: ActionType | null;
     targetEntity: string | null;
     stakeholder: FlowStakeholder | null;
+    traceFromDefinition: string | null;
   }>;
 }
 
@@ -57,7 +59,7 @@ export interface TracedDefinitionStep {
 export interface InferredFlowStep {
   fromModuleId: number;
   toModuleId: number;
-  source: 'llm-inferred';
+  source: 'llm-inferred' | 'contract-matched';
 }
 
 export interface FlowSuggestion {
@@ -84,6 +86,18 @@ export interface FlowTracingContext {
   inferredFromModule: Map<number, InteractionWithPaths[]>;
   allInteractionsFromModule: Map<number, InteractionWithPaths[]>;
   moduleToDefIds: Map<number, number[]>;
+  defIdToName: Map<number, string>;
+  entryPointModuleIds: Set<number>;
+  boundaryTargetModuleIds: Set<number>;
+  definitionBridgeMap: Map<
+    number,
+    Array<{
+      interactionId: number;
+      toDefinitionId: number;
+      toModuleId: number;
+      source: 'llm-inferred' | 'contract-matched';
+    }>
+  >;
 }
 
 export interface LlmOptions {

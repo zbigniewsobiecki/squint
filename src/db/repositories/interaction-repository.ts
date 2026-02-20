@@ -580,7 +580,7 @@ export class InteractionRepository {
     interactionId: number,
     fromDefinitionId: number,
     toDefinitionId: number,
-    contractId: number | null
+    contractId: number
   ): void {
     ensureInteractionDefinitionLinks(this.db);
 
@@ -643,6 +643,28 @@ export class InteractionRepository {
         contractKey: string;
       }
     >;
+  }
+
+  /**
+   * Get all definition links with target module ID and interaction source.
+   * Used by FlowTracer for definition-level bridge precision.
+   */
+  getAllDefinitionLinks(): Array<InteractionDefinitionLink & { toModuleId: number; source: string }> {
+    ensureInteractionDefinitionLinks(this.db);
+
+    return this.db
+      .prepare(
+        `SELECT idl.interaction_id as interactionId,
+                idl.from_definition_id as fromDefinitionId,
+                idl.to_definition_id as toDefinitionId,
+                idl.contract_id as contractId,
+                to_mm.module_id as toModuleId,
+                i.source
+         FROM interaction_definition_links idl
+         JOIN module_members to_mm ON idl.to_definition_id = to_mm.definition_id
+         JOIN interactions i ON idl.interaction_id = i.id`
+      )
+      .all() as Array<InteractionDefinitionLink & { toModuleId: number; source: string }>;
   }
 
   // ============================================================

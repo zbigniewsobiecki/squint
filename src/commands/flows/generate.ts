@@ -85,7 +85,10 @@ export default class FlowsGenerate extends BaseLlmCommand {
         entityName: 'Flows',
         existingCount,
         force: flags.force as boolean,
-        clearFn: () => db.flows.clear(),
+        clearFn: () => {
+          db.flows.clear();
+          db.features.clear();
+        },
         forceHint: 'Use --force to re-detect',
       })
     ) {
@@ -161,7 +164,15 @@ export default class FlowsGenerate extends BaseLlmCommand {
     logStep(this, 3, 'Tracing Composite Flows from Entry Points (Tier 1)', isJson);
 
     const definitionCallGraph = db.interactions.getDefinitionCallGraphMap();
-    const tracingContext = buildFlowTracingContext(definitionCallGraph, allModulesWithMembers, interactions);
+    const entryPointModuleIds = new Set(entryPointModules.map((ep) => ep.moduleId));
+    const definitionLinks = db.interactions.getAllDefinitionLinks();
+    const tracingContext = buildFlowTracingContext(
+      definitionCallGraph,
+      allModulesWithMembers,
+      interactions,
+      entryPointModuleIds,
+      definitionLinks
+    );
     const flowTracer = new FlowTracer(tracingContext);
     const flowSuggestions = flowTracer.traceFlowsFromEntryPoints(entryPointModules, atomicFlows);
 

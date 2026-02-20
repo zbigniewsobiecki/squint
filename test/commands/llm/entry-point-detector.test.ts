@@ -286,5 +286,280 @@ module_id,member_name,is_entry_point,action_type,target_entity,reason
       const dashboardResult = result.find((r: any) => r.memberName === 'Dashboard');
       expect(dashboardResult?.actionType).toBe('view');
     });
+
+    it('parses 8-column CSV with trace_from column', () => {
+      const response = `\`\`\`csv
+module_id,member_name,is_entry_point,action_type,target_entity,stakeholder,trace_from,reason
+42,ItemList,true,view,item,user,,"Main component displaying item list"
+42,ItemList,true,create,item,user,useCreateItem,"Calls useCreateItem hook for new items"
+42,ItemList,true,delete,item,user,useDeleteItem,"Calls useDeleteItem hook"
+\`\`\``;
+
+      const candidates: ModuleCandidate[] = [
+        {
+          id: 42,
+          fullPath: 'project.items',
+          name: 'Items',
+          description: null,
+          depth: 1,
+          memberCount: 1,
+          members: [{ definitionId: 100, name: 'ItemList', kind: 'function' }],
+        },
+      ];
+
+      const result = parseCSV(response, candidates);
+
+      expect(result).toHaveLength(3);
+
+      const viewRow = result.find((r: any) => r.actionType === 'view');
+      expect(viewRow?.traceFromDefinition).toBeNull(); // empty trace_from for view
+      expect(viewRow?.stakeholder).toBe('user');
+
+      const createRow = result.find((r: any) => r.actionType === 'create');
+      expect(createRow?.traceFromDefinition).toBe('useCreateItem');
+      expect(createRow?.reason).toBe('Calls useCreateItem hook for new items');
+
+      const deleteRow = result.find((r: any) => r.actionType === 'delete');
+      expect(deleteRow?.traceFromDefinition).toBe('useDeleteItem');
+    });
+
+    it('parses 7-column CSV (backwards compatible, no trace_from)', () => {
+      const response = `\`\`\`csv
+module_id,member_name,is_entry_point,action_type,target_entity,stakeholder,reason
+1,Dashboard,true,view,dashboard,user,"Main dashboard view"
+\`\`\``;
+
+      const candidates: ModuleCandidate[] = [
+        {
+          id: 1,
+          fullPath: 'project.dashboard',
+          name: 'Dashboard',
+          description: null,
+          depth: 1,
+          memberCount: 1,
+          members: [{ definitionId: 10, name: 'Dashboard', kind: 'function' }],
+        },
+      ];
+
+      const result = parseCSV(response, candidates);
+      const dashboardResult = result.find((r: any) => r.memberName === 'Dashboard');
+      expect(dashboardResult?.stakeholder).toBe('user');
+      expect(dashboardResult?.traceFromDefinition).toBeNull();
+      expect(dashboardResult?.reason).toBe('Main dashboard view');
+    });
+
+    it('heuristic fallback sets traceFromDefinition to null', () => {
+      const response = `\`\`\`csv
+module_id,member_name,is_entry_point,action_type,target_entity,stakeholder,trace_from,reason
+1,Listed,true,view,item,user,,"Listed view"
+\`\`\``;
+
+      const candidates: ModuleCandidate[] = [
+        {
+          id: 1,
+          fullPath: 'project.screens.items',
+          name: 'Items',
+          description: null,
+          depth: 1,
+          memberCount: 2,
+          members: [
+            { definitionId: 10, name: 'Listed', kind: 'function' },
+            { definitionId: 11, name: 'handleCreate', kind: 'function' },
+          ],
+        },
+      ];
+
+      const result = parseCSV(response, candidates);
+      const fallback = result.find((r: any) => r.memberName === 'handleCreate');
+      expect(fallback).toBeDefined();
+      expect(fallback?.traceFromDefinition).toBeNull();
+    });
+  });
+
+  describe('contract handler supplement', () => {
+    it('ensures contract handler is entry point member even when LLM says no', () => {
+      // authController (defId 20) is a contract handler target but LLM classified it as not entry point
+      const mockDb = {
+        interactions: {
+          getAllDefinitionLinks: () => [
+            {
+              interactionId: 1,
+              fromDefinitionId: 10,
+              toDefinitionId: 20,
+              contractId: 1,
+              toModuleId: 2,
+              source: 'contract-matched',
+            },
+          ],
+        },
+      } as any;
+      const mockCommand = { log: () => {}, warn: () => {} } as any;
+      const detector = new EntryPointDetector(mockDb, mockCommand, false, false);
+
+      // Simulate: LLM said authController module is NOT entry point
+      const classifications = [
+        { moduleId: 2, isEntryPoint: false, confidence: 'medium' as const, reason: 'intermediate node' },
+      ];
+      const candidates = [
+        {
+          id: 2,
+          fullPath: 'backend.api.auth',
+          name: 'Auth',
+          description: null,
+          depth: 1,
+          memberCount: 1,
+          members: [{ definitionId: 20, name: 'authController', kind: 'class' }],
+        },
+      ];
+
+      // Set empty member classifications (LLM said not entry point)
+      (detector as any).memberClassifications = [
+        {
+          moduleId: 2,
+          memberName: 'authController',
+          isEntryPoint: false,
+          actionType: null,
+          targetEntity: null,
+          stakeholder: null,
+          traceFromDefinition: null,
+          reason: 'intermediate',
+        },
+      ];
+
+      const result = (detector as any).buildEntryPointModules(classifications, candidates, true);
+
+      // Module should be forced to entry point
+      expect(result).toHaveLength(1);
+      expect(result[0].moduleId).toBe(2);
+      // authController should be supplemented as entry point member
+      const authMember = result[0].memberDefinitions.find((m: any) => m.name === 'authController');
+      expect(authMember).toBeDefined();
+      expect(authMember.stakeholder).toBe('external');
+      expect(authMember.actionType).toBe('process'); // inferred from "auth" in name
+    });
+
+    it('does not duplicate already-classified members', () => {
+      const mockDb = {
+        interactions: {
+          getAllDefinitionLinks: () => [
+            {
+              interactionId: 1,
+              fromDefinitionId: 10,
+              toDefinitionId: 20,
+              contractId: 1,
+              toModuleId: 2,
+              source: 'contract-matched',
+            },
+          ],
+        },
+      } as any;
+      const mockCommand = { log: () => {}, warn: () => {} } as any;
+      const detector = new EntryPointDetector(mockDb, mockCommand, false, false);
+
+      // LLM already classified VehiclesController as entry point
+      const classifications = [
+        { moduleId: 2, isEntryPoint: true, confidence: 'medium' as const, reason: 'controller' },
+      ];
+      const candidates = [
+        {
+          id: 2,
+          fullPath: 'backend.api.vehicles',
+          name: 'Vehicles',
+          description: null,
+          depth: 1,
+          memberCount: 1,
+          members: [{ definitionId: 20, name: 'VehiclesController', kind: 'class' }],
+        },
+      ];
+
+      (detector as any).memberClassifications = [
+        {
+          moduleId: 2,
+          memberName: 'VehiclesController',
+          isEntryPoint: true,
+          actionType: 'view',
+          targetEntity: 'vehicle',
+          stakeholder: 'external',
+          traceFromDefinition: null,
+          reason: 'handles HTTP',
+        },
+      ];
+
+      const result = (detector as any).buildEntryPointModules(classifications, candidates, true);
+
+      expect(result).toHaveLength(1);
+      // Should have exactly one member, not duplicated
+      const vehicleMembers = result[0].memberDefinitions.filter((m: any) => m.name === 'VehiclesController');
+      expect(vehicleMembers).toHaveLength(1);
+      // Should keep the LLM-classified values, not overwrite with supplement
+      expect(vehicleMembers[0].stakeholder).toBe('external');
+      expect(vehicleMembers[0].actionType).toBe('view');
+    });
+  });
+
+  describe('buildModuleContext', () => {
+    it('annotates modules behind HTTP boundaries', () => {
+      const detector = createDetector();
+      const buildContext = (candidates: ModuleCandidate[], behindBoundaryModuleIds?: Set<number>) =>
+        (detector as any).buildModuleContext(candidates, behindBoundaryModuleIds);
+
+      const candidates: ModuleCandidate[] = [
+        {
+          id: 1,
+          fullPath: 'project.pages.vehicles',
+          name: 'VehiclesPage',
+          description: null,
+          depth: 1,
+          memberCount: 1,
+          members: [{ definitionId: 10, name: 'VehiclesPage', kind: 'function' }],
+        },
+        {
+          id: 2,
+          fullPath: 'project.controllers.vehicles',
+          name: 'VehiclesController',
+          description: null,
+          depth: 1,
+          memberCount: 1,
+          members: [{ definitionId: 20, name: 'VehiclesController', kind: 'class' }],
+        },
+      ];
+
+      const behindBoundary = new Set([2]); // Only controller is behind HTTP boundary
+      const result = buildContext(candidates, behindBoundary);
+
+      // Split into per-module sections to check each independently
+      const sections = result.split('## Module ').filter(Boolean);
+      const module1Section = sections.find((s: string) => s.startsWith('1:'));
+      const module2Section = sections.find((s: string) => s.startsWith('2:'));
+
+      // Frontend page should NOT have annotation
+      expect(module1Section).not.toContain('⚠️');
+
+      // Backend controller SHOULD have annotation
+      expect(module2Section).toContain(
+        '⚠️ This module is a BACKEND API endpoint (reached via HTTP from frontend modules)'
+      );
+    });
+
+    it('does not annotate when no boundary set is provided', () => {
+      const detector = createDetector();
+      const buildContext = (candidates: ModuleCandidate[], behindBoundaryModuleIds?: Set<number>) =>
+        (detector as any).buildModuleContext(candidates, behindBoundaryModuleIds);
+
+      const candidates: ModuleCandidate[] = [
+        {
+          id: 2,
+          fullPath: 'project.controllers.vehicles',
+          name: 'VehiclesController',
+          description: null,
+          depth: 1,
+          memberCount: 1,
+          members: [{ definitionId: 20, name: 'VehiclesController', kind: 'class' }],
+        },
+      ];
+
+      const result = buildContext(candidates); // No boundary set
+      expect(result).not.toContain('⚠️');
+    });
   });
 });

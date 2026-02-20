@@ -95,7 +95,7 @@ export class EntryPointDetector {
       }));
     }
 
-    return this.buildEntryPointModules(classifications, candidates);
+    return this.buildEntryPointModules(classifications, candidates, true);
   }
 
   /**
@@ -149,8 +149,17 @@ export class EntryPointDetector {
     const interactions = this.db.callGraph.getEnrichedModuleCallGraph();
     const relationships = this.db.relationships.getAll({ limit: 200 });
 
+    // Identify modules behind HTTP boundaries (targets of inferred/contract-matched interactions)
+    const allInteractions = this.db.interactions.getAll();
+    const behindBoundaryModuleIds = new Set<number>();
+    for (const interaction of allInteractions) {
+      if (interaction.source === 'llm-inferred' || interaction.source === 'contract-matched') {
+        behindBoundaryModuleIds.add(interaction.toModuleId);
+      }
+    }
+
     const systemPrompt = this.buildClassificationSystemPrompt();
-    const moduleList = this.buildModuleContext(candidates);
+    const moduleList = this.buildModuleContext(candidates, behindBoundaryModuleIds);
     const interactionList = this.buildInteractionContext(interactions, candidates);
     const relationshipList = this.buildRelationshipContext(relationships, candidates);
 
@@ -216,14 +225,37 @@ Classify who initiates the action:
 - **developer**: CLI commands, dev tools, scripts
 - **external**: API endpoints consumed by external clients/services
 
+## CRITICAL: Backend API Endpoints
+Modules marked with ⚠️ are backend API endpoints reached from frontend via HTTP.
+These modules ARE entry points — they serve as the boundary of a separately deployable backend.
+Classify them as:
+- is_entry_point=true (ALWAYS — they handle incoming HTTP requests)
+- stakeholder="external" (NOT "user" — they serve external API clients or frontends)
+
+Frontend flows trace frontend→backend boundary crossings.
+Backend entry point flows trace the backend's OWN internal chain (controller→service→repository).
+Both are needed for complete flow coverage.
+
+## CRITICAL: Multi-Action Detection
+For EACH entry point module, examine ALL its outgoing calls in the Interactions section.
+If a page/screen calls mutation hooks (create, update, delete), it has MULTIPLE action types.
+You MUST emit a SEPARATE ROW for each action type.
+The trace_from column tells us which specific hook to follow for each action.
+
+Missing even one action type means an entire user flow goes undetected.
+
 ## Output Format
 \`\`\`csv
-module_id,member_name,is_entry_point,action_type,target_entity,stakeholder,reason
-42,ItemList,true,view,item,user,"Main component displaying item list"
-42,ItemList,true,create,item,user,"Calls useCreateItem hook for new items"
-42,ItemList,true,update,item,user,"Calls useUpdateItem hook"
-42,ItemList,true,delete,item,user,"Calls useDeleteItem hook"
+module_id,member_name,is_entry_point,action_type,target_entity,stakeholder,trace_from,reason
+42,ItemList,true,view,item,user,,"Main component displaying item list"
+42,ItemList,true,create,item,user,useCreateItem,"Calls useCreateItem hook for new items"
+42,ItemList,true,update,item,user,useUpdateItem,"Calls useUpdateItem hook"
+42,ItemList,true,delete,item,user,useDeleteItem,"Calls useDeleteItem hook"
 \`\`\`
+
+The trace_from column specifies which callee/hook to start tracing from for each action type.
+For "view" actions, leave trace_from empty (trace from the page itself).
+For mutations, name the specific hook or function that performs the mutation.
 
 IMPORTANT: A single component can have MULTIPLE action types if it calls multiple mutation hooks.
 Only mark as is_entry_point=true if it's user-initiated (UI event, API endpoint).
@@ -239,12 +271,15 @@ mark ALL its members as is_entry_point=false regardless of their names.
 Modules containing only interfaces, types, and enums are data structure definitions, NOT entry points.`;
   }
 
-  private buildModuleContext(candidates: ModuleCandidate[]): string {
+  private buildModuleContext(candidates: ModuleCandidate[], behindBoundaryModuleIds?: Set<number>): string {
     return candidates
       .map((m) => {
         let desc = `## Module ${m.id}: ${m.fullPath}`;
         if (m.description) desc += `\nDescription: ${m.description}`;
         desc += `\nName: ${m.name}`;
+        if (behindBoundaryModuleIds?.has(m.id)) {
+          desc += '\n⚠️ This module is a BACKEND API endpoint (reached via HTTP from frontend modules)';
+        }
         desc += '\nMembers:';
         for (const mem of m.members) {
           desc += `\n  - ${mem.name} (${mem.kind})`;
@@ -302,11 +337,19 @@ Modules containing only interfaces, types, and enums are data structure definiti
       const actionTypeRaw = fields[3].trim().toLowerCase();
       const targetEntity = fields[4].trim() || null;
 
-      // Parse stakeholder (new column 5) and reason (column 6)
-      // Support both old format (6 cols: no stakeholder) and new format (7 cols: with stakeholder)
+      // Parse stakeholder, trace_from, and reason columns.
+      // Support formats:
+      //   6 cols: module_id, member_name, is_entry_point, action_type, target_entity, reason
+      //   7 cols: module_id, member_name, is_entry_point, action_type, target_entity, stakeholder, reason
+      //   8 cols: module_id, member_name, is_entry_point, action_type, target_entity, stakeholder, trace_from, reason
       let stakeholderRaw: string | null = null;
+      let traceFromDefinition: string | null = null;
       let reason: string;
-      if (fields.length >= 7) {
+      if (fields.length >= 8) {
+        stakeholderRaw = fields[5].trim().toLowerCase();
+        traceFromDefinition = fields[6].trim() || null;
+        reason = fields[7].trim().replace(/"/g, '');
+      } else if (fields.length >= 7) {
         stakeholderRaw = fields[5].trim().toLowerCase();
         reason = fields[6].trim().replace(/"/g, '');
       } else {
@@ -326,6 +369,7 @@ Modules containing only interfaces, types, and enums are data structure definiti
         actionType,
         targetEntity: targetEntity || null,
         stakeholder,
+        traceFromDefinition,
         reason,
       });
     }
@@ -342,6 +386,7 @@ Modules containing only interfaces, types, and enums are data structure definiti
             actionType: inferred.actionType,
             targetEntity: inferred.targetEntity,
             stakeholder: null,
+            traceFromDefinition: null,
             reason: 'Not in LLM response, using heuristic',
           });
         }
@@ -413,8 +458,33 @@ Modules containing only interfaces, types, and enums are data structure definiti
 
   private buildEntryPointModules(
     classifications: EntryPointModuleClassification[],
-    candidates: ModuleCandidate[]
+    candidates: ModuleCandidate[],
+    supplementContractHandlers = false
   ): EntryPointModuleInfo[] {
+    // Deterministic contract-handler supplement:
+    // Ensure modules containing contract handler definitions are always entry points
+    let contractHandlerDefIds: Set<number> | null = null;
+    if (supplementContractHandlers) {
+      try {
+        const allDefLinks = this.db.interactions.getAllDefinitionLinks();
+        contractHandlerDefIds = new Set(allDefLinks.map((l) => l.toDefinitionId));
+
+        // Force modules containing contract handlers to be entry points
+        const candidateMap = new Map(candidates.map((c) => [c.id, c]));
+        for (const classification of classifications) {
+          if (classification.isEntryPoint) continue;
+          const mod = candidateMap.get(classification.moduleId);
+          if (!mod) continue;
+          const hasContractHandler = mod.members.some((m) => contractHandlerDefIds!.has(m.definitionId));
+          if (hasContractHandler) {
+            classification.isEntryPoint = true;
+          }
+        }
+      } catch {
+        // Table may not exist — skip supplement
+      }
+    }
+
     const entryPointModules: EntryPointModuleInfo[] = [];
 
     for (const classification of classifications) {
@@ -428,6 +498,7 @@ Modules containing only interfaces, types, and enums are data structure definiti
       );
 
       const memberDefinitions: EntryPointModuleInfo['memberDefinitions'] = [];
+      const addedMemberNames = new Set<string>();
 
       for (const mc of moduleClassifications) {
         const member = mod.members.find((m) => m.name === mc.memberName);
@@ -439,12 +510,35 @@ Modules containing only interfaces, types, and enums are data structure definiti
             actionType: mc.actionType,
             targetEntity: mc.targetEntity,
             stakeholder: mc.stakeholder,
+            traceFromDefinition: mc.traceFromDefinition,
           });
+          addedMemberNames.add(member.name);
+        }
+      }
+
+      // Supplement: add contract handler members that LLM didn't classify as entry points
+      if (contractHandlerDefIds) {
+        for (const member of mod.members) {
+          if (addedMemberNames.has(member.name)) continue;
+          if (!contractHandlerDefIds.has(member.definitionId)) continue;
+
+          const inferred = this.inferMemberActionType(member.name, mod.fullPath);
+          memberDefinitions.push({
+            id: member.definitionId,
+            name: member.name,
+            kind: member.kind,
+            actionType: inferred.actionType,
+            targetEntity: inferred.targetEntity,
+            stakeholder: 'external',
+            traceFromDefinition: null,
+          });
+          addedMemberNames.add(member.name);
         }
       }
 
       // For members without any classification, add them with null action type
       for (const member of mod.members) {
+        if (addedMemberNames.has(member.name)) continue;
         const hasClassification = moduleClassifications.some((mc) => mc.memberName === member.name);
         if (!hasClassification) {
           memberDefinitions.push({
@@ -454,7 +548,9 @@ Modules containing only interfaces, types, and enums are data structure definiti
             actionType: null,
             targetEntity: null,
             stakeholder: null,
+            traceFromDefinition: null,
           });
+          addedMemberNames.add(member.name);
         }
       }
 
