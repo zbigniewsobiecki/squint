@@ -178,6 +178,13 @@ marker path {
   pointer-events: none;
   fill: var(--text-primary);
 }
+.module-circle-desc {
+  font-size: 12px;
+  fill: var(--text-secondary);
+  fill-opacity: 0.6;
+  text-anchor: middle;
+  pointer-events: none;
+}
 .module-circle-count {
   font-size: 14px;
   fill: var(--text-muted);
@@ -459,6 +466,52 @@ marker path {
   pointer-events: none;
 }
 
+/* Expandable participant indicator */
+.seq-expand-indicator {
+  fill: var(--text-muted);
+  pointer-events: none;
+  font-size: 10px;
+}
+
+.seq-participant.expandable rect {
+  cursor: pointer;
+}
+
+.seq-participant.expandable rect:hover {
+  stroke-width: 2.5;
+}
+
+/* Group header for expanded modules */
+.seq-group-header rect {
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.seq-group-header rect:hover {
+  opacity: 0.9;
+}
+
+.seq-group-header text {
+  fill: var(--text-secondary);
+  pointer-events: none;
+  font-weight: 500;
+  font-size: 10px;
+}
+
+/* Merged step badge (pill shape) */
+.seq-merged-badge rect {
+  fill: var(--bg-elevated);
+  stroke: var(--border-secondary);
+  stroke-width: 1;
+}
+
+.seq-merged-badge text {
+  font-size: 9px;
+  font-weight: 600;
+  fill: var(--text-primary);
+  pointer-events: none;
+}
+
 /* ==============================
    Files Treemap
    ============================== */
@@ -728,15 +781,6 @@ marker path {
   color: var(--kind-class-text);
 }
 
-/* Process group summary */
-.process-group-summary {
-  padding: var(--spacing-sm) var(--spacing-lg);
-  font-size: 12px;
-  color: var(--text-muted);
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-primary);
-}
-
 .chord-sidebar-semantic {
   font-size: 11px;
   color: var(--text-muted);
@@ -777,13 +821,143 @@ marker path {
 }
 
 /* ==============================
-   Interaction Map (Card Grid + Arrows)
+   Interaction Map (Sidebar + DAG)
    ============================== */
 .ixmap-container {
   display: flex;
   height: 100%;
   overflow: hidden;
   position: relative;
+}
+
+/* Left module sidebar */
+.ix-module-sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-primary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ix-module-sidebar-header {
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.ix-module-sidebar-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.ix-module-sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-xs) 0;
+}
+
+/* Tree node row (used for all nodes: branches and leaves) */
+.ix-module-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 5px 8px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  user-select: none;
+}
+
+.ix-module-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.ix-module-item.selected {
+  background: var(--bg-elevated);
+  box-shadow: inset 3px 0 0 var(--accent-blue);
+}
+
+/* Disclosure triangle */
+.ix-module-toggle {
+  font-size: 8px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: transform var(--transition-fast);
+}
+
+.ix-module-toggle.expanded {
+  transform: rotate(90deg);
+}
+
+/* Invisible spacer in leaf items to align with toggle in branch rows */
+.ix-module-toggle-spacer {
+  width: 12px;
+  flex-shrink: 0;
+}
+
+/* Color dot */
+.ix-module-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Node name */
+.ix-module-name {
+  font-size: 12px;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Non-selectable branch label variant */
+.ix-module-name.branch-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Interaction count badge */
+.ix-module-count {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-primary);
+  border-radius: 8px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+
+/* Main pane wrapper */
+.ixmap-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* Placeholder when no module selected */
+.ixmap-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.ixmap-placeholder span {
+  font-size: 14px;
+  color: var(--text-muted);
 }
 
 /* Filter controls */
@@ -794,28 +968,6 @@ marker path {
   z-index: 10;
   display: flex;
   gap: 6px;
-}
-
-.ixmap-filter-btn {
-  padding: 3px 10px;
-  font-size: 11px;
-  font-weight: 600;
-  border-radius: 12px;
-  border: 1px solid var(--border-primary);
-  background: var(--bg-secondary);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
-}
-
-.ixmap-filter-btn.active {
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  border-color: var(--border-secondary);
-}
-
-.ixmap-filter-btn:hover {
-  background: var(--bg-elevated);
 }
 
 /* Depth control */
@@ -860,86 +1012,11 @@ marker path {
   text-align: center;
 }
 
-/* Grid area (scrollable content + SVG overlay) */
+/* Grid area (DAG rendering area) */
 .ixmap-grid-area {
   flex: 1;
   position: relative;
-  overflow-y: auto;
-}
-
-.ixmap-grid {
-  display: grid;
-  gap: 36px;
-  padding: 48px 32px 32px;
-  min-height: 100%;
-  box-sizing: border-box;
-}
-
-/* Leaf module cards (selectable) */
-.ixmap-card {
-  border: 2px solid transparent;
-  border-radius: var(--radius-lg);
-  padding: var(--spacing-lg);
-  cursor: pointer;
-  transition: border-color var(--transition-fast), opacity var(--transition-fast);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-height: 0;
-}
-
-.ixmap-card:hover {
-  filter: brightness(1.2);
-}
-
-.ixmap-card.selected {
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 12px 2px rgba(79, 193, 255, 0.35);
-  filter: brightness(1.4);
-}
-
-.ixmap-card.dimmed {
-  opacity: 0.15;
-  filter: saturate(0.3);
-}
-
-.ixmap-card-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.ixmap-card-count {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
-/* Parent module cards (containers with nested children) */
-.ixmap-card-parent {
-  border: 1px solid transparent;
-  border-radius: var(--radius-lg);
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
   overflow: hidden;
-}
-
-.ixmap-card-header {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  padding: 2px 4px 6px;
-}
-
-.ixmap-card-children {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-  gap: 8px;
-  flex: 1;
-  min-height: 0;
-  align-content: start;
 }
 
 /* SVG arrow overlay */
@@ -978,49 +1055,113 @@ marker path {
 }
 
 /* ==============================
-   Interaction DAG (Layered view)
+   Sankey Drill-down View
    ============================== */
-.ixmap-dag-link {
-  fill: none;
-  stroke-opacity: 0.5;
-  transition: stroke-opacity var(--transition-fast);
-  pointer-events: stroke;
-  cursor: pointer;
-}
-.ixmap-dag-link:hover {
-  stroke-opacity: 0.8;
-}
-.ixmap-dag-link.highlighted {
-  stroke-opacity: 0.9;
-}
-.ixmap-dag-link.dimmed {
-  stroke-opacity: 0.08;
-}
-.ixmap-dag-link.utility {
-  stroke-dasharray: 6, 3;
+
+/* Header bar */
+.sankey-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: 0 var(--spacing-lg);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  z-index: 10;
 }
 
-.ixmap-dag-node rect {
-  stroke-width: 2;
-  cursor: pointer;
-  transition: filter var(--transition-fast);
-}
-.ixmap-dag-node:hover rect {
-  filter: brightness(1.3);
-}
-.ixmap-dag-node.selected rect {
-  stroke: var(--accent-blue);
-  filter: drop-shadow(0 0 8px rgba(79, 193, 255, 0.4));
-}
-
-.ixmap-dag-label {
+.sankey-back-btn {
+  padding: 4px 10px;
   font-size: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-primary);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.sankey-back-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+.sankey-title {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.sankey-separator {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* Sankey SVG elements */
+.sankey-band {
+  fill-opacity: 0.35;
+  cursor: pointer;
+  transition: fill-opacity var(--transition-fast);
+}
+
+.sankey-band.utility {
+  fill-opacity: 0.25;
+}
+
+.sankey-band:hover,
+.sankey-band.highlighted {
+  fill-opacity: 0.7;
+}
+
+.sankey-band.dimmed {
+  fill-opacity: 0.08;
+}
+
+.sankey-node rect {
+  stroke-width: 2;
+}
+
+.sankey-label {
+  font-size: 11px;
   font-weight: 600;
   fill: var(--text-primary);
   pointer-events: none;
 }
-.ixmap-dag-sublabel {
+
+.sankey-sublabel {
   font-size: 10px;
   fill: var(--text-muted);
+  fill-opacity: 0.6;
   pointer-events: none;
+}
+
+/* Band hover tooltip */
+.sankey-band-label rect {
+  fill: var(--bg-secondary);
+  stroke: var(--border-primary);
+  stroke-width: 0.5;
+  pointer-events: none;
+}
+
+.sankey-band-label-header {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--text-primary);
+  pointer-events: none;
+}
+
+.sankey-band-label-line {
+  font-size: 10px;
+  fill: var(--text-secondary);
+  pointer-events: none;
+}
+
+/* Sidebar highlight for band hover */
+.chord-sidebar-item.highlighted {
+  background: var(--bg-elevated);
+  box-shadow: inset 3px 0 0 var(--accent-blue);
 }

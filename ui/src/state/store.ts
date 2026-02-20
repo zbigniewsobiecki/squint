@@ -24,6 +24,7 @@ export interface AppState {
   sidebarCollapsed: boolean;
   selectedSymbolId: number | null;
   symbolSearchQuery: string;
+  hiddenSymbolKinds: Set<string>;
 
   // Loading states
   loading: boolean;
@@ -56,6 +57,7 @@ export function createStore(): Store {
     sidebarCollapsed: false,
     selectedSymbolId: null,
     symbolSearchQuery: '',
+    hiddenSymbolKinds: new Set(),
     loading: true,
     error: null,
   };
@@ -140,6 +142,19 @@ export function selectSymbol(store: Store, id: number | null) {
 
 export function setSymbolSearch(store: Store, query: string) {
   store.setState({ symbolSearchQuery: query });
+}
+
+export function toggleSymbolKind(store: Store, kind: string) {
+  const state = store.getState();
+  const hiddenSymbolKinds = new Set(state.hiddenSymbolKinds);
+
+  if (hiddenSymbolKinds.has(kind)) {
+    hiddenSymbolKinds.delete(kind);
+  } else {
+    hiddenSymbolKinds.add(kind);
+  }
+
+  store.setState({ hiddenSymbolKinds });
 }
 
 export function setRelationshipFilter(store: Store, type: string | null) {
