@@ -13,7 +13,8 @@ import {
   buildRelationshipUserPrompt,
 } from '../llm/_shared/prompts.js';
 import { verifyRelationshipContent } from '../llm/_shared/verify/content-verifier.js';
-import { checkReferentialIntegrity, checkRelationshipCoverage } from '../llm/_shared/verify/coverage-checker.js';
+import { checkReferentialIntegrity } from '../llm/_shared/verify/integrity-checker.js';
+import { checkRelationshipCoverage } from '../llm/_shared/verify/relationship-checker.js';
 import type { VerificationIssue, VerifyReport } from '../llm/_shared/verify/verify-types.js';
 
 export default class RelationshipsVerify extends BaseLlmCommand {

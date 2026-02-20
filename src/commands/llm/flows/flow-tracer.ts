@@ -14,6 +14,16 @@ import type {
   TracedDefinitionStep,
 } from './types.js';
 
+type ModuleRef = { moduleId: number; modulePath: string };
+
+interface TraceState {
+  visited: Set<number>;
+  visitedFallbackBridgeModules: Set<number>;
+  steps: TracedDefinitionStep[];
+  inferredSteps: InferredFlowStep[];
+  entryPointModuleId: number;
+}
+
 export class FlowTracer {
   private readonly maxDepth = 15;
 
@@ -119,148 +129,165 @@ export class FlowTracer {
    * Trace a flow from a starting definition through the definition-level call graph.
    * At leaf nodes (no outgoing call graph edges), bridges via LLM-inferred interactions.
    */
-  private traceDefinitionFlow(
-    startDefinitionId: number,
-    currentEntryPointModuleId: number
-  ): {
-    definitionSteps: TracedDefinitionStep[];
-    inferredSteps: InferredFlowStep[];
-  } {
-    const visited = new Set<number>();
-    const visitedBridgeModules = new Set<number>();
-    const steps: TracedDefinitionStep[] = [];
-    const inferredSteps: InferredFlowStep[] = [];
-
-    const trace = (
-      defId: number,
-      depth: number,
-      lastKnownModule: { moduleId: number; modulePath: string } | null,
-      isBridged = false
-    ): void => {
-      if (depth >= this.maxDepth) return;
-      if (visited.has(defId)) return;
-      visited.add(defId);
-
-      // When a definition was reached via a module-level fallback bridge
-      // (imprecise — picks a representative def from the target module),
-      // don't follow its call-graph edges. The target subsystem is explored
-      // by its own entry-point flows.
-      // Definition-level bridges (contract-matched, precise per-function targeting)
-      // DO continue into the backend call graph to produce e2e flows.
-      if (isBridged) return;
-
-      // Definition-level bridges: precise per-definition targeting.
-      // Check BEFORE call graph traversal — if this definition has bridges,
-      // they capture the cross-boundary semantics (e.g. vehiclesService → VehiclesController).
-      // Don't follow call graph edges further, which would reach a shared leaf
-      // (e.g. api/axios) that bridges to a different target (e.g. authController).
-      const currentModule = this.context.defToModule.get(defId) ?? lastKnownModule;
-      const defBridges = this.context.definitionBridgeMap.get(defId);
-      if (defBridges && defBridges.length > 0 && currentModule) {
-        // Deduplicate bridges: multiple contracts may link the same (fromDef, toDef) pair
-        // (e.g. GET+POST+PUT+DELETE /sales all map salesService→SalesController).
-        // Only emit one step+trace per unique target definition.
-        const seenTargets = new Set<number>();
-        for (const bridge of defBridges) {
-          if (seenTargets.has(bridge.toDefinitionId)) continue;
-          seenTargets.add(bridge.toDefinitionId);
-
-          steps.push({
-            fromDefinitionId: defId,
-            toDefinitionId: bridge.toDefinitionId,
-            fromModuleId: currentModule.moduleId,
-            toModuleId: bridge.toModuleId,
-          });
-
-          inferredSteps.push({
-            fromModuleId: currentModule.moduleId,
-            toModuleId: bridge.toModuleId,
-            source: bridge.source,
-          });
-
-          // Continue tracing from the bridge target into the backend call graph.
-          // Definition-level bridges are precise (specific function targets), so
-          // expansion is safe and produces true end-to-end flows.
-          // Module-level fallback bridges (line ~248) pass isBridged=true to stop.
-          const targetModule = this.context.defToModule.get(bridge.toDefinitionId) ?? null;
-          trace(bridge.toDefinitionId, depth + 1, targetModule, false);
-        }
-        return; // Bridge captures this definition's cross-boundary intent
-      }
-
-      const calledDefs = this.context.definitionCallGraph.get(defId) ?? [];
-      for (const calledDefId of calledDefs) {
-        const fromModule = this.context.defToModule.get(defId) ?? lastKnownModule;
-        const toModule = this.context.defToModule.get(calledDefId);
-
-        // Only include cross-module calls
-        if (fromModule && toModule && fromModule.moduleId !== toModule.moduleId) {
-          steps.push({
-            fromDefinitionId: defId,
-            toDefinitionId: calledDefId,
-            fromModuleId: fromModule.moduleId,
-            toModuleId: toModule.moduleId,
-          });
-
-          // If the target module is ANOTHER entry point, don't expand it.
-          // Its own flows trace its internals. Treat like a bridge boundary.
-          if (
-            toModule.moduleId !== currentEntryPointModuleId &&
-            this.context.entryPointModuleIds.has(toModule.moduleId) &&
-            this.context.boundaryTargetModuleIds.has(toModule.moduleId)
-          ) {
-            continue;
-          }
-        }
-
-        const nextKnownModule = this.context.defToModule.get(calledDefId) ?? fromModule;
-        trace(calledDefId, depth + 1, nextKnownModule);
-      }
-
-      // Fallback: module-level bridge at leaf nodes when no definition-level links exist
-      if (calledDefs.length === 0) {
-        const leafModule = this.context.defToModule.get(defId) ?? lastKnownModule;
-        if (!leafModule) return;
-
-        const leafModuleId = leafModule.moduleId;
-        if (visitedBridgeModules.has(leafModuleId)) return;
-        visitedBridgeModules.add(leafModuleId);
-
-        const inferred = this.context.inferredFromModule.get(leafModuleId);
-        if (!inferred) return;
-
-        for (const interaction of inferred) {
-          const targetModuleId = interaction.toModuleId;
-          const targetDefs = this.context.moduleToDefIds.get(targetModuleId);
-          if (!targetDefs || targetDefs.length === 0) continue;
-
-          // Pick representative: first unvisited, fallback first
-          const representative = targetDefs.find((d) => !visited.has(d)) ?? targetDefs[0];
-
-          steps.push({
-            fromDefinitionId: defId,
-            toDefinitionId: representative,
-            fromModuleId: leafModuleId,
-            toModuleId: targetModuleId,
-          });
-
-          inferredSteps.push({
-            fromModuleId: leafModuleId,
-            toModuleId: targetModuleId,
-            source: interaction.source as 'llm-inferred' | 'contract-matched',
-          });
-
-          // Continue tracing from the bridge target — marked as bridged
-          // so we record the step but don't expand its call graph
-          const targetModule = this.context.defToModule.get(representative) ?? null;
-          trace(representative, depth + 1, targetModule, true);
-        }
-      }
+  private traceDefinitionFlow(startDefinitionId: number, currentEntryPointModuleId: number) {
+    const state: TraceState = {
+      visited: new Set(),
+      visitedFallbackBridgeModules: new Set(),
+      steps: [],
+      inferredSteps: [],
+      entryPointModuleId: currentEntryPointModuleId,
     };
-
     const startModule = this.context.defToModule.get(startDefinitionId) ?? null;
-    trace(startDefinitionId, 0, startModule);
-    return { definitionSteps: steps, inferredSteps };
+    this.trace(state, startDefinitionId, 0, startModule);
+    return { definitionSteps: state.steps, inferredSteps: state.inferredSteps };
+  }
+
+  private trace(
+    state: TraceState,
+    defId: number,
+    depth: number,
+    lastKnownModule: ModuleRef | null,
+    isBridged = false
+  ): void {
+    if (depth >= this.maxDepth) return;
+    if (state.visited.has(defId)) return;
+    state.visited.add(defId);
+
+    // When a definition was reached via a module-level fallback bridge
+    // (imprecise — picks a representative def from the target module),
+    // don't follow its call-graph edges. The target subsystem is explored
+    // by its own entry-point flows.
+    // Definition-level bridges (contract-matched, precise per-function targeting)
+    // DO continue into the backend call graph to produce e2e flows.
+    if (isBridged) return;
+
+    const currentModule = this.context.defToModule.get(defId) ?? lastKnownModule;
+
+    // Strategy 1: definition-level bridges (precise, continues e2e)
+    if (currentModule && this.tryDefinitionBridges(state, defId, currentModule, depth)) {
+      return;
+    }
+
+    // Strategy 2: call graph traversal
+    const calledDefs = this.context.definitionCallGraph.get(defId) ?? [];
+    for (const calledDefId of calledDefs) {
+      const fromModule = this.context.defToModule.get(defId) ?? lastKnownModule;
+      const toModule = this.context.defToModule.get(calledDefId);
+
+      // Only include cross-module calls
+      if (fromModule && toModule && fromModule.moduleId !== toModule.moduleId) {
+        state.steps.push({
+          fromDefinitionId: defId,
+          toDefinitionId: calledDefId,
+          fromModuleId: fromModule.moduleId,
+          toModuleId: toModule.moduleId,
+        });
+
+        // If the target module is ANOTHER entry point, don't expand it.
+        // Its own flows trace its internals. Treat like a bridge boundary.
+        if (
+          toModule.moduleId !== state.entryPointModuleId &&
+          this.context.entryPointModuleIds.has(toModule.moduleId) &&
+          this.context.boundaryTargetModuleIds.has(toModule.moduleId)
+        ) {
+          continue;
+        }
+      }
+
+      const nextKnownModule = this.context.defToModule.get(calledDefId) ?? fromModule;
+      this.trace(state, calledDefId, depth + 1, nextKnownModule);
+    }
+
+    // Strategy 3: module-level fallback bridge (imprecise, stops at target)
+    if (calledDefs.length === 0) {
+      this.tryModuleFallbackBridge(state, defId, lastKnownModule, depth);
+    }
+  }
+
+  /**
+   * Definition-level bridges: precise per-definition targeting.
+   * Returns true if bridges were found (caller should return).
+   */
+  private tryDefinitionBridges(state: TraceState, defId: number, currentModule: ModuleRef, depth: number): boolean {
+    const defBridges = this.context.definitionBridgeMap.get(defId);
+    if (!defBridges || defBridges.length === 0) return false;
+
+    // Deduplicate bridges: multiple contracts may link the same (fromDef, toDef) pair
+    // (e.g. GET+POST+PUT+DELETE /sales all map salesService→SalesController).
+    // Only emit one step+trace per unique target definition.
+    const seenTargets = new Set<number>();
+    for (const bridge of defBridges) {
+      if (seenTargets.has(bridge.toDefinitionId)) continue;
+      seenTargets.add(bridge.toDefinitionId);
+
+      state.steps.push({
+        fromDefinitionId: defId,
+        toDefinitionId: bridge.toDefinitionId,
+        fromModuleId: currentModule.moduleId,
+        toModuleId: bridge.toModuleId,
+      });
+
+      state.inferredSteps.push({
+        fromModuleId: currentModule.moduleId,
+        toModuleId: bridge.toModuleId,
+        source: bridge.source,
+      });
+
+      // Continue tracing from the bridge target into the backend call graph.
+      // Definition-level bridges are precise (specific function targets), so
+      // expansion is safe and produces true end-to-end flows.
+      const targetModule = this.context.defToModule.get(bridge.toDefinitionId) ?? null;
+      this.trace(state, bridge.toDefinitionId, depth + 1, targetModule, false);
+    }
+    return true;
+  }
+
+  /**
+   * Fallback: module-level bridge at leaf nodes when no definition-level links exist.
+   * Bridge targets are marked as bridged so their call graph is not expanded.
+   */
+  private tryModuleFallbackBridge(
+    state: TraceState,
+    defId: number,
+    lastKnownModule: ModuleRef | null,
+    depth: number
+  ): void {
+    const leafModule = this.context.defToModule.get(defId) ?? lastKnownModule;
+    if (!leafModule) return;
+
+    const leafModuleId = leafModule.moduleId;
+    if (state.visitedFallbackBridgeModules.has(leafModuleId)) return;
+    state.visitedFallbackBridgeModules.add(leafModuleId);
+
+    const inferred = this.context.inferredFromModule.get(leafModuleId);
+    if (!inferred) return;
+
+    for (const interaction of inferred) {
+      const targetModuleId = interaction.toModuleId;
+      const targetDefs = this.context.moduleToDefIds.get(targetModuleId);
+      if (!targetDefs || targetDefs.length === 0) continue;
+
+      // Pick representative: first unvisited, fallback first
+      const representative = targetDefs.find((d) => !state.visited.has(d)) ?? targetDefs[0];
+
+      state.steps.push({
+        fromDefinitionId: defId,
+        toDefinitionId: representative,
+        fromModuleId: leafModuleId,
+        toModuleId: targetModuleId,
+      });
+
+      state.inferredSteps.push({
+        fromModuleId: leafModuleId,
+        toModuleId: targetModuleId,
+        source: interaction.source as 'llm-inferred' | 'contract-matched',
+      });
+
+      // Continue tracing from the bridge target — marked as bridged
+      // so we record the step but don't expand its call graph
+      const targetModule = this.context.defToModule.get(representative) ?? null;
+      this.trace(state, representative, depth + 1, targetModule, true);
+    }
   }
 
   /**
@@ -389,37 +416,22 @@ export function buildFlowTracingContext(
     }
   }
 
-  // Build interaction lookup for module pairs
+  // Build interaction lookups in a single pass
   const interactionByModulePair = new Map<string, number>();
+  const inferredFromModule = new Map<number, InteractionWithPaths[]>();
+  const boundaryTargetModuleIds = new Set<number>();
   for (const interaction of interactions) {
+    // Module-pair lookup
     const key = `${interaction.fromModuleId}->${interaction.toModuleId}`;
     interactionByModulePair.set(key, interaction.id);
-  }
 
-  // Build lookup for bridgeable interactions (llm-inferred and contract-matched) by source module
-  const inferredFromModule = new Map<number, InteractionWithPaths[]>();
-  for (const interaction of interactions) {
+    // Bridgeable interactions + boundary targets
     if (interaction.source === 'llm-inferred' || interaction.source === 'contract-matched') {
       const existing = inferredFromModule.get(interaction.fromModuleId) ?? [];
       existing.push(interaction);
       inferredFromModule.set(interaction.fromModuleId, existing);
-    }
-  }
-
-  // Build set of modules that are targets of protocol-boundary interactions
-  const boundaryTargetModuleIds = new Set<number>();
-  for (const interaction of interactions) {
-    if (interaction.source === 'llm-inferred' || interaction.source === 'contract-matched') {
       boundaryTargetModuleIds.add(interaction.toModuleId);
     }
-  }
-
-  // Build lookup for ALL interactions by source module
-  const allInteractionsFromModule = new Map<number, InteractionWithPaths[]>();
-  for (const interaction of interactions) {
-    const existing = allInteractionsFromModule.get(interaction.fromModuleId) ?? [];
-    existing.push(interaction);
-    allInteractionsFromModule.set(interaction.fromModuleId, existing);
   }
 
   // Build definition-level bridge map from definition links
@@ -452,7 +464,6 @@ export function buildFlowTracingContext(
     defToModule,
     interactionByModulePair,
     inferredFromModule,
-    allInteractionsFromModule,
     moduleToDefIds,
     defIdToName,
     entryPointModuleIds: entryPointModuleIds ?? new Set(),
