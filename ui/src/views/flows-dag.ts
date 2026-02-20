@@ -17,6 +17,7 @@ const PARTICIPANT_HEIGHT = 48;
 const MESSAGE_ROW_HEIGHT = 60;
 const TOP_PADDING = 80;
 const GROUP_HEADER_HEIGHT = 22;
+const CONTAINER_PAD = 8;
 
 // Expansion state — reset on flow change
 let expandedModules = new Set<number>();
@@ -394,10 +395,22 @@ function renderSequenceDiagram(store: Store) {
     }
   }
 
+  // Compute nesting level for each group span (how many ancestor containers wrap it)
+  const groupNestingLevel = new Map<number, number>();
+  for (const [parentId] of groupSpans) {
+    let level = 0;
+    let ancestorId = treeNodeById.get(parentId)?.parentId ?? null;
+    while (ancestorId !== null) {
+      if (groupSpans.has(ancestorId)) level++;
+      ancestorId = treeNodeById.get(ancestorId)?.parentId ?? null;
+    }
+    groupNestingLevel.set(parentId, level);
+  }
+  const maxNestingLevel = groupSpans.size > 0 ? Math.max(...groupNestingLevel.values()) + 1 : 0;
+
   // Calculate diagram dimensions
   const diagramWidth = participantIds.length * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) - PARTICIPANT_GAP;
-  const hasGroupHeaders = groupSpans.size > 0;
-  const headerOffset = hasGroupHeaders ? GROUP_HEADER_HEIGHT + 4 : 0;
+  const headerOffset = maxNestingLevel * (GROUP_HEADER_HEIGHT + CONTAINER_PAD);
 
   // Create zoom group
   const g = svg.append('g');
@@ -448,14 +461,21 @@ function renderSequenceDiagram(store: Store) {
     .text(flow.name);
 
   // Draw nesting containers for expanded modules (behind participant boxes)
-  const CONTAINER_PAD = 8;
-  for (const [parentId, span] of groupSpans) {
+  // Sort by nesting level (outermost first) so outer containers render behind inner ones
+  const sortedGroupSpans = [...groupSpans.entries()].sort(
+    (a, b) => (groupNestingLevel.get(a[0]) ?? 0) - (groupNestingLevel.get(b[0]) ?? 0)
+  );
+  for (const [parentId, span] of sortedGroupSpans) {
     const parentNode = span.node;
+    const nestingLevel = groupNestingLevel.get(parentId) ?? 0;
     const colors = getBoxColors(parentNode.depth, parentNode.colorIndex ?? 0);
-    const x1 = span.first * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) - CONTAINER_PAD;
-    const x2 = span.last * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) + PARTICIPANT_WIDTH + CONTAINER_PAD;
-    const containerY = -(GROUP_HEADER_HEIGHT + CONTAINER_PAD);
-    const containerHeight = GROUP_HEADER_HEIGHT + PARTICIPANT_HEIGHT + CONTAINER_PAD * 2;
+    const nestPad = nestingLevel * (CONTAINER_PAD + 1);
+    const x1 = span.first * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) - CONTAINER_PAD - nestPad;
+    const x2 = span.last * (PARTICIPANT_WIDTH + PARTICIPANT_GAP) + PARTICIPANT_WIDTH + CONTAINER_PAD + nestPad;
+    // Each nesting level shifts the container up by one header+pad layer
+    const containerY = -(GROUP_HEADER_HEIGHT + CONTAINER_PAD) * (nestingLevel + 1);
+    const containerHeight =
+      (GROUP_HEADER_HEIGHT + CONTAINER_PAD) * (nestingLevel + 1) + PARTICIPANT_HEIGHT + CONTAINER_PAD;
 
     const containerGroup = g.append('g').attr('class', 'seq-group-container');
 
