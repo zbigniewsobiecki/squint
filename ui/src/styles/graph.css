@@ -481,21 +481,21 @@ marker path {
   stroke-width: 2.5;
 }
 
-/* Group header for expanded modules */
-.seq-group-header rect {
-  opacity: 0.6;
+/* Nesting container for expanded modules */
+.seq-group-container rect {
+  opacity: 0.4;
   cursor: pointer;
 }
 
-.seq-group-header rect:hover {
-  opacity: 0.9;
+.seq-group-container rect:hover {
+  opacity: 0.6;
 }
 
-.seq-group-header text {
+.seq-group-container .seq-group-label {
   fill: var(--text-secondary);
   pointer-events: none;
   font-weight: 500;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 /* Merged step badge (pill shape) */
