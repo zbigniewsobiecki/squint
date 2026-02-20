@@ -157,7 +157,14 @@ export class FlowTracer {
       const currentModule = this.context.defToModule.get(defId) ?? lastKnownModule;
       const defBridges = this.context.definitionBridgeMap.get(defId);
       if (defBridges && defBridges.length > 0 && currentModule) {
+        // Deduplicate bridges: multiple contracts may link the same (fromDef, toDef) pair
+        // (e.g. GET+POST+PUT+DELETE /sales all map salesService→SalesController).
+        // Only emit one step+trace per unique target definition.
+        const seenTargets = new Set<number>();
         for (const bridge of defBridges) {
+          if (seenTargets.has(bridge.toDefinitionId)) continue;
+          seenTargets.add(bridge.toDefinitionId);
+
           steps.push({
             fromDefinitionId: defId,
             toDefinitionId: bridge.toDefinitionId,

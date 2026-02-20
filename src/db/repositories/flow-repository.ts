@@ -481,7 +481,7 @@ export class FlowRepository {
         to_d.line as toLine,
         to_mm.module_id as toModuleId,
         to_m.full_path as toModulePath,
-        ra.semantic as semantic
+        COALESCE(ra.semantic, i.semantic) as semantic
       FROM flow_definition_steps fds
       JOIN definitions from_d ON fds.from_definition_id = from_d.id
       JOIN files from_f ON from_d.file_id = from_f.id
@@ -492,6 +492,7 @@ export class FlowRepository {
       LEFT JOIN module_members to_mm ON to_d.id = to_mm.definition_id
       LEFT JOIN modules to_m ON to_mm.module_id = to_m.id
       LEFT JOIN relationship_annotations ra ON ra.from_definition_id = fds.from_definition_id AND ra.to_definition_id = fds.to_definition_id
+      LEFT JOIN interactions i ON i.from_module_id = from_mm.module_id AND i.to_module_id = to_mm.module_id AND i.source IN ('contract-matched', 'llm-inferred')
       WHERE fds.flow_id = ?
       ORDER BY fds.step_order
     `);
