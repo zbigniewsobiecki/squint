@@ -115,6 +115,87 @@ export function buildAnnotationVerifyUserPrompt(
   return parts.join('\n');
 }
 
+export function buildModuleAssignmentVerifySystemPrompt(): string {
+  return `You are a software architect verifying module assignments in a TypeScript/JavaScript codebase.
+
+## Your Task
+For each symbol, check whether its current module assignment is semantically appropriate.
+A symbol should be in a module that matches its functional domain and architectural role.
+
+## What to Flag
+- **wrong**: A symbol clearly belongs to a different domain than its assigned module.
+  Example: A health check controller assigned to a "Customer API" module.
+  Example: A logging utility assigned to a "Sales Service" module.
+- **suspect**: The assignment is questionable but not clearly wrong.
+  Example: A shared validation helper in a single-entity module.
+- **correct**: The assignment makes sense given the symbol's code and the module's purpose.
+
+## Output Format
+Respond with **only** a CSV table:
+
+\`\`\`csv
+definition_id,verdict,reason,suggested_module_path
+100,correct,"controller handles customer CRUD operations which matches the Customer API module",
+207,wrong,"health check endpoint is infrastructure not customer-specific — belongs in a system/infrastructure module",project.backend.infrastructure
+88,suspect,"generic error handler could be in shared utilities instead of a single entity module",
+\`\`\`
+
+## Columns
+- **definition_id**: numeric ID of the definition
+- **verdict**: "correct", "wrong", or "suspect"
+- **reason**: brief explanation
+- **suggested_module_path**: (optional) better module path if verdict is wrong/suspect — leave empty if correct
+
+## Guidelines
+- Focus on domain coherence: does the symbol's purpose match the module's domain?
+- Consider file path as supporting evidence but rely primarily on the source code
+- Infrastructure/cross-cutting concerns (health checks, logging, config, error handling) should NOT be in entity-specific modules
+- Entity-specific code (customer controllers, vehicle services) should be in entity-matching modules
+- Only flag clear mismatches — when in doubt, mark as "correct"`;
+}
+
+export function buildModuleAssignmentVerifyUserPrompt(
+  items: Array<{
+    defId: number;
+    defName: string;
+    defKind: string;
+    filePath: string;
+    sourceCode: string;
+    moduleName: string;
+    modulePath: string;
+  }>,
+  modules: Array<{ fullPath: string; name: string; description: string | null }>
+): string {
+  const parts: string[] = [];
+
+  parts.push('## Available Modules');
+  parts.push('');
+  for (const mod of modules.slice(0, 50)) {
+    const desc = mod.description ? ` - ${mod.description}` : '';
+    parts.push(`- ${mod.fullPath}: ${mod.name}${desc}`);
+  }
+  parts.push('');
+
+  parts.push(`## Assignments to Verify (${items.length})`);
+  parts.push('');
+
+  for (const item of items) {
+    parts.push(`### #${item.defId}: ${item.defName} (${item.defKind})`);
+    parts.push(`File: ${item.filePath}`);
+    parts.push(`Assigned to: ${item.modulePath} (${item.moduleName})`);
+    parts.push('');
+    parts.push('Source Code:');
+    parts.push('```typescript');
+    parts.push(item.sourceCode);
+    parts.push('```');
+    parts.push('');
+  }
+
+  parts.push('Verify each assignment. Output CSV with one row per definition.');
+
+  return parts.join('\n');
+}
+
 export function buildRelationshipVerifyUserPrompt(
   groups: Array<{
     fromId: number;

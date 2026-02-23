@@ -11,13 +11,15 @@ import chalk from 'chalk';
 import type { IndexDatabase } from '../../../db/database.js';
 import { openDatabase } from '../../_shared/index.js';
 
+export type LlmOptions = { showLlmRequests: boolean; showLlmResponses: boolean };
+
 export interface LlmContext {
   db: IndexDatabase;
   isJson: boolean;
   dryRun: boolean;
   verbose: boolean;
   model: string;
-  llmOptions: { showLlmRequests: boolean; showLlmResponses: boolean };
+  llmOptions: LlmOptions;
 }
 
 export abstract class BaseLlmCommand extends Command {

@@ -551,6 +551,53 @@ export class DependencyRepository {
   }
 
   /**
+   * Get module-scope method calls with receiver info and referenced file path.
+   * Used to detect Express mount calls like `app.use('/api/auth', authRouter)`.
+   * Extends getOrphanModuleScopeUsages() with is_method_call, receiver_name,
+   * and the referenced definition's file path.
+   */
+  getModuleScopeMountCalls(): Array<{
+    filePath: string;
+    usageLine: number;
+    receiverName: string;
+    symbolName: string;
+    referencedDefId: number;
+    referencedFilePath: string;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT DISTINCT
+        f.path AS filePath,
+        u.line AS usageLine,
+        u.receiver_name AS receiverName,
+        s.local_name AS symbolName,
+        dep_def.id AS referencedDefId,
+        dep_f.path AS referencedFilePath
+      FROM usages u
+      JOIN symbols s ON u.symbol_id = s.id
+      JOIN definitions dep_def ON s.definition_id = dep_def.id
+      JOIN imports i ON s.reference_id = i.id
+      JOIN files f ON i.from_file_id = f.id
+      JOIN files dep_f ON dep_def.file_id = dep_f.id
+      WHERE u.is_method_call = 1
+        AND u.receiver_name IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM definitions d
+          WHERE d.file_id = f.id
+            AND d.line <= u.line AND u.line <= d.end_line
+        )
+      ORDER BY f.path, u.line
+    `);
+    return stmt.all() as Array<{
+      filePath: string;
+      usageLine: number;
+      receiverName: string;
+      symbolName: string;
+      referencedDefId: number;
+      referencedFilePath: string;
+    }>;
+  }
+
+  /**
    * Get import dependency graph data for D3 visualization
    */
   getImportGraph(): {

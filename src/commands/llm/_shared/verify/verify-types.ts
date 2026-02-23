@@ -27,7 +27,8 @@ export interface VerificationIssue {
       | 'reannotate-definition'
       | 'reannotate-mistagged-domain'
       | 'harmonize-domain'
-      | 'purpose-role-mismatch';
+      | 'purpose-role-mismatch'
+      | 'reassign-module';
     targetDefinitionId?: number;
     expectedType?: string;
     interactionId?: number;
