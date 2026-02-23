@@ -5,7 +5,11 @@ import chalk from 'chalk';
 import { IndexDatabase } from '../db/database-facade.js';
 import { detectChanges } from '../sync/change-detector.js';
 import { applySync } from '../sync/incremental-indexer.js';
+import ContractsExtract from './contracts/extract.js';
+import FeaturesGenerate from './features/generate.js';
+import FlowsGenerate from './flows/generate.js';
 import InteractionsGenerate from './interactions/generate.js';
+import ModulesGenerate from './modules/generate.js';
 import RelationshipsAnnotate from './relationships/annotate.js';
 import SymbolsAnnotate from './symbols/annotate.js';
 
@@ -203,6 +207,29 @@ export default class Sync extends Command {
         this.warn(chalk.yellow(`  Relationship annotation warning: ${msg}`));
       }
 
+      // Step 3: Assign new definitions to existing modules
+      if (result.unassignedCount > 0 && result.interactionsRecalculated) {
+        try {
+          this.log(chalk.gray('  Assigning new definitions to modules...'));
+          await ModulesGenerate.run(['--incremental', '--phase', 'assign', '--deepen-threshold', '0', ...llmFlags]);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          this.warn(chalk.yellow(`  Module assignment warning: ${msg}`));
+        }
+      }
+
+      // Step 4: Extract contracts (if modules exist)
+      if (result.interactionsRecalculated) {
+        try {
+          this.log(chalk.gray('  Extracting contracts...'));
+          await ContractsExtract.run(['--force', ...llmFlags]);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          this.warn(chalk.yellow(`  Contract extraction warning: ${msg}`));
+        }
+      }
+
+      // Step 5: Generate interactions
       try {
         this.log(chalk.gray('  Generating interactions...'));
         await InteractionsGenerate.run(['--force', ...llmFlags]);
@@ -211,10 +238,30 @@ export default class Sync extends Command {
         this.warn(chalk.yellow(`  Interaction generation warning: ${msg}`));
       }
 
+      // Step 6: Regenerate flows
+      if (result.interactionsRecalculated) {
+        try {
+          this.log(chalk.gray('  Regenerating flows...'));
+          await FlowsGenerate.run(['--force', ...llmFlags]);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          this.warn(chalk.yellow(`  Flow generation warning: ${msg}`));
+        }
+
+        // Step 7: Regenerate features
+        try {
+          this.log(chalk.gray('  Regenerating features...'));
+          await FeaturesGenerate.run(['--force', ...llmFlags]);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          this.warn(chalk.yellow(`  Feature generation warning: ${msg}`));
+        }
+      }
+
       this.log(chalk.green.bold('Enrichment complete.'));
     } else if (result.staleMetadataCount > 0 || result.unassignedCount > 0) {
       this.log('');
-      this.log(chalk.gray("Run 'squint sync --enrich' to update LLM annotations for stale items."));
+      this.log(chalk.gray("Run 'squint sync --enrich' to update annotations, modules, and flows."));
     }
   }
 

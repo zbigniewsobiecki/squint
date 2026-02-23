@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseAnnotationVerifyCsv,
+  parseModuleAssignmentVerifyCsv,
   parseRelationshipVerifyCsv,
   verdictToSeverity,
 } from '../../../src/commands/llm/_shared/verify/content-verifier.js';
@@ -93,6 +94,79 @@ abc,2,wrong,Bad
   });
 
   // ============================================================
+  // parseModuleAssignmentVerifyCsv
+  // ============================================================
+
+  describe('parseModuleAssignmentVerifyCsv', () => {
+    it('well-formed CSV with header and suggested paths', () => {
+      const csv = `definition_id,verdict,reason,suggested_module_path
+100,correct,"controller handles customer CRUD operations",
+207,wrong,"health check endpoint is infrastructure not customer-specific",project.backend.infrastructure
+88,suspect,"generic error handler could be in shared utilities",`;
+      const result = parseModuleAssignmentVerifyCsv(csv);
+      expect(result).toHaveLength(3);
+      expect(result[0]).toEqual({
+        definitionId: 100,
+        verdict: 'correct',
+        reason: 'controller handles customer CRUD operations',
+        suggestedModulePath: null,
+      });
+      expect(result[1]).toEqual({
+        definitionId: 207,
+        verdict: 'wrong',
+        reason: 'health check endpoint is infrastructure not customer-specific',
+        suggestedModulePath: 'project.backend.infrastructure',
+      });
+      expect(result[2]).toEqual({
+        definitionId: 88,
+        verdict: 'suspect',
+        reason: 'generic error handler could be in shared utilities',
+        suggestedModulePath: null,
+      });
+    });
+
+    it('minimal CSV without suggested_module_path column', () => {
+      const csv = `definition_id,verdict,reason
+42,wrong,Misassigned symbol`;
+      const result = parseModuleAssignmentVerifyCsv(csv);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({
+        definitionId: 42,
+        verdict: 'wrong',
+        reason: 'Misassigned symbol',
+        suggestedModulePath: null,
+      });
+    });
+
+    it('invalid definition ID → skipped', () => {
+      const csv = `definition_id,verdict,reason
+abc,wrong,Bad`;
+      const result = parseModuleAssignmentVerifyCsv(csv);
+      expect(result).toHaveLength(0);
+    });
+
+    it('missing columns → skipped', () => {
+      const csv = `definition_id,verdict,reason
+1,wrong`;
+      const result = parseModuleAssignmentVerifyCsv(csv);
+      expect(result).toHaveLength(0);
+    });
+
+    it('empty content', () => {
+      const result = parseModuleAssignmentVerifyCsv('');
+      expect(result).toHaveLength(0);
+    });
+
+    it('normalizes verdict to lowercase', () => {
+      const csv = `definition_id,verdict,reason
+10,WRONG,uppercase verdict`;
+      const result = parseModuleAssignmentVerifyCsv(csv);
+      expect(result).toHaveLength(1);
+      expect(result[0].verdict).toBe('wrong');
+    });
+  });
+
+  // ============================================================
   // verdictToSeverity
   // ============================================================
 
@@ -169,6 +243,24 @@ abc,2,wrong,Bad
         fixData: { action: 'harmonize-domain' },
       };
       expect(issue.fixData?.action).toBe('harmonize-domain');
+    });
+
+    it('reassign-module action compiles and is valid', () => {
+      const issue: VerificationIssue = {
+        definitionId: 10,
+        definitionName: 'healthController',
+        filePath: '/src/controllers/health.ts',
+        severity: 'error',
+        category: 'wrong-module-assignment',
+        message: 'health check is infrastructure, not customer-specific',
+        fixData: {
+          action: 'reassign-module',
+          reason: 'health check is infrastructure, not customer-specific',
+          targetModuleId: 5,
+        },
+      };
+      expect(issue.fixData?.action).toBe('reassign-module');
+      expect(issue.fixData?.targetModuleId).toBe(5);
     });
   });
 });
