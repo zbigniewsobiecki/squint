@@ -7,6 +7,8 @@ import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command
 import { extractCsvContent, parseRow, splitCsvLines } from '../llm/_shared/csv-utils.js';
 import { completeWithLogging, getErrorMessage } from '../llm/_shared/llm-utils.js';
 import { computeProcessGroups, getProcessGroupLabel } from '../llm/_shared/process-utils.js';
+import { resolveContractKeys } from './_shared/key-resolver.js';
+import { resolveMounts } from './_shared/mount-resolver.js';
 
 /**
  * Boundary role patterns for candidate detection.
@@ -126,6 +128,17 @@ export default class ContractsExtract extends BaseLlmCommand {
       return a.filePath.localeCompare(b.filePath);
     });
 
+    // Resolve Express mount prefixes and client baseURLs for contract key normalization
+    const mountResult = await resolveMounts(db);
+    if (!isJson && verbose) {
+      if (mountResult.routeMounts.size > 0) {
+        this.log(chalk.gray(`Detected ${mountResult.routeMounts.size} route mount prefix(es)`));
+      }
+      if (mountResult.clientBaseUrl) {
+        this.log(chalk.gray(`Detected client baseURL: ${mountResult.clientBaseUrl}`));
+      }
+    }
+
     // Step 2: Process in batches via LLM
     let totalContracts = 0;
     let totalParticipants = 0;
@@ -140,8 +153,9 @@ export default class ContractsExtract extends BaseLlmCommand {
         const results = await this.extractBatch(batch, db, model, isJson, batchIdx, totalBatches);
 
         if (!dryRun) {
-          for (const { definitionId, moduleId, contracts } of results) {
-            for (const entry of contracts) {
+          for (const { definitionId, moduleId, contracts, filePath: defFilePath } of results) {
+            const resolvedContracts = resolveContractKeys(contracts, defFilePath, mountResult);
+            for (const entry of resolvedContracts) {
               const normalizedKey = sanitizeNormalizedKey(entry.normalizedKey ?? entry.key);
               const contractId = db.contracts.upsertContract(entry.protocol, entry.key, normalizedKey, entry.details);
               db.contracts.addParticipant(contractId, definitionId, moduleId, entry.role);
@@ -152,7 +166,7 @@ export default class ContractsExtract extends BaseLlmCommand {
             }
 
             // Also store raw JSON as definition_metadata for annotation pipeline compatibility
-            db.metadata.set(definitionId, 'contracts', JSON.stringify(contracts));
+            db.metadata.set(definitionId, 'contracts', JSON.stringify(resolvedContracts));
           }
 
           // Count distinct contracts
@@ -286,7 +300,7 @@ export default class ContractsExtract extends BaseLlmCommand {
     isJson: boolean,
     batchIdx: number,
     totalBatches: number
-  ): Promise<Array<{ definitionId: number; moduleId: number | null; contracts: ContractEntry[] }>> {
+  ): Promise<Array<{ definitionId: number; moduleId: number | null; filePath: string; contracts: ContractEntry[] }>> {
     const systemPrompt = `You extract boundary communication contracts from code definitions.
 A contract is any cross-process communication channel — HTTP, WebSocket, gRPC, message queues, pub/sub, events, file I/O, email, CLI invocation, IPC, or any other runtime protocol.
 
@@ -371,8 +385,13 @@ Rules:
   private parseExtractResponse(
     response: string,
     candidates: CandidateDefinition[]
-  ): Array<{ definitionId: number; moduleId: number | null; contracts: ContractEntry[] }> {
-    const results: Array<{ definitionId: number; moduleId: number | null; contracts: ContractEntry[] }> = [];
+  ): Array<{ definitionId: number; moduleId: number | null; filePath: string; contracts: ContractEntry[] }> {
+    const results: Array<{
+      definitionId: number;
+      moduleId: number | null;
+      filePath: string;
+      contracts: ContractEntry[];
+    }> = [];
     const candidateMap = new Map(candidates.map((c) => [c.id, c]));
 
     const csv = extractCsvContent(response);
@@ -413,6 +432,7 @@ Rules:
           results.push({
             definitionId: defId,
             moduleId: candidate.moduleId,
+            filePath: candidate.filePath,
             contracts: validContracts,
           });
         }

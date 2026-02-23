@@ -8,9 +8,12 @@ import { readSourceAsString } from '../../../_shared/index.js';
 import type { LlmContext } from '../base-llm-command.js';
 import { parseCsvWithMapper, safeParseInt } from '../csv-utils.js';
 import { completeWithLogging } from '../llm-utils.js';
+import { isTestFile } from '../module-prompts.js';
 import {
   buildAnnotationVerifySystemPrompt,
   buildAnnotationVerifyUserPrompt,
+  buildModuleAssignmentVerifySystemPrompt,
+  buildModuleAssignmentVerifyUserPrompt,
   buildRelationshipVerifySystemPrompt,
   buildRelationshipVerifyUserPrompt,
 } from './verify-prompts.js';
@@ -316,4 +319,154 @@ export async function verifyRelationshipContent(
       batchesProcessed,
     },
   };
+}
+
+/**
+ * Parse the module assignment verification CSV response (definition_id,verdict,reason,suggested_module_path).
+ */
+export function parseModuleAssignmentVerifyCsv(
+  content: string
+): Array<{ definitionId: number; verdict: string; reason: string; suggestedModulePath: string | null }> {
+  const { items } = parseCsvWithMapper(content, {
+    minColumns: 3,
+    rowMapper: (cols, lineNum, errors) => {
+      const definitionId = safeParseInt(cols[0], 'definition_id', lineNum, errors);
+      if (definitionId === null) return null;
+      return {
+        definitionId,
+        verdict: cols[1].toLowerCase(),
+        reason: cols[2],
+        suggestedModulePath: cols[3] ? cols[3].trim() : null,
+      };
+    },
+  });
+  return items;
+}
+
+/**
+ * Verify module assignment content using LLM (Phase 2).
+ */
+export async function verifyModuleAssignmentContent(
+  db: IndexDatabase,
+  ctx: LlmContext,
+  command: Command,
+  flags: VerifyFlags
+): Promise<ContentVerificationResult> {
+  const issues: VerificationIssue[] = [];
+  const batchSize = flags['batch-size'];
+  const maxIterations = flags['max-iterations'];
+  const systemPrompt = buildModuleAssignmentVerifySystemPrompt();
+
+  // Get all assigned definitions (with their module info)
+  const allModulesWithMembers = db.modules.getAllWithMembers();
+  const testModuleIds = db.modules.getTestModuleIds();
+
+  // Flatten to (definition, module) pairs, skip test modules and test files
+  const assignments: Array<{
+    defId: number;
+    defName: string;
+    defKind: string;
+    filePath: string;
+    moduleId: number;
+    moduleName: string;
+    modulePath: string;
+  }> = [];
+
+  for (const mod of allModulesWithMembers) {
+    if (testModuleIds.has(mod.id)) continue;
+    for (const member of mod.members) {
+      if (isTestFile(member.filePath)) continue;
+      assignments.push({
+        defId: member.definitionId,
+        defName: member.name,
+        defKind: member.kind,
+        filePath: member.filePath,
+        moduleId: mod.id,
+        moduleName: mod.name,
+        modulePath: mod.fullPath,
+      });
+    }
+  }
+
+  let checked = 0;
+  let batchesProcessed = 0;
+
+  for (let offset = 0; offset < assignments.length; offset += batchSize) {
+    if (maxIterations > 0 && batchesProcessed >= maxIterations) break;
+
+    const batch = assignments.slice(offset, offset + batchSize);
+    const itemsForPrompt: Array<{
+      defId: number;
+      defName: string;
+      defKind: string;
+      filePath: string;
+      sourceCode: string;
+      moduleName: string;
+      modulePath: string;
+    }> = [];
+
+    for (const item of batch) {
+      const def = db.definitions.getById(item.defId);
+      if (!def) continue;
+      const sourceCode = await readSourceAsString(db.resolveFilePath(item.filePath), def.line, def.endLine);
+      itemsForPrompt.push({ ...item, sourceCode });
+    }
+
+    if (itemsForPrompt.length === 0) continue;
+
+    // Get module tree for context
+    const modules = db.modules.getAll();
+    const userPrompt = buildModuleAssignmentVerifyUserPrompt(itemsForPrompt, modules);
+
+    try {
+      const response = await completeWithLogging({
+        model: ctx.model,
+        systemPrompt,
+        userPrompt,
+        temperature: 0,
+        command,
+        isJson: ctx.isJson,
+        iteration: { current: batchesProcessed + 1, max: maxIterations },
+      });
+
+      const parsed = parseModuleAssignmentVerifyCsv(response);
+      for (const row of parsed) {
+        const severity = verdictToSeverity(row.verdict);
+        if (!severity) continue;
+
+        const matchedItem = batch.find((b) => b.defId === row.definitionId);
+        // Resolve suggested module path to an ID
+        let suggestedModuleId: number | undefined;
+        if (row.suggestedModulePath) {
+          const targetMod = db.modules.getByPath(row.suggestedModulePath);
+          if (targetMod) suggestedModuleId = targetMod.id;
+        }
+
+        issues.push({
+          definitionId: row.definitionId,
+          definitionName: matchedItem?.defName,
+          filePath: matchedItem?.filePath,
+          line: undefined,
+          severity,
+          category: 'wrong-module-assignment',
+          message: row.reason,
+          fixData:
+            severity === 'error'
+              ? {
+                  action: 'reassign-module' as const,
+                  reason: row.reason,
+                  targetModuleId: suggestedModuleId,
+                }
+              : undefined,
+        });
+      }
+    } catch {
+      // LLM error, continue
+    }
+
+    checked += itemsForPrompt.length;
+    batchesProcessed++;
+  }
+
+  return { issues, stats: { checked, issuesFound: issues.length, batchesProcessed } };
 }
