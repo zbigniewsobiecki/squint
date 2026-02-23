@@ -1,3 +1,5 @@
+## [1.10.2](https://github.com/zbigniewsobiecki/squint/compare/v1.10.1...v1.10.2) (2026-02-23)
+
 ## [1.10.1](https://github.com/zbigniewsobiecki/squint/compare/v1.10.0...v1.10.1) (2026-02-20)
 
 ## [1.10.0](https://github.com/zbigniewsobiecki/squint/compare/v1.9.1...v1.10.0) (2026-02-20)
