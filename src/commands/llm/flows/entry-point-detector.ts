@@ -195,7 +195,57 @@ Identify all user-facing actions for each entry point module. A screen component
 
     logLlmResponse(this.command, 'classifyModuleMembers', response, logOptions);
 
-    return this.parseMemberClassificationCSV(response, candidates);
+    const parsed = this.parseMemberClassificationCSV(response, candidates);
+    return this.backfillMissingViewActions(parsed, candidates);
+  }
+
+  /**
+   * Structural backfill: if a module has mutation entry points (create/update/delete)
+   * but NO view entry point, add a view entry for the first mutation entry point.
+   * This ensures every page with CRUD actions also gets a view flow traced.
+   */
+  backfillMissingViewActions(
+    classifications: MemberClassification[],
+    _candidates: ModuleCandidate[]
+  ): MemberClassification[] {
+    // Group classifications by module
+    const byModule = new Map<number, MemberClassification[]>();
+    for (const mc of classifications) {
+      const list = byModule.get(mc.moduleId) ?? [];
+      list.push(mc);
+      byModule.set(mc.moduleId, list);
+    }
+
+    const additions: MemberClassification[] = [];
+
+    for (const [moduleId, mcs] of byModule) {
+      // Must have at least one entry-point mutation action (not view/process)
+      const hasMutation = mcs.some(
+        (mc) => mc.isEntryPoint && mc.actionType && mc.actionType !== 'view' && mc.actionType !== 'process'
+      );
+      if (!hasMutation) continue;
+
+      // Must NOT already have a view action
+      const hasViewAction = mcs.some((mc) => mc.isEntryPoint && mc.actionType === 'view');
+      if (hasViewAction) continue;
+
+      // Backfill: add a view entry for the first mutation entry point
+      const primaryEp = mcs.find((mc) => mc.isEntryPoint && mc.actionType !== 'view');
+      if (!primaryEp) continue;
+
+      additions.push({
+        moduleId,
+        memberName: primaryEp.memberName,
+        isEntryPoint: true,
+        actionType: 'view',
+        targetEntity: primaryEp.targetEntity,
+        stakeholder: primaryEp.stakeholder ?? 'user',
+        traceFromDefinition: null, // view traces from the page/definition itself
+        reason: 'Backfill: entry point has mutations but no view action',
+      });
+    }
+
+    return [...classifications, ...additions];
   }
 
   private buildClassificationSystemPrompt(): string {
@@ -251,6 +301,21 @@ Frontend flows trace frontend→backend boundary crossings.
 Backend entry point flows trace the backend's OWN internal chain (controller→service→repository).
 Both are needed for complete flow coverage.
 
+## CRITICAL: Backend API List vs Detail Endpoints
+For backend controller/route modules, distinguish list and detail operations:
+- getAll, findAll, list, index → action_type="view", target_entity="{entity}-list"
+- getById, findById, findOne, show, get (with ID param) → action_type="view", target_entity="{entity}-detail"
+- getStats, getReport, etc. → action_type="view", target_entity="{entity}"
+
+Example for a backend controller module with members [getAll, getById, create, update, delete]:
+\`\`\`csv
+55,getAll,true,view,vehicle-list,external,,Lists all vehicles
+55,getById,true,view,vehicle-detail,external,,Gets single vehicle by ID
+55,create,true,create,vehicle,external,,Creates new vehicle
+55,update,true,update,vehicle,external,,Updates existing vehicle
+55,delete,true,delete,vehicle,external,,Deletes vehicle
+\`\`\`
+
 ## CRITICAL: Multi-Action Detection
 For EACH entry point module, examine ALL its outgoing calls in the Interactions section.
 If a page/screen calls mutation hooks (create, update, delete), it has MULTIPLE action types.
@@ -258,6 +323,13 @@ You MUST emit a SEPARATE ROW for each action type.
 The trace_from column tells us which specific hook to follow for each action.
 
 Missing even one action type means an entire user flow goes undetected.
+
+## CRITICAL: Every Page/Screen MUST Have a View Action
+If a screen/page module is classified as an entry point (for any action type), it MUST also
+have at least one "view" action row. Every page renders data — that is a view action.
+If the page shows a list, use target_entity="{entity}-list".
+If it shows a single record, use target_entity="{entity}-detail".
+Do NOT omit the view action just because mutation actions are present.
 
 ## Output Format
 \`\`\`csv

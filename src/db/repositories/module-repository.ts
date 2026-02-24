@@ -231,6 +231,8 @@ export class ModuleRepository {
         d.line,
         d.end_line as endLine,
         d.is_exported as isExported,
+        d.extends_name as extendsName,
+        (SELECT COUNT(*) FROM definitions d2 WHERE d2.extends_name = d.name) as extendedByCount,
         MAX(CASE WHEN dm.key = 'purpose' THEN dm.value END) as purpose,
         MAX(CASE WHEN dm.key = 'domain' THEN dm.value END) as domain,
         MAX(CASE WHEN dm.key = 'role' THEN dm.value END) as role
@@ -250,6 +252,8 @@ export class ModuleRepository {
       line: number;
       endLine: number;
       isExported: number;
+      extendsName: string | null;
+      extendedByCount: number;
       purpose: string | null;
       domain: string | null;
       role: string | null;
@@ -266,6 +270,8 @@ export class ModuleRepository {
       purpose: row.purpose,
       domain: row.domain ? (JSON.parse(row.domain) as string[]) : null,
       role: row.role,
+      extendsName: row.extendsName ?? null,
+      extendedByCount: row.extendedByCount ?? 0,
     }));
   }
 
