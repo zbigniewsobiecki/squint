@@ -419,6 +419,8 @@ export interface AnnotatedSymbolInfo {
   purpose: string | null;
   domain: string[] | null;
   role: string | null;
+  extendsName: string | null;
+  extendedByCount: number;
 }
 
 export interface AnnotatedEdgeInfo {

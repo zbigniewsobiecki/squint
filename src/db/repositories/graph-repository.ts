@@ -190,6 +190,8 @@ export class GraphRepository {
         purpose: meta.purpose ?? null,
         domain: domains,
         role: meta.role ?? null,
+        extendsName: def.extendsName ?? null,
+        extendedByCount: 0,
       });
     }
 

@@ -203,6 +203,13 @@ describe('module-prompts', () => {
       const prompt = buildAssignmentSystemPrompt();
       expect(prompt).toContain('exactly one module');
     });
+
+    it('includes shared/base class assignment rule', () => {
+      const prompt = buildAssignmentSystemPrompt();
+      expect(prompt).toContain('Shared / Base Class Rule');
+      expect(prompt).toContain('Extended by: N class(es)');
+      expect(prompt).toContain('PARENT or BRANCH module');
+    });
   });
 
   describe('formatModuleTreeForPrompt', () => {
@@ -273,6 +280,8 @@ describe('module-prompts', () => {
           purpose: 'Manages users',
           domain: ['auth', 'user'],
           role: 'service',
+          extendsName: null,
+          extendedByCount: 0,
         },
       ];
 
@@ -290,7 +299,17 @@ describe('module-prompts', () => {
     it('omits null purpose, domain, role', () => {
       const modules = [makeModule({ fullPath: 'project', name: 'Project', depth: 0 })];
       const symbols: SymbolForAssignment[] = [
-        { id: 1, name: 'Foo', kind: 'function', filePath: '/foo.ts', purpose: null, domain: null, role: null },
+        {
+          id: 1,
+          name: 'Foo',
+          kind: 'function',
+          filePath: '/foo.ts',
+          purpose: null,
+          domain: null,
+          role: null,
+          extendsName: null,
+          extendedByCount: 0,
+        },
       ];
 
       const prompt = buildAssignmentUserPrompt(modules, symbols);
@@ -302,11 +321,63 @@ describe('module-prompts', () => {
     it('omits empty domain array', () => {
       const modules = [makeModule({ fullPath: 'project', name: 'Project', depth: 0 })];
       const symbols: SymbolForAssignment[] = [
-        { id: 1, name: 'Foo', kind: 'function', filePath: '/foo.ts', purpose: null, domain: [], role: null },
+        {
+          id: 1,
+          name: 'Foo',
+          kind: 'function',
+          filePath: '/foo.ts',
+          purpose: null,
+          domain: [],
+          role: null,
+          extendsName: null,
+          extendedByCount: 0,
+        },
       ];
 
       const prompt = buildAssignmentUserPrompt(modules, symbols);
       expect(prompt).not.toContain('Domains:');
+    });
+
+    it('includes Extends and Extended by lines when present', () => {
+      const modules = [makeModule({ fullPath: 'project', name: 'Project', depth: 0 })];
+      const symbols: SymbolForAssignment[] = [
+        {
+          id: 10,
+          name: 'BaseService',
+          kind: 'class',
+          filePath: '/src/services/base.ts',
+          purpose: 'Base service',
+          domain: null,
+          role: 'service',
+          extendsName: 'EventEmitter',
+          extendedByCount: 4,
+        },
+      ];
+
+      const prompt = buildAssignmentUserPrompt(modules, symbols);
+      expect(prompt).toContain('Extends: EventEmitter');
+      expect(prompt).toContain('Extended by: 4 class(es) in the codebase');
+    });
+
+    it('omits Extends and Extended by lines when null/0', () => {
+      const modules = [makeModule({ fullPath: 'project', name: 'Project', depth: 0 })];
+      const symbols: SymbolForAssignment[] = [
+        {
+          id: 1,
+          name: 'Helper',
+          kind: 'function',
+          filePath: '/helper.ts',
+          purpose: null,
+          domain: null,
+          role: null,
+          extendsName: null,
+          extendedByCount: 0,
+        },
+      ];
+
+      const prompt = buildAssignmentUserPrompt(modules, symbols);
+      expect(prompt).not.toContain('Extends:');
+      expect(prompt).not.toContain('Extended by:');
     });
   });
 
@@ -323,6 +394,8 @@ describe('module-prompts', () => {
         purpose: 'Does stuff',
         domain: ['auth'],
         role: 'service',
+        extendsName: null,
+        extendedByCount: 0,
       };
 
       const result = toSymbolForAssignment(sym);
@@ -335,7 +408,49 @@ describe('module-prompts', () => {
         purpose: 'Does stuff',
         domain: ['auth'],
         role: 'service',
+        extendsName: null,
+        extendedByCount: 0,
       });
+    });
+
+    it('passes through extendsName and extendedByCount', () => {
+      const sym = {
+        id: 10,
+        name: 'BaseService',
+        kind: 'class',
+        filePath: '/src/services/base.ts',
+        line: 1,
+        endLine: 50,
+        isExported: true,
+        purpose: 'Base service class',
+        domain: ['infrastructure'],
+        role: 'service',
+        extendsName: 'EventEmitter',
+        extendedByCount: 4,
+      };
+
+      const result = toSymbolForAssignment(sym);
+      expect(result.extendsName).toBe('EventEmitter');
+      expect(result.extendedByCount).toBe(4);
+    });
+
+    it('defaults extendsName to null and extendedByCount to 0 when undefined', () => {
+      const sym = {
+        id: 10,
+        name: 'Helper',
+        kind: 'function',
+        filePath: '/src/utils/helper.ts',
+        line: 1,
+        endLine: 10,
+        isExported: true,
+        purpose: null,
+        domain: null,
+        role: null,
+      } as any; // simulate missing fields
+
+      const result = toSymbolForAssignment(sym);
+      expect(result.extendsName).toBeNull();
+      expect(result.extendedByCount).toBe(0);
     });
   });
 

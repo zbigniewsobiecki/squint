@@ -497,6 +497,156 @@ module_id,member_name,is_entry_point,action_type,target_entity,stakeholder,trace
     });
   });
 
+  describe('backfillMissingViewActions', () => {
+    const detector = createDetector();
+    const backfill = (classifications: any[], candidates: ModuleCandidate[]) =>
+      (detector as any).backfillMissingViewActions(classifications, candidates);
+
+    const emptyCandidates: ModuleCandidate[] = [];
+
+    it('adds view action when module has mutation entry points but no view', () => {
+      const classifications = [
+        {
+          moduleId: 1,
+          memberName: 'Sales',
+          isEntryPoint: true,
+          actionType: 'create',
+          targetEntity: 'sale',
+          stakeholder: 'user',
+          traceFromDefinition: 'useCreateSale',
+          reason: 'Creates sale',
+        },
+        {
+          moduleId: 1,
+          memberName: 'Sales',
+          isEntryPoint: true,
+          actionType: 'delete',
+          targetEntity: 'sale',
+          stakeholder: 'user',
+          traceFromDefinition: 'useDeleteSale',
+          reason: 'Deletes sale',
+        },
+      ];
+
+      const result = backfill(classifications, emptyCandidates);
+      expect(result).toHaveLength(3);
+
+      const viewAction = result.find((r: any) => r.actionType === 'view');
+      expect(viewAction).toBeDefined();
+      expect(viewAction?.moduleId).toBe(1);
+      expect(viewAction?.memberName).toBe('Sales');
+      expect(viewAction?.isEntryPoint).toBe(true);
+      expect(viewAction?.targetEntity).toBe('sale');
+      expect(viewAction?.stakeholder).toBe('user');
+      expect(viewAction?.traceFromDefinition).toBeNull();
+      expect(viewAction?.reason).toContain('Backfill');
+    });
+
+    it('does not add view action when module already has one', () => {
+      const classifications = [
+        {
+          moduleId: 1,
+          memberName: 'Customers',
+          isEntryPoint: true,
+          actionType: 'view',
+          targetEntity: 'customer-list',
+          stakeholder: 'user',
+          traceFromDefinition: null,
+          reason: 'View list',
+        },
+        {
+          moduleId: 1,
+          memberName: 'Customers',
+          isEntryPoint: true,
+          actionType: 'create',
+          targetEntity: 'customer',
+          stakeholder: 'user',
+          traceFromDefinition: 'useCreateCustomer',
+          reason: 'Creates customer',
+        },
+      ];
+
+      const result = backfill(classifications, emptyCandidates);
+      expect(result).toHaveLength(2); // no change
+    });
+
+    it('does not backfill when module has only process actions and no view', () => {
+      const classifications = [
+        {
+          moduleId: 1,
+          memberName: 'Login',
+          isEntryPoint: true,
+          actionType: 'process',
+          targetEntity: 'auth',
+          stakeholder: 'user',
+          traceFromDefinition: null,
+          reason: 'Login process',
+        },
+      ];
+
+      const result = backfill(classifications, emptyCandidates);
+      expect(result).toHaveLength(1); // no change — process-only doesn't trigger backfill
+    });
+
+    it('does not backfill when module has no entry points', () => {
+      const classifications = [
+        {
+          moduleId: 1,
+          memberName: 'HelperUtil',
+          isEntryPoint: false,
+          actionType: null,
+          targetEntity: null,
+          stakeholder: null,
+          traceFromDefinition: null,
+          reason: 'Internal utility',
+        },
+      ];
+
+      const result = backfill(classifications, emptyCandidates);
+      expect(result).toHaveLength(1); // no change
+    });
+
+    it('inherits targetEntity and stakeholder from existing mutation entry', () => {
+      const classifications = [
+        {
+          moduleId: 5,
+          memberName: 'VehiclesController',
+          isEntryPoint: true,
+          actionType: 'update',
+          targetEntity: 'vehicle',
+          stakeholder: 'external',
+          traceFromDefinition: null,
+          reason: 'Updates vehicle',
+        },
+      ];
+
+      const result = backfill(classifications, emptyCandidates);
+      const viewAction = result.find((r: any) => r.actionType === 'view');
+      expect(viewAction).toBeDefined();
+      expect(viewAction?.targetEntity).toBe('vehicle');
+      expect(viewAction?.stakeholder).toBe('external');
+    });
+
+    it('defaults stakeholder to user when mutation has null stakeholder', () => {
+      const classifications = [
+        {
+          moduleId: 3,
+          memberName: 'ItemList',
+          isEntryPoint: true,
+          actionType: 'delete',
+          targetEntity: 'item',
+          stakeholder: null,
+          traceFromDefinition: null,
+          reason: 'Deletes item',
+        },
+      ];
+
+      const result = backfill(classifications, emptyCandidates);
+      const viewAction = result.find((r: any) => r.actionType === 'view');
+      expect(viewAction?.stakeholder).toBe('user');
+    });
+  });
+
   describe('buildModuleContext', () => {
     it('annotates modules behind HTTP boundaries', () => {
       const detector = createDetector();
@@ -560,6 +710,23 @@ module_id,member_name,is_entry_point,action_type,target_entity,stakeholder,trace
 
       const result = buildContext(candidates); // No boundary set
       expect(result).not.toContain('⚠️');
+    });
+  });
+
+  describe('buildClassificationSystemPrompt', () => {
+    it('includes backend API list vs detail endpoint guidance', () => {
+      const detector = createDetector();
+      const prompt = (detector as any).buildClassificationSystemPrompt();
+      expect(prompt).toContain('Backend API List vs Detail Endpoints');
+      expect(prompt).toContain('getAll, findAll, list, index');
+      expect(prompt).toContain('getById, findById, findOne, show');
+    });
+
+    it('includes mandatory view action rule', () => {
+      const detector = createDetector();
+      const prompt = (detector as any).buildClassificationSystemPrompt();
+      expect(prompt).toContain('Every Page/Screen MUST Have a View Action');
+      expect(prompt).toContain('Do NOT omit the view action just because mutation actions are present');
     });
   });
 });

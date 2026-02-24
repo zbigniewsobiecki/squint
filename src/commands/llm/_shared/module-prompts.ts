@@ -180,6 +180,8 @@ export interface SymbolForAssignment {
   purpose: string | null;
   domain: string[] | null;
   role: string | null;
+  extendsName: string | null;
+  extendedByCount: number;
 }
 
 /**
@@ -212,6 +214,13 @@ assignment,123,project.shared.utils
 - Prefer more specific modules over general ones
 - Group related symbols together
 - Consider the file path as a hint but prioritize functionality
+
+## Shared / Base Class Rule
+- If a class is "Extended by: N class(es)" (where N >= 2), it is a shared base class.
+  Assign it to the nearest PARENT or BRANCH module (e.g., project.backend.services)
+  rather than a domain-specific leaf module (e.g., project.backend.services.customers).
+- The rationale: a class extended by multiple domain-specific subclasses is cross-cutting
+  infrastructure and should not be assigned to any single domain.
 
 ## Completeness Requirement
 CRITICAL: Your response MUST contain exactly one assignment row for EVERY symbol listed.
@@ -288,6 +297,12 @@ export function buildAssignmentUserPrompt(
     if (sym.role) {
       parts.push(`Role: ${sym.role}`);
     }
+    if (sym.extendsName) {
+      parts.push(`Extends: ${sym.extendsName}`);
+    }
+    if (sym.extendedByCount > 0) {
+      parts.push(`Extended by: ${sym.extendedByCount} class(es) in the codebase`);
+    }
     parts.push('');
   }
 
@@ -311,6 +326,8 @@ export function toSymbolForAssignment(sym: AnnotatedSymbolInfo): SymbolForAssign
     purpose: sym.purpose,
     domain: sym.domain,
     role: sym.role,
+    extendsName: sym.extendsName ?? null,
+    extendedByCount: sym.extendedByCount ?? 0,
   };
 }
 
