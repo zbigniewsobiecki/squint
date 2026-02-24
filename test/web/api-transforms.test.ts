@@ -271,6 +271,31 @@ describe('api-transforms', () => {
       expect(result.flows[0].stepCount).toBe(0);
       expect(result.flows[0].steps).toEqual([]);
     });
+
+    it('includes actionType, targetEntity, and tier in response', () => {
+      db.flows.insert('Typed Flow', 'typed-flow', {
+        actionType: 'create',
+        targetEntity: 'vehicle',
+        tier: 1,
+        stakeholder: 'admin',
+      });
+
+      const result = getFlowsData(db);
+      expect(result.flows).toHaveLength(1);
+      expect(result.flows[0].actionType).toBe('create');
+      expect(result.flows[0].targetEntity).toBe('vehicle');
+      expect(result.flows[0].tier).toBe(1);
+    });
+
+    it('returns null for actionType and targetEntity when not set', () => {
+      db.flows.insert('Plain Flow', 'plain-flow');
+
+      const result = getFlowsData(db);
+      expect(result.flows).toHaveLength(1);
+      expect(result.flows[0].actionType).toBeNull();
+      expect(result.flows[0].targetEntity).toBeNull();
+      expect(result.flows[0].tier).toBe(0);
+    });
   });
 
   // ============================================================
@@ -347,6 +372,22 @@ describe('api-transforms', () => {
       const result = getFlowsDagData(db);
       expect(result.flows).toHaveLength(1);
       expect(result.flows[0].stepCount).toBeGreaterThanOrEqual(1);
+    });
+
+    it('includes actionType, targetEntity, and tier in DAG flow data', () => {
+      db.modules.ensureRoot();
+      db.flows.insert('CRUD Flow', 'crud-flow', {
+        actionType: 'update',
+        targetEntity: 'user',
+        tier: 2,
+      });
+
+      const result = getFlowsDagData(db);
+      const flow = result.flows.find((f) => f.name === 'CRUD Flow');
+      expect(flow).toBeDefined();
+      expect(flow!.actionType).toBe('update');
+      expect(flow!.targetEntity).toBe('user');
+      expect(flow!.tier).toBe(2);
     });
 
     it('flows with definition steps (preferred path)', () => {

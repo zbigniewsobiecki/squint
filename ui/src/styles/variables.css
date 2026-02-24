@@ -55,6 +55,10 @@
   --side-effects-bg: #5a3d2d;
   --side-effects-text: #d4a88c;
 
+  /* Accent blue variants */
+  --accent-blue-bg: rgba(79, 193, 255, 0.12);
+  --accent-blue-border: rgba(79, 193, 255, 0.25);
+
   /* Shadows */
   --shadow-tooltip: 0 2px 8px rgba(0, 0, 0, 0.3);
 

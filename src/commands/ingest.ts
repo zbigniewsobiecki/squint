@@ -8,6 +8,7 @@ import FeaturesGenerate from './features/generate.js';
 import FlowsGenerate from './flows/generate.js';
 import FlowsVerify from './flows/verify.js';
 import InteractionsGenerate from './interactions/generate.js';
+import InteractionsValidate from './interactions/validate.js';
 import InteractionsVerify from './interactions/verify.js';
 import ModulesGenerate from './modules/generate.js';
 import ModulesVerify from './modules/verify.js';
@@ -34,6 +35,7 @@ const STAGE_IDS = [
   'modules-verify',
   'contracts',
   'interactions',
+  'interactions-validate',
   'interactions-verify',
   'flows',
   'flows-verify',
@@ -77,7 +79,7 @@ export default class Ingest extends Command {
     }),
     'max-iterations': Flags.integer({
       description: 'Max iterations for annotation stages',
-      default: 80,
+      default: 200,
     }),
     verbose: Flags.boolean({
       description: 'Verbose output',
@@ -179,7 +181,7 @@ export default class Ingest extends Command {
       {
         id: 'domains-consolidate',
         label: 'Consolidate domains',
-        run: () => DomainsConsolidate.run(['--fix', '-d', dbPath]),
+        run: () => DomainsConsolidate.run(['--fix', ...llmFlags, ...debugFlags]),
       },
       {
         id: 'relationships',
@@ -218,6 +220,11 @@ export default class Ingest extends Command {
         id: 'interactions',
         label: 'Generate interactions',
         run: () => InteractionsGenerate.run(['--verbose', '--force', ...llmFlags, ...debugFlags]),
+      },
+      {
+        id: 'interactions-validate',
+        label: 'Validate interactions (deterministic)',
+        run: () => InteractionsValidate.run(['--fix', '-d', dbPath]),
       },
       {
         id: 'interactions-verify',

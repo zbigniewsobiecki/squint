@@ -30,6 +30,7 @@ import {
   FlowTracer,
   FlowValidator,
   GapFlowGenerator,
+  JourneyBuilder,
   buildFlowTracingContext,
   deduplicateByInteractionOverlap,
 } from '../llm/flows/index.js';
@@ -71,7 +72,7 @@ export default class FlowsGenerate extends BaseLlmCommand {
     }),
     'max-validator-flows': Flags.integer({
       description: 'Maximum new flows the validator can add per pass',
-      default: 30,
+      default: 60,
     }),
   };
 
@@ -367,6 +368,22 @@ export default class FlowsGenerate extends BaseLlmCommand {
     const dedupRemoved = preDedup - enhancedFlows.length;
     if (dedupRemoved > 0) {
       logVerbose(this, `Interaction-overlap dedup removed ${dedupRemoved} flows`, verbose, isJson);
+    }
+
+    // Post-dedup gap flow pass to restore coverage for any interactions lost during dedup
+    const finalCoveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
+    const finalGapFlows = gapFlowGenerator.createGapFlows(finalCoveredIds, interactions);
+    if (finalGapFlows.length > 0) {
+      enhancedFlows.push(...finalGapFlows);
+      logVerbose(this, `Post-dedup gap pass added ${finalGapFlows.length} flows to restore coverage`, verbose, isJson);
+    }
+
+    // Build tier 2 journey flows from tier 1 composites
+    const journeyBuilder = new JourneyBuilder();
+    const journeyFlows = journeyBuilder.buildJourneys(enhancedFlows.filter((f) => f.tier === 1));
+    if (journeyFlows.length > 0) {
+      enhancedFlows.push(...journeyFlows);
+      logVerbose(this, `Built ${journeyFlows.length} tier 2 journey flows`, verbose, isJson);
     }
 
     // Step 7: Persist all tiers (atomics first, then composites with subflow refs)
