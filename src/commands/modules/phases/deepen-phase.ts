@@ -264,7 +264,7 @@ export async function runDeepenPhase(ctx: DeepenPhaseContext): Promise<void> {
 
   // Deterministic fallback: push remaining branch members to children by file/directory cohort
   if (!dryRun) {
-    const fallbackPushed = pushdownBranchMembersFallback(db, isJson, verbose);
+    const fallbackPushed = pushdownBranchMembersFallback(db, command, isJson, verbose);
     if (fallbackPushed > 0) {
       totalRebalanced += fallbackPushed;
     }
@@ -444,7 +444,12 @@ export async function rebalanceAncestorSymbols(ctx: RebalanceContext): Promise<n
  * Deterministic fallback: push direct members of branch modules to their children
  * using file/directory cohort voting. Loops until no more progress.
  */
-export function pushdownBranchMembersFallback(db: IndexDatabase, isJson: boolean, verbose: boolean): number {
+export function pushdownBranchMembersFallback(
+  db: IndexDatabase,
+  command: Command,
+  isJson: boolean,
+  verbose: boolean
+): number {
   let totalPushed = 0;
   let progress = true;
 
@@ -489,8 +494,7 @@ export function pushdownBranchMembersFallback(db: IndexDatabase, isJson: boolean
   }
 
   if (totalPushed > 0 && verbose && !isJson) {
-    db.modules.getChildren; // Placeholder to ensure Command is used
-    console.log(chalk.gray(`  Branch pushdown fallback: ${totalPushed} symbols pushed to children`));
+    command.log(chalk.gray(`  Branch pushdown fallback: ${totalPushed} symbols pushed to children`));
   }
 
   return totalPushed;

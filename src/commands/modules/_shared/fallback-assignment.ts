@@ -2,6 +2,7 @@
  * Deterministic fallback assignment using file/directory cohort voting.
  */
 
+import type { Command } from '@oclif/core';
 import chalk from 'chalk';
 import type { IndexDatabase } from '../../../db/database.js';
 import { buildCohortVotes, findAssignmentTarget, isTestFile } from './cohort-voter.js';
@@ -13,7 +14,12 @@ import { buildCohortVotes, findAssignmentTarget, isTestFile } from './cohort-vot
  *         Walks up parent directories if no match at the immediate level.
  * Test-file guard: test file symbols only assigned to test modules.
  */
-export function assignByFileCohortFallback(db: IndexDatabase, isJson: boolean, verbose: boolean): number {
+export function assignByFileCohortFallback(
+  db: IndexDatabase,
+  command: Command,
+  isJson: boolean,
+  verbose: boolean
+): number {
   const allModulesWithMembers = db.modules.getAllWithMembers();
   const allModules = db.modules.getAll();
   const moduleById = new Map(allModules.map((m) => [m.id, { id: m.id, isTest: m.isTest }]));
@@ -44,11 +50,11 @@ export function assignByFileCohortFallback(db: IndexDatabase, isJson: boolean, v
   }
 
   if (verbose && !isJson) {
-    console.log(chalk.gray('  Deterministic fallback:'));
-    console.log(chalk.gray(`    Tier 1 (file cohort): ${tier1Count} assigned`));
-    console.log(chalk.gray(`    Tier 2 (directory cohort): ${tier2Count} assigned`));
+    command.log(chalk.gray('  Deterministic fallback:'));
+    command.log(chalk.gray(`    Tier 1 (file cohort): ${tier1Count} assigned`));
+    command.log(chalk.gray(`    Tier 2 (directory cohort): ${tier2Count} assigned`));
     if (stillUnassigned.length > 0) {
-      console.log(chalk.gray(`    Still unassigned: ${stillUnassigned.length}`));
+      command.log(chalk.gray(`    Still unassigned: ${stillUnassigned.length}`));
     }
   }
 

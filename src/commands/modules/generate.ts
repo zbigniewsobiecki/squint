@@ -137,7 +137,7 @@ export default class ModulesGenerate extends BaseLlmCommand {
       if (!dryRun) {
         const remaining = db.modules.getUnassigned();
         if (remaining.length > 0) {
-          const fallbackCount = assignByFileCohortFallback(db, isJson, verbose);
+          const fallbackCount = assignByFileCohortFallback(db, this, isJson, verbose);
           if (fallbackCount > 0 && !isJson) {
             this.log(chalk.green(`  Deterministic fallback: assigned ${fallbackCount} remaining symbols`));
           }
