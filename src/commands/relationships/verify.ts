@@ -1,17 +1,11 @@
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 
-import type { IndexDatabase } from '../../db/database.js';
-import { LlmFlags, SharedFlags, readSourceAsString } from '../_shared/index.js';
+import { LlmFlags, SharedFlags, buildSourceGroups } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
 import { parseCombinedCsv } from '../llm/_shared/csv.js';
 import { completeWithLogging } from '../llm/_shared/llm-utils.js';
-import {
-  type RelationshipSourceGroup,
-  type RelationshipTarget,
-  buildRelationshipSystemPrompt,
-  buildRelationshipUserPrompt,
-} from '../llm/_shared/prompts.js';
+import { buildRelationshipSystemPrompt, buildRelationshipUserPrompt } from '../llm/_shared/prompts.js';
 import { verifyRelationshipContent } from '../llm/_shared/verify/content-verifier.js';
 import { checkReferentialIntegrity } from '../llm/_shared/verify/integrity-checker.js';
 import { checkRelationshipCoverage } from '../llm/_shared/verify/relationship-checker.js';
@@ -296,7 +290,7 @@ export default class RelationshipsVerify extends BaseLlmCommand {
             }
           }
 
-          const fixGroups = await this.buildSourceGroups(db, [...fixGrouped.keys()], fixGrouped);
+          const fixGroups = await buildSourceGroups(db, [...fixGrouped.keys()], fixGrouped);
           if (fixGroups.length === 0) continue;
 
           const systemPrompt = buildRelationshipSystemPrompt();
@@ -340,85 +334,5 @@ export default class RelationshipsVerify extends BaseLlmCommand {
     if (isJson) {
       this.log(JSON.stringify(report, null, 2));
     }
-  }
-
-  /**
-   * Build RelationshipSourceGroup[] for a batch of source symbol IDs.
-   */
-  private async buildSourceGroups(
-    db: IndexDatabase,
-    sourceIds: number[],
-    grouped: Map<
-      number,
-      Array<{
-        fromDefinitionId: number;
-        fromName: string;
-        fromKind: string;
-        fromFilePath: string;
-        fromLine: number;
-        toDefinitionId: number;
-        toName: string;
-        toKind: string;
-        toFilePath: string;
-        toLine: number;
-      }>
-    >
-  ): Promise<RelationshipSourceGroup[]> {
-    const groups: RelationshipSourceGroup[] = [];
-
-    for (const sourceId of sourceIds) {
-      const rels = grouped.get(sourceId);
-      if (!rels || rels.length === 0) continue;
-
-      const def = db.definitions.getById(sourceId);
-      if (!def) continue;
-
-      const sourceCode = await readSourceAsString(db.resolveFilePath(def.filePath), def.line, def.endLine);
-      const sourceMeta = db.metadata.get(sourceId);
-
-      let sourceDomains: string[] | null = null;
-      try {
-        if (sourceMeta.domain) {
-          sourceDomains = JSON.parse(sourceMeta.domain) as string[];
-        }
-      } catch {
-        /* ignore */
-      }
-
-      // Build target info
-      const relationships: RelationshipTarget[] = [];
-      for (const rel of rels) {
-        const targetMeta = db.metadata.get(rel.toDefinitionId);
-
-        relationships.push({
-          toId: rel.toDefinitionId,
-          toName: rel.toName,
-          toKind: rel.toKind,
-          toFilePath: rel.toFilePath,
-          toLine: rel.toLine,
-          usageLine: rel.fromLine,
-          relationshipType: 'uses',
-          toPurpose: targetMeta.purpose || null,
-          toDomains: null,
-          toRole: targetMeta.role || null,
-        });
-      }
-
-      groups.push({
-        id: sourceId,
-        name: def.name,
-        kind: def.kind,
-        filePath: def.filePath,
-        line: def.line,
-        endLine: def.endLine,
-        sourceCode,
-        purpose: sourceMeta.purpose || null,
-        domains: sourceDomains,
-        role: sourceMeta.role || null,
-        relationships,
-      });
-    }
-
-    return groups;
   }
 }
