@@ -333,6 +333,7 @@ Output CSV with columns: definition_id,contracts_json
 definition_id,contracts_json
 42,"[{""protocol"":""http"",""role"":""server"",""key"":""GET /api/vehicles"",""normalizedKey"":""GET /api/vehicles""}]"
 55,"[{""protocol"":""queue"",""role"":""producer"",""key"":""order-processing"",""normalizedKey"":""order-processing""}]"
+77,"[{""protocol"":""http"",""role"":""server"",""key"":""GET /api/vehicles"",""normalizedKey"":""GET /api/vehicles""}]"
 88,"null"
 \`\`\`
 
@@ -344,7 +345,9 @@ Rules:
 - If a definition handles MULTIPLE endpoints, list each as a separate contract entry
 - For HTTP clients using a base URL (e.g., axios baseURL, fetch with base path), combine the base URL path with the relative endpoint path in normalizedKey. Example: baseURL='/api' + get('/vehicles') → normalizedKey='GET /api/vehicles'
 - normalizedKey must represent the FULL server-side path, not the relative client-side path
-- When you see both a server route definition and a client API call in the same batch, ensure their normalizedKeys are identical`;
+- When you see both a server route definition and a client API call in the same batch, ensure their normalizedKeys are identical
+- Server-role indicators: Express/Koa/Hapi route handlers (router.get/post/put/delete/patch), class methods used as route handlers, NestJS/tsoa-style decorated controller methods, middleware chains that handle HTTP requests. If a definition registers or handles a route, its role is "server".
+- Client-role indicators: fetch/axios/http calls, API client wrappers, SDK methods that make outbound HTTP requests. If a definition makes an outbound request, its role is "client".`;
 
     // Build user prompt with source code — group by file for deduplication
     const parts: string[] = [];

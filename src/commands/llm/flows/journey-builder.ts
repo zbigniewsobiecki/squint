@@ -51,12 +51,16 @@ export class JourneyBuilder {
     return journeyFlows;
   }
 
+  private normalizeEntity(entity: string): string {
+    return entity.toLowerCase().replace(/-(list|detail)$/, '');
+  }
+
   private groupByEntity(flows: FlowSuggestion[]): JourneyGroup[] {
     const byEntity = new Map<string, FlowSuggestion[]>();
 
     for (const flow of flows) {
       if (!flow.targetEntity) continue;
-      const entity = flow.targetEntity.toLowerCase();
+      const entity = this.normalizeEntity(flow.targetEntity);
       const list = byEntity.get(entity) ?? [];
       list.push(flow);
       byEntity.set(entity, list);
@@ -168,7 +172,7 @@ export class JourneyBuilder {
       definitionSteps: allDefinitionSteps,
       inferredSteps: uniqueFlows.flatMap((f) => f.inferredSteps),
       actionType: null, // Journeys encompass multiple action types
-      targetEntity: primaryFlow.targetEntity,
+      targetEntity: primaryFlow.targetEntity ? this.normalizeEntity(primaryFlow.targetEntity) : null,
       tier: 2,
       subflowSlugs: uniqueFlows.map((f) => f.slug),
     };

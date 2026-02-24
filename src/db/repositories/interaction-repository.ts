@@ -501,6 +501,14 @@ export class InteractionRepository {
       JOIN module_members to_mm ON to_mm.definition_id = to_d.id
       WHERE i.to_file_id IS NOT NULL
         AND from_mm.module_id != to_mm.module_id
+        -- Only consider source files where ALL definitions belong to one module
+        -- (multi-module files are ambiguous and handled by symbol-level detection)
+        AND from_f.id NOT IN (
+          SELECT d2.file_id FROM definitions d2
+          JOIN module_members mm2 ON mm2.definition_id = d2.id
+          GROUP BY d2.file_id
+          HAVING COUNT(DISTINCT mm2.module_id) > 1
+        )
         AND NOT EXISTS (
           SELECT 1 FROM interactions
           WHERE from_module_id = from_mm.module_id
