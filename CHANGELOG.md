@@ -1,3 +1,9 @@
+## [1.11.0](https://github.com/zbigniewsobiecki/squint/compare/v1.10.2...v1.11.0) (2026-02-24)
+
+### Features
+
+* flow classification, fuzzy contract matching, journey builder, domain consolidation ([#35](https://github.com/zbigniewsobiecki/squint/issues/35)) ([f51875e](https://github.com/zbigniewsobiecki/squint/commit/f51875e7e2197a3c4b14fc4c82f8f3c58e786871))
+
 ## [1.10.2](https://github.com/zbigniewsobiecki/squint/compare/v1.10.1...v1.10.2) (2026-02-23)
 
 ## [1.10.1](https://github.com/zbigniewsobiecki/squint/compare/v1.10.0...v1.10.1) (2026-02-20)
