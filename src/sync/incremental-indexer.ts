@@ -7,6 +7,13 @@ import { buildWorkspaceMap } from '../parser/workspace-resolver.js';
 import { scanDirectory } from '../utils/file-scanner.js';
 import { cascadeDeleteDefinitions, cascadeDeleteFile, cleanDanglingSymbolRefs } from './cascade-delete.js';
 import type { FileChange } from './change-detector.js';
+import {
+  deleteFileImportsAndSymbols,
+  followReExportChain,
+  insertFileReferences,
+  insertInternalUsages,
+  resolveSymbolToDefinition,
+} from './reference-resolver.js';
 
 export interface SyncResult {
   filesAdded: number;
@@ -317,25 +324,8 @@ export async function applySync(
       const parsed = parsedChanges.get(change.absolutePath);
       if (!parsed) continue;
       const fileId = fileIdMap.get(change.absolutePath)!;
-      const allDefMap = allDefinitionMap.get(change.absolutePath);
 
-      for (const internalUsage of parsed.internalUsages) {
-        const defId = allDefMap?.get(internalUsage.definitionName) ?? null;
-        const symbolId = db.insertSymbol(
-          null,
-          defId,
-          {
-            name: internalUsage.definitionName,
-            localName: internalUsage.definitionName,
-            kind: 'named',
-            usages: internalUsage.usages,
-          },
-          fileId
-        );
-        for (const usage of internalUsage.usages) {
-          db.insertUsage(symbolId, usage);
-        }
-      }
+      insertInternalUsages(parsed, fileId, change.absolutePath, allDefinitionMap, db);
     }
 
     // ============================================================
@@ -411,27 +401,7 @@ export async function applySync(
           if (!matchingRef) continue;
 
           for (const sym of matchingRef.imports) {
-            let defId: number | null = null;
-            if (matchingRef.resolvedPath && !matchingRef.isExternal) {
-              const targetDefMap = definitionMap.get(matchingRef.resolvedPath);
-              if (targetDefMap) {
-                const lookupName = sym.kind === 'default' ? 'default' : sym.name;
-                defId = targetDefMap.get(lookupName) ?? null;
-
-                if (defId === null && sym.kind === 'default') {
-                  const targetFileId = fileIdMap.get(matchingRef.resolvedPath);
-                  if (targetFileId) {
-                    for (const [name, id] of targetDefMap) {
-                      const defCheck = db.getDefinitionByName(targetFileId, name);
-                      if (defCheck !== null) {
-                        defId = id;
-                        break;
-                      }
-                    }
-                  }
-                }
-              }
-            }
+            let defId = resolveSymbolToDefinition(sym, matchingRef, definitionMap, fileIdMap, db);
 
             if (defId === null && matchingRef.resolvedPath && !matchingRef.isExternal) {
               defId = followReExportChain(
@@ -513,236 +483,4 @@ export async function applySync(
   syncTransaction.exclusive();
 
   return result;
-}
-
-// ============================================================
-// Internal helpers
-// ============================================================
-
-/**
- * Delete all imports, symbols, and usages originating from a file.
- */
-function deleteFileImportsAndSymbols(conn: import('better-sqlite3').Database, fileId: number): void {
-  // Delete usages for import-based symbols
-  conn
-    .prepare(
-      `DELETE FROM usages WHERE symbol_id IN
-      (SELECT s.id FROM symbols s JOIN imports i ON s.reference_id = i.id
-       WHERE i.from_file_id = ?)`
-    )
-    .run(fileId);
-
-  // Delete usages for internal symbols
-  conn
-    .prepare(
-      `DELETE FROM usages WHERE symbol_id IN
-      (SELECT id FROM symbols WHERE file_id = ?)`
-    )
-    .run(fileId);
-
-  // Delete import-based symbols
-  conn
-    .prepare(
-      `DELETE FROM symbols WHERE reference_id IN
-      (SELECT id FROM imports WHERE from_file_id = ?)`
-    )
-    .run(fileId);
-
-  // Delete internal symbols
-  conn.prepare('DELETE FROM symbols WHERE file_id = ?').run(fileId);
-
-  // Delete imports
-  conn.prepare('DELETE FROM imports WHERE from_file_id = ?').run(fileId);
-}
-
-/**
- * Insert references, symbols, and usages for a single parsed file.
- * Mirrors the logic in indexParsedFiles pass 2.
- */
-function insertFileReferences(
-  parsed: ParsedFile,
-  fromFileId: number,
-  db: IndexDatabase,
-  fileIdMap: Map<string, number>,
-  definitionMap: Map<string, Map<string, number>>,
-  allParsedFiles: Map<string, ParsedFile>,
-  conn: import('better-sqlite3').Database
-): void {
-  for (const ref of parsed.references) {
-    const toFileId = ref.resolvedPath ? (fileIdMap.get(ref.resolvedPath) ?? null) : null;
-    const refId = db.insertReference(fromFileId, toFileId, ref);
-
-    for (const sym of ref.imports) {
-      let defId: number | null = null;
-      if (ref.resolvedPath && !ref.isExternal) {
-        const targetDefMap = definitionMap.get(ref.resolvedPath);
-        if (targetDefMap) {
-          const lookupName = sym.kind === 'default' ? 'default' : sym.name;
-          defId = targetDefMap.get(lookupName) ?? null;
-
-          if (defId === null && sym.kind === 'default') {
-            const targetFileId = fileIdMap.get(ref.resolvedPath);
-            if (targetFileId) {
-              for (const [name, id] of targetDefMap) {
-                const defCheck = db.getDefinitionByName(targetFileId, name);
-                if (defCheck !== null) {
-                  defId = id;
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Follow re-export chains (with DB fallback for unchanged files)
-      if (defId === null && ref.resolvedPath && !ref.isExternal) {
-        defId = followReExportChain(
-          sym.kind === 'default' ? 'default' : sym.name,
-          ref.resolvedPath,
-          allParsedFiles,
-          definitionMap,
-          new Set(),
-          conn,
-          fileIdMap
-        );
-      }
-
-      const symbolId = db.insertSymbol(refId, defId, sym);
-      for (const usage of sym.usages) {
-        db.insertUsage(symbolId, usage);
-      }
-    }
-  }
-}
-
-/**
- * Follow re-export chains to find the original definition.
- * Mirrors the logic in parse.ts followReExportChain.
- *
- * When a file isn't in the parsedFiles map (unchanged file not re-parsed),
- * falls back to querying the imports table in the DB.
- */
-function followReExportChain(
-  symbolName: string,
-  filePath: string,
-  parsedFiles: Map<string, ParsedFile>,
-  definitionMap: Map<string, Map<string, number>>,
-  visited: Set<string>,
-  conn?: import('better-sqlite3').Database,
-  fileIdMap?: Map<string, number>
-): number | null {
-  if (visited.has(filePath) || visited.size >= 5) return null;
-  visited.add(filePath);
-
-  const parsed = parsedFiles.get(filePath);
-  if (parsed) {
-    // Use parsed data when available
-    for (const ref of parsed.references) {
-      if ((ref.type !== 're-export' && ref.type !== 'export-all') || !ref.resolvedPath) continue;
-
-      if (ref.type === 'export-all') {
-        const defId = definitionMap.get(ref.resolvedPath)?.get(symbolName) ?? null;
-        if (defId !== null) return defId;
-        const found = followReExportChain(
-          symbolName,
-          ref.resolvedPath,
-          parsedFiles,
-          definitionMap,
-          visited,
-          conn,
-          fileIdMap
-        );
-        if (found !== null) return found;
-      } else {
-        for (const sym of ref.imports) {
-          if (sym.name === symbolName || sym.localName === symbolName) {
-            const defId = definitionMap.get(ref.resolvedPath)?.get(sym.name) ?? null;
-            if (defId !== null) return defId;
-            const found = followReExportChain(
-              sym.name,
-              ref.resolvedPath,
-              parsedFiles,
-              definitionMap,
-              visited,
-              conn,
-              fileIdMap
-            );
-            if (found !== null) return found;
-          }
-        }
-      }
-    }
-    return null;
-  }
-
-  // Fallback: use DB imports table for unchanged files not in parsedFiles
-  if (!conn || !fileIdMap) return null;
-  const fileId = fileIdMap.get(filePath);
-  if (!fileId) return null;
-
-  const reExports = conn
-    .prepare(
-      `SELECT i.type, i.to_file_id as toFileId, tf.path as toFilePath
-       FROM imports i
-       LEFT JOIN files tf ON i.to_file_id = tf.id
-       WHERE i.from_file_id = ? AND i.type IN ('re-export', 'export-all') AND i.to_file_id IS NOT NULL`
-    )
-    .all(fileId) as Array<{ type: string; toFileId: number; toFilePath: string }>;
-
-  for (const reExp of reExports) {
-    // Reconstruct absolute path to look up in definitionMap
-    // definitionMap is keyed by absolute path
-    let absResolvedPath: string | undefined;
-    for (const [absPath, fId] of fileIdMap) {
-      if (fId === reExp.toFileId) {
-        absResolvedPath = absPath;
-        break;
-      }
-    }
-    if (!absResolvedPath) continue;
-
-    if (reExp.type === 'export-all') {
-      const defId = definitionMap.get(absResolvedPath)?.get(symbolName) ?? null;
-      if (defId !== null) return defId;
-      const found = followReExportChain(
-        symbolName,
-        absResolvedPath,
-        parsedFiles,
-        definitionMap,
-        visited,
-        conn,
-        fileIdMap
-      );
-      if (found !== null) return found;
-    } else {
-      // re-export: check symbols on that import for the name
-      const reExpSymbols = conn
-        .prepare(
-          `SELECT s.name, s.local_name as localName
-           FROM symbols s
-           JOIN imports i ON s.reference_id = i.id
-           WHERE i.from_file_id = ? AND i.to_file_id = ? AND i.type = 're-export'`
-        )
-        .all(fileId, reExp.toFileId) as Array<{ name: string; localName: string }>;
-
-      for (const sym of reExpSymbols) {
-        if (sym.name === symbolName || sym.localName === symbolName) {
-          const defId = definitionMap.get(absResolvedPath)?.get(sym.name) ?? null;
-          if (defId !== null) return defId;
-          const found = followReExportChain(
-            sym.name,
-            absResolvedPath,
-            parsedFiles,
-            definitionMap,
-            visited,
-            conn,
-            fileIdMap
-          );
-          if (found !== null) return found;
-        }
-      }
-    }
-  }
-  return null;
 }

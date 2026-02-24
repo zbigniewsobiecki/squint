@@ -34,7 +34,6 @@ export {
   type FlowSubflowStep,
   type FlowWithSteps,
   type FlowStakeholder,
-  type FlowTreeNode,
   type ModuleCallEdge,
   type EnrichedModuleCallEdge,
   type CalledSymbolInfo,
