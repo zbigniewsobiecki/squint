@@ -22,6 +22,7 @@ interface TraceState {
   steps: TracedDefinitionStep[];
   inferredSteps: InferredFlowStep[];
   entryPointModuleId: number;
+  entityScope: string | null;
 }
 
 export class FlowTracer {
@@ -84,7 +85,11 @@ export class FlowTracer {
           initialStep = null;
         }
 
-        const { definitionSteps, inferredSteps } = this.traceDefinitionFlow(traceStartDefId, entryPointModule.moduleId);
+        const { definitionSteps, inferredSteps } = this.traceDefinitionFlow(
+          traceStartDefId,
+          entryPointModule.moduleId,
+          member.targetEntity
+        );
         if (initialStep) {
           definitionSteps.unshift(initialStep);
         }
@@ -129,13 +134,18 @@ export class FlowTracer {
    * Trace a flow from a starting definition through the definition-level call graph.
    * At leaf nodes (no outgoing call graph edges), bridges via LLM-inferred interactions.
    */
-  private traceDefinitionFlow(startDefinitionId: number, currentEntryPointModuleId: number) {
+  private traceDefinitionFlow(
+    startDefinitionId: number,
+    currentEntryPointModuleId: number,
+    entityScope: string | null = null
+  ) {
     const state: TraceState = {
       visited: new Set(),
       visitedFallbackBridgeModules: new Set(),
       steps: [],
       inferredSteps: [],
       entryPointModuleId: currentEntryPointModuleId,
+      entityScope: entityScope ?? null,
     };
     const startModule = this.context.defToModule.get(startDefinitionId) ?? null;
     this.trace(state, startDefinitionId, 0, startModule);
@@ -173,6 +183,14 @@ export class FlowTracer {
     for (const calledDefId of calledDefs) {
       const fromModule = this.context.defToModule.get(defId) ?? lastKnownModule;
       const toModule = this.context.defToModule.get(calledDefId);
+
+      // Entity scope filtering: skip cross-entity edges to keep flows focused
+      if (state.entityScope && toModule) {
+        const targetEntity = this.context.moduleEntityMap.get(toModule.moduleId);
+        if (targetEntity && targetEntity !== '_generic' && !this.isEntityMatch(state.entityScope, targetEntity)) {
+          continue;
+        }
+      }
 
       // Only include cross-module calls
       if (fromModule && toModule && fromModule.moduleId !== toModule.moduleId) {
@@ -264,6 +282,15 @@ export class FlowTracer {
 
     for (const interaction of inferred) {
       const targetModuleId = interaction.toModuleId;
+
+      // Entity scope filtering: skip cross-entity edges
+      if (state.entityScope) {
+        const targetEntity = this.context.moduleEntityMap.get(targetModuleId);
+        if (targetEntity && targetEntity !== '_generic' && !this.isEntityMatch(state.entityScope, targetEntity)) {
+          continue;
+        }
+      }
+
       const targetDefs = this.context.moduleToDefIds.get(targetModuleId);
       if (!targetDefs || targetDefs.length === 0) continue;
 
@@ -288,6 +315,16 @@ export class FlowTracer {
       const targetModule = this.context.defToModule.get(representative) ?? null;
       this.trace(state, representative, depth + 1, targetModule, true);
     }
+  }
+
+  /**
+   * Check if an entity scope matches a module entity.
+   * Handles case normalization and strips -list/-detail suffixes
+   * (flow-level view refinements that share the same base entity).
+   */
+  private isEntityMatch(entityScope: string, moduleEntity: string): boolean {
+    const normalizeEntity = (e: string) => e.toLowerCase().replace(/-(list|detail)$/, '');
+    return normalizeEntity(moduleEntity) === normalizeEntity(entityScope);
   }
 
   /**
@@ -398,7 +435,8 @@ export function buildFlowTracingContext(
   }>,
   interactions: InteractionWithPaths[],
   entryPointModuleIds?: Set<number>,
-  definitionLinks?: Array<InteractionDefinitionLink & { toModuleId: number; source: string }>
+  definitionLinks?: Array<InteractionDefinitionLink & { toModuleId: number; source: string }>,
+  moduleEntityMap?: Map<number, string>
 ): FlowTracingContext {
   // Build definition-to-module lookup, reverse module-to-definitions lookup, and defId-to-name lookup
   const defToModule = new Map<number, { moduleId: number; modulePath: string }>();
@@ -469,5 +507,6 @@ export function buildFlowTracingContext(
     entryPointModuleIds: entryPointModuleIds ?? new Set(),
     boundaryTargetModuleIds,
     definitionBridgeMap,
+    moduleEntityMap: moduleEntityMap ?? new Map(),
   };
 }

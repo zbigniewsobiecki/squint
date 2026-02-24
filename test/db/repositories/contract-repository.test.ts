@@ -277,6 +277,29 @@ describe('ContractRepository', () => {
     });
   });
 
+  describe('deleteContract', () => {
+    it('deletes a contract and its participants', () => {
+      const c1 = repo.upsertContract('http', 'GET /vehicles', 'GET /vehicles');
+      const c2 = repo.upsertContract('http', 'POST /vehicles', 'POST /vehicles');
+      repo.addParticipant(c1, defId1, moduleId1, 'server');
+      repo.addParticipant(c1, defId2, moduleId2, 'client');
+      repo.addParticipant(c2, defId1, moduleId1, 'server');
+
+      repo.deleteContract(c1);
+
+      expect(repo.getCount()).toBe(1);
+      expect(repo.getWithParticipants(c1)).toBeNull();
+      // c2 should be untouched
+      const remaining = repo.getWithParticipants(c2);
+      expect(remaining).not.toBeNull();
+      expect(remaining!.participants).toHaveLength(1);
+    });
+
+    it('is safe to call on non-existent contract', () => {
+      expect(() => repo.deleteContract(999)).not.toThrow();
+    });
+  });
+
   describe('clear', () => {
     it('deletes all contracts and participants', () => {
       const c1 = repo.upsertContract('http', 'GET /vehicles', 'GET /vehicles');

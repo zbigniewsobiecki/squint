@@ -335,6 +335,15 @@ export class ContractRepository {
     return result.changes;
   }
 
+  /**
+   * Delete a single contract and its participants.
+   */
+  deleteContract(contractId: number): void {
+    ensureContractsTables(this.db);
+    this.db.prepare('DELETE FROM contract_participants WHERE contract_id = ?').run(contractId);
+    this.db.prepare('DELETE FROM contracts WHERE id = ?').run(contractId);
+  }
+
   // ============================================================
   // Cleanup
   // ============================================================

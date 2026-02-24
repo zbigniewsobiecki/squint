@@ -227,6 +227,19 @@ Classify who initiates the action:
 - **developer**: CLI commands, dev tools, scripts
 - **external**: API endpoints consumed by external clients/services
 
+## CRITICAL: List vs Detail View Distinction
+When a codebase has SEPARATE components for list views and detail views of the same entity,
+you MUST differentiate them using the target_entity column:
+- List views: target_entity = "{entity}-list" (e.g., "vehicle-list")
+- Detail views: target_entity = "{entity}-detail" (e.g., "vehicle-detail")
+
+How to identify:
+- LIST view: component displays multiple records, fetches collections
+- DETAIL view: component displays a single record, fetches by ID
+
+When BOTH patterns exist for the same entity, emit different target_entity values.
+If only ONE view type exists (no separate list/detail), use the plain entity name.
+
 ## CRITICAL: Backend API Endpoints
 Modules marked with ⚠️ are backend API endpoints reached from frontend via HTTP.
 These modules ARE entry points — they serve as the boundary of a separately deployable backend.
@@ -249,10 +262,12 @@ Missing even one action type means an entire user flow goes undetected.
 ## Output Format
 \`\`\`csv
 module_id,member_name,is_entry_point,action_type,target_entity,stakeholder,trace_from,reason
-42,ItemList,true,view,item,user,,"Main component displaying item list"
+42,ItemList,true,view,item-list,user,,"Displays item list (multiple records)"
 42,ItemList,true,create,item,user,useCreateItem,"Calls useCreateItem hook for new items"
 42,ItemList,true,update,item,user,useUpdateItem,"Calls useUpdateItem hook"
 42,ItemList,true,delete,item,user,useDeleteItem,"Calls useDeleteItem hook"
+43,ItemDetails,true,view,item-detail,user,,"Single item detail view (fetches by ID)"
+44,OrderPage,true,view,order,user,,"Only view for orders (no separate list/detail)"
 \`\`\`
 
 The trace_from column specifies which callee/hook to start tracing from for each action type.

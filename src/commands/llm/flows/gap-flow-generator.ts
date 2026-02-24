@@ -11,7 +11,11 @@ export class GapFlowGenerator {
    * Create gap flows for interactions not covered by entry point flows.
    * Only considers runtime interactions (ast-import already filtered upstream).
    */
-  createGapFlows(coveredIds: Set<number>, allInteractions: InteractionWithPaths[]): FlowSuggestion[] {
+  createGapFlows(
+    coveredIds: Set<number>,
+    allInteractions: InteractionWithPaths[],
+    moduleEntityMap?: Map<number, string>
+  ): FlowSuggestion[] {
     const uncovered = allInteractions.filter((i) => !coveredIds.has(i.id));
     if (uncovered.length === 0) return [];
 
@@ -30,6 +34,19 @@ export class GapFlowGenerator {
     for (const [, interactions] of bySource) {
       const fromPath = interactions[0].fromModulePath;
       const fromShort = fromPath.split('.').pop() ?? 'module';
+
+      // Infer entity from module entity map
+      let inferredEntity: string | null = null;
+      if (moduleEntityMap) {
+        const entities = new Set<string>();
+        for (const interaction of interactions) {
+          const fromEntity = moduleEntityMap.get(interaction.fromModuleId);
+          const toEntity = moduleEntityMap.get(interaction.toModuleId);
+          if (fromEntity && fromEntity !== '_generic') entities.add(fromEntity);
+          if (toEntity && toEntity !== '_generic') entities.add(toEntity);
+        }
+        if (entities.size === 1) inferredEntity = [...entities][0].toLowerCase();
+      }
 
       // Build a descriptive name from the from→to modules
       const targetNames = [...new Set(interactions.map((i) => i.toModulePath.split('.').pop() ?? '?'))];
@@ -61,8 +78,8 @@ export class GapFlowGenerator {
         interactionIds: interactions.map((i) => i.id),
         definitionSteps: [], // Gap flows don't have definition-level tracing
         inferredSteps: [], // Gap flows don't have inferred steps
-        actionType: null,
-        targetEntity: null,
+        actionType: inferredEntity ? 'process' : null,
+        targetEntity: inferredEntity,
         tier: 0,
         subflowSlugs: [],
       });

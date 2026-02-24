@@ -184,6 +184,17 @@ export default class ContractsExtract extends BaseLlmCommand {
       }
     }
 
+    // Deduplicate phantom HTTP contracts (same path, different methods, no server evidence)
+    if (!dryRun) {
+      const phantomsRemoved = this.deduplicatePhantomHttpContracts(db);
+      if (phantomsRemoved > 0) {
+        totalContracts = db.contracts.getCount();
+        if (!isJson && verbose) {
+          this.log(chalk.gray(`  Removed ${phantomsRemoved} phantom HTTP contract(s) via deduplication`));
+        }
+      }
+    }
+
     // Backfill any NULL module_ids (safety net for standalone runs)
     if (!dryRun) {
       const backfilled = db.contracts.backfillModuleIds();
@@ -255,6 +266,7 @@ export default class ContractsExtract extends BaseLlmCommand {
    */
   private selectCandidates(db: IndexDatabase): CandidateDefinition[] {
     // Get all definitions with their metadata and module assignments
+    // Exclude definitions assigned to test modules (is_test = 1) to avoid phantom contracts from mocks
     const rows = db
       .getConnection()
       .prepare(`
@@ -265,8 +277,10 @@ export default class ContractsExtract extends BaseLlmCommand {
       FROM definitions d
       JOIN files f ON d.file_id = f.id
       LEFT JOIN module_members mm ON mm.definition_id = d.id
+      LEFT JOIN modules m ON mm.module_id = m.id
       LEFT JOIN definition_metadata dm_role ON dm_role.definition_id = d.id AND dm_role.key = 'role'
       WHERE d.kind IN ('function', 'class', 'variable', 'method', 'const')
+        AND (m.is_test IS NULL OR m.is_test = 0)
     `)
       .all() as CandidateDefinition[];
 
@@ -442,5 +456,57 @@ Rules:
     }
 
     return results;
+  }
+
+  /**
+   * Remove phantom HTTP contracts that share a path with another contract but lack server-side evidence.
+   * When the LLM extracts both PUT /repairs/{param} and PATCH /repairs/{param}, the one without a
+   * server participant is a hallucination and should be removed.
+   */
+  private deduplicatePhantomHttpContracts(db: IndexDatabase): number {
+    const SERVER_ROLES = new Set(['server', 'producer', 'emitter', 'publisher', 'writer']);
+
+    const allContracts = db.contracts.getAllWithParticipants();
+    const httpContracts = allContracts.filter((c) => c.protocol === 'http');
+
+    // Group by path (normalizedKey without HTTP method prefix)
+    const byPath = new Map<string, typeof httpContracts>();
+    for (const contract of httpContracts) {
+      const spaceIdx = contract.normalizedKey.indexOf(' ');
+      const routePath = spaceIdx >= 0 ? contract.normalizedKey.slice(spaceIdx + 1) : contract.normalizedKey;
+      const group = byPath.get(routePath) ?? [];
+      group.push(contract);
+      byPath.set(routePath, group);
+    }
+
+    let removed = 0;
+    const transaction = db.getConnection().transaction(() => {
+      for (const [, group] of byPath) {
+        if (group.length <= 1) continue;
+
+        // Determine which contracts have server-side participant evidence
+        const withServer: typeof httpContracts = [];
+        const withoutServer: typeof httpContracts = [];
+        for (const contract of group) {
+          const hasServer = contract.participants.some((p) => SERVER_ROLES.has(p.role));
+          if (hasServer) {
+            withServer.push(contract);
+          } else {
+            withoutServer.push(contract);
+          }
+        }
+
+        // Delete phantoms when at least one contract has server evidence and others don't
+        if (withServer.length >= 1 && withoutServer.length > 0) {
+          for (const phantom of withoutServer) {
+            db.contracts.deleteContract(phantom.id);
+            removed++;
+          }
+        }
+      }
+    });
+    transaction();
+
+    return removed;
   }
 }

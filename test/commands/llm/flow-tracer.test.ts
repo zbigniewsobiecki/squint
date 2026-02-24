@@ -1529,6 +1529,42 @@ describe('flow-tracer', () => {
       expect(flows[0].definitionSteps.some((s) => s.toModuleId === 2)).toBe(false);
     });
 
+    it('view action with entityScope=null traces from the page definition (default param)', () => {
+      // Regression: traceDefinitionFlow signature changed from `entityScope?: string | null` to `entityScope: string | null = null`
+      // Ensure null entity scope (the default) doesn't break tracing
+      const callGraph = new Map<number, number[]>();
+      callGraph.set(10, [20]);
+
+      const modules = [
+        { id: 1, fullPath: 'project.pages', members: [{ definitionId: 10, name: 'SalesPage' }] },
+        { id: 2, fullPath: 'project.backend', members: [{ definitionId: 20, name: 'handler' }] },
+      ];
+
+      const interactions = [makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2 })];
+
+      const moduleEntityMap = new Map([
+        [1, 'Sale'],
+        [2, 'Sale'],
+      ]);
+      const ctx = buildFlowTracingContext(callGraph, modules, interactions, undefined, undefined, moduleEntityMap);
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints = [
+        makeEntryPoint({
+          moduleId: 1,
+          modulePath: 'project.pages',
+          memberDefinitions: [
+            // targetEntity is null → entityScope defaults to null
+            makeMember({ id: 10, name: 'SalesPage', actionType: 'view' }),
+          ],
+        }),
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
+      expect(flows).toHaveLength(1);
+      expect(flows[0].interactionIds).toContain(100);
+    });
+
     it('view action with null traceFromDefinition traces from the page definition', () => {
       const callGraph = new Map<number, number[]>();
       callGraph.set(10, [11, 20]); // Page calls hook (same module) and backend
@@ -1570,6 +1606,188 @@ describe('flow-tracer', () => {
       expect(flows).toHaveLength(1);
       expect(flows[0].actionType).toBe('view');
       expect(flows[0].interactionIds).toContain(100);
+    });
+  });
+
+  // ============================================
+  // Entity scope case-sensitivity and suffix matching
+  // ============================================
+  describe('entity scope matching', () => {
+    function buildEntityScopeContext(moduleEntityMap: Map<number, string>) {
+      // M1 (entry point) → M2 (same entity) → M3 (different entity)
+      const callGraph = new Map<number, number[]>();
+      callGraph.set(10, [20, 30]); // Page calls both handler and unrelated
+
+      const modules = [
+        { id: 1, fullPath: 'app.pages', members: [{ definitionId: 10, name: 'VehiclesPage' }] },
+        { id: 2, fullPath: 'app.services', members: [{ definitionId: 20, name: 'vehicleService' }] },
+        { id: 3, fullPath: 'app.other', members: [{ definitionId: 30, name: 'customerService' }] },
+      ];
+
+      const interactions = [
+        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2 }),
+        makeInteraction({ id: 101, fromModuleId: 1, toModuleId: 3 }),
+      ];
+
+      return buildFlowTracingContext(callGraph, modules, interactions, undefined, undefined, moduleEntityMap);
+    }
+
+    it('matches entity scope case-insensitively (raw LLM value vs title-cased map)', () => {
+      // LLM outputs "vehicle" (lowercase), groupModulesByEntity produces "Vehicle" (title-case)
+      const moduleEntityMap = new Map([
+        [1, 'Vehicle'],
+        [2, 'Vehicle'],
+        [3, 'Customer'],
+      ]);
+
+      const ctx = buildEntityScopeContext(moduleEntityMap);
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints = [
+        makeEntryPoint({
+          moduleId: 1,
+          modulePath: 'app.pages',
+          memberDefinitions: [
+            // LLM raw value: lowercase "vehicle"
+            makeMember({ id: 10, name: 'VehiclesPage', actionType: 'view', targetEntity: 'vehicle' }),
+          ],
+        }),
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
+      expect(flows).toHaveLength(1);
+      // Same entity (case-insensitive) → should be included
+      expect(flows[0].interactionIds).toContain(100);
+      // Different entity → should be filtered
+      expect(flows[0].interactionIds).not.toContain(101);
+    });
+
+    it('strips -list suffix from entityScope before matching', () => {
+      const moduleEntityMap = new Map([
+        [1, 'Vehicle'],
+        [2, 'Vehicle'],
+        [3, 'Customer'],
+      ]);
+
+      const ctx = buildEntityScopeContext(moduleEntityMap);
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints = [
+        makeEntryPoint({
+          moduleId: 1,
+          modulePath: 'app.pages',
+          memberDefinitions: [
+            // F2 list/detail suffix: "vehicle-list"
+            makeMember({ id: 10, name: 'VehiclesPage', actionType: 'view', targetEntity: 'vehicle-list' }),
+          ],
+        }),
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
+      expect(flows).toHaveLength(1);
+      // vehicle-list → base "vehicle" matches "Vehicle"
+      expect(flows[0].interactionIds).toContain(100);
+      expect(flows[0].interactionIds).not.toContain(101);
+    });
+
+    it('strips -detail suffix from entityScope before matching', () => {
+      const moduleEntityMap = new Map([
+        [1, 'Vehicle'],
+        [2, 'Vehicle'],
+        [3, 'Customer'],
+      ]);
+
+      const ctx = buildEntityScopeContext(moduleEntityMap);
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints = [
+        makeEntryPoint({
+          moduleId: 1,
+          modulePath: 'app.pages',
+          memberDefinitions: [
+            makeMember({ id: 10, name: 'VehiclePage', actionType: 'view', targetEntity: 'vehicle-detail' }),
+          ],
+        }),
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
+      expect(flows).toHaveLength(1);
+      expect(flows[0].interactionIds).toContain(100);
+      expect(flows[0].interactionIds).not.toContain(101);
+    });
+
+    it('allows _generic module entity through regardless of scope', () => {
+      const moduleEntityMap = new Map([
+        [1, 'Vehicle'],
+        [2, '_generic'],
+        [3, 'Customer'],
+      ]);
+
+      const ctx = buildEntityScopeContext(moduleEntityMap);
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints = [
+        makeEntryPoint({
+          moduleId: 1,
+          modulePath: 'app.pages',
+          memberDefinitions: [
+            makeMember({ id: 10, name: 'VehiclesPage', actionType: 'view', targetEntity: 'vehicle' }),
+          ],
+        }),
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
+      expect(flows).toHaveLength(1);
+      // _generic always passes entity filter
+      expect(flows[0].interactionIds).toContain(100);
+      // Customer is filtered
+      expect(flows[0].interactionIds).not.toContain(101);
+    });
+
+    it('entity scope filtering works on fallback module-level bridges too', () => {
+      // Leaf def with inferred interaction — entity scope should filter cross-entity bridges
+      const callGraph = new Map<number, number[]>();
+      callGraph.set(10, [20]); // M1 → M2
+
+      const modules = [
+        { id: 1, fullPath: 'app.pages', members: [{ definitionId: 10, name: 'VehiclesPage' }] },
+        { id: 2, fullPath: 'app.services', members: [{ definitionId: 20, name: 'vehicleApi' }] },
+        { id: 3, fullPath: 'api.vehicles', members: [{ definitionId: 30, name: 'VehiclesCtrl' }] },
+        { id: 4, fullPath: 'api.customers', members: [{ definitionId: 40, name: 'CustomersCtrl' }] },
+      ];
+
+      const interactions = [
+        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'ast' }),
+        makeInteraction({ id: 101, fromModuleId: 2, toModuleId: 3, source: 'llm-inferred' }),
+        makeInteraction({ id: 102, fromModuleId: 2, toModuleId: 4, source: 'llm-inferred' }),
+      ];
+
+      const moduleEntityMap = new Map([
+        [1, 'Vehicle'],
+        [2, 'Vehicle'],
+        [3, 'Vehicle'],
+        [4, 'Customer'],
+      ]);
+
+      const ctx = buildFlowTracingContext(callGraph, modules, interactions, undefined, undefined, moduleEntityMap);
+      const tracer = new FlowTracer(ctx);
+
+      const entryPoints = [
+        makeEntryPoint({
+          moduleId: 1,
+          modulePath: 'app.pages',
+          memberDefinitions: [
+            makeMember({ id: 10, name: 'VehiclesPage', actionType: 'view', targetEntity: 'vehicle' }),
+          ],
+        }),
+      ];
+
+      const flows = tracer.traceFlowsFromEntryPoints(entryPoints, []);
+      expect(flows).toHaveLength(1);
+      // Same entity bridge should be included
+      expect(flows[0].interactionIds).toContain(101);
+      // Cross-entity bridge should be filtered
+      expect(flows[0].interactionIds).not.toContain(102);
     });
   });
 });
