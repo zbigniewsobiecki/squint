@@ -405,33 +405,6 @@ export interface FeatureWithFlows extends Feature {
 }
 
 // ============================================================
-// Legacy Types (for backward compatibility during migration)
-// ============================================================
-
-/**
- * @deprecated Use Interaction instead
- * Module call graph edge - kept for backward compatibility
- */
-export interface FlowTreeNode {
-  id: number;
-  name: string;
-  slug: string;
-  fullPath: string;
-  description: string | null;
-  fromModuleId: number | null;
-  toModuleId: number | null;
-  semantic: string | null;
-  depth: number;
-  domain: string | null;
-  parentId: number | null;
-  stepOrder: number;
-  createdAt: string;
-  children: FlowTreeNode[];
-  fromModuleName?: string;
-  toModuleName?: string;
-}
-
-// ============================================================
 // Annotated Symbol/Edge Types for LLM Context
 // ============================================================
 

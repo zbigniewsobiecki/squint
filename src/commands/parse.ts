@@ -1,10 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Args, Command, Flags } from '@oclif/core';
+import type Database from 'better-sqlite3';
 import chalk from 'chalk';
 import { type IIndexWriter, IndexDatabase, computeHash } from '../db/database.js';
 import { type ParsedFile, parseFile } from '../parser/ast-parser.js';
 import { buildWorkspaceMap } from '../parser/workspace-resolver.js';
+import { insertFileReferences, insertInternalUsages } from '../sync/reference-resolver.js';
 import { scanDirectory } from '../utils/file-scanner.js';
 
 export interface IndexingResult {
@@ -24,7 +26,7 @@ export interface IndexingResult {
  */
 export function indexParsedFiles(
   parsedFiles: Map<string, ParsedFile>,
-  db: IIndexWriter,
+  db: IIndexWriter & { getConnection: () => Database.Database },
   sourceDirectory: string
 ): IndexingResult {
   // Set metadata
@@ -64,89 +66,13 @@ export function indexParsedFiles(
   // Second pass: Insert references and link symbols to definitions
   for (const [filePath, parsed] of parsedFiles) {
     const fromFileId = fileIdMap.get(filePath)!;
-
-    for (const ref of parsed.references) {
-      // Resolve the target file
-      const toFileId = ref.resolvedPath ? (fileIdMap.get(ref.resolvedPath) ?? null) : null;
-
-      const refId = db.insertReference(fromFileId, toFileId, ref);
-
-      // Insert symbols for this reference
-      for (const sym of ref.imports) {
-        // Try to link to the definition if we have a resolved path
-        let defId: number | null = null;
-        if (ref.resolvedPath && !ref.isExternal) {
-          const targetDefMap = definitionMap.get(ref.resolvedPath);
-          if (targetDefMap) {
-            // For default imports, look for 'default' export
-            // For named imports, look for the original name
-            const lookupName = sym.kind === 'default' ? 'default' : sym.name;
-            defId = targetDefMap.get(lookupName) ?? null;
-
-            // Also try the original name for default exports that use a named function/class
-            if (defId === null && sym.kind === 'default') {
-              // Default exports might be named exports marked as default
-              for (const [name, id] of targetDefMap) {
-                const defCheck = db.getDefinitionByName(fileIdMap.get(ref.resolvedPath)!, name);
-                if (defCheck !== null) {
-                  // Check if this is the default export by querying the database
-                  // For simplicity, we already tracked default in the definition
-                  defId = id;
-                  break;
-                }
-              }
-            }
-          }
-        }
-
-        // Follow re-export chains when definition wasn't found directly
-        if (defId === null && ref.resolvedPath && !ref.isExternal) {
-          defId = followReExportChain(
-            sym.kind === 'default' ? 'default' : sym.name,
-            ref.resolvedPath,
-            parsedFiles,
-            definitionMap,
-            new Set()
-          );
-        }
-
-        const symbolId = db.insertSymbol(refId, defId, sym);
-
-        // Insert usages for this symbol
-        for (const usage of sym.usages) {
-          db.insertUsage(symbolId, usage);
-        }
-      }
-    }
+    insertFileReferences(parsed, fromFileId, db, fileIdMap, definitionMap, parsedFiles, db.getConnection());
   }
 
   // Third pass: Insert internal usages (same-file calls)
   for (const [filePath, parsed] of parsedFiles) {
     const fileId = fileIdMap.get(filePath)!;
-    const allDefMap = allDefinitionMap.get(filePath);
-
-    for (const internalUsage of parsed.internalUsages) {
-      // Find the definition ID for this symbol
-      const defId = allDefMap?.get(internalUsage.definitionName) ?? null;
-
-      // Create a symbol entry for internal usage (no reference_id, has file_id)
-      const symbolId = db.insertSymbol(
-        null, // no reference_id
-        defId,
-        {
-          name: internalUsage.definitionName,
-          localName: internalUsage.definitionName,
-          kind: 'named',
-          usages: internalUsage.usages,
-        },
-        fileId // file_id for internal symbols
-      );
-
-      // Insert usages for this internal symbol
-      for (const usage of internalUsage.usages) {
-        db.insertUsage(symbolId, usage);
-      }
-    }
+    insertInternalUsages(parsed, fileId, filePath, allDefinitionMap, db);
   }
 
   return {
@@ -155,48 +81,6 @@ export function indexParsedFiles(
     usageCount: db.getUsageCount(),
     inheritanceRelationships: { extendsCreated: 0, implementsCreated: 0, notFound: 0 },
   };
-}
-
-/**
- * Follow re-export chains to find the original definition.
- * When a module re-exports a symbol from another module, this traces through
- * the chain to find where the symbol is actually defined.
- */
-function followReExportChain(
-  symbolName: string,
-  filePath: string,
-  parsedFiles: Map<string, ParsedFile>,
-  definitionMap: Map<string, Map<string, number>>,
-  visited: Set<string>
-): number | null {
-  if (visited.has(filePath) || visited.size >= 5) return null;
-  visited.add(filePath);
-
-  const parsed = parsedFiles.get(filePath);
-  if (!parsed) return null;
-
-  for (const ref of parsed.references) {
-    if ((ref.type !== 're-export' && ref.type !== 'export-all') || !ref.resolvedPath) continue;
-
-    if (ref.type === 'export-all') {
-      // export * from './source' — symbol might come from here
-      const defId = definitionMap.get(ref.resolvedPath)?.get(symbolName) ?? null;
-      if (defId !== null) return defId;
-      const found = followReExportChain(symbolName, ref.resolvedPath, parsedFiles, definitionMap, visited);
-      if (found !== null) return found;
-    } else {
-      // export { X } from './source' — check if X matches
-      for (const sym of ref.imports) {
-        if (sym.name === symbolName || sym.localName === symbolName) {
-          const defId = definitionMap.get(ref.resolvedPath)?.get(sym.name) ?? null;
-          if (defId !== null) return defId;
-          const found = followReExportChain(sym.name, ref.resolvedPath, parsedFiles, definitionMap, visited);
-          if (found !== null) return found;
-        }
-      }
-    }
-  }
-  return null;
 }
 
 export default class Parse extends Command {
