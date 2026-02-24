@@ -1,3 +1,10 @@
+## [1.12.1](https://github.com/zbigniewsobiecki/squint/compare/v1.12.0...v1.12.1) (2026-02-24)
+
+### Bug Fixes
+
+* complete duplication elimination and remove build artifacts ([4c0cfac](https://github.com/zbigniewsobiecki/squint/commit/4c0cfac085b1ba22f6ca09246bf50c483b89e7d1))
+* improve module assignment accuracy and flow completeness ([3c28313](https://github.com/zbigniewsobiecki/squint/commit/3c2831363bd85f7c453db38fac8e3ee799e3b0ea))
+
 ## [1.12.0](https://github.com/zbigniewsobiecki/squint/compare/v1.11.1...v1.12.0) (2026-02-24)
 
 ### Features
