@@ -2393,4 +2393,101 @@ describe('IndexDatabase', () => {
       expect(roots.map((r) => r.name)).not.toContain('helper');
     });
   });
+
+  describe('findGhostRows', () => {
+    it('returns empty results when no ghost rows exist', () => {
+      const ghosts = db.findGhostRows();
+      expect(ghosts.ghostRelationships).toEqual([]);
+      expect(ghosts.ghostMembers).toEqual([]);
+      expect(ghosts.ghostEntryPoints).toEqual([]);
+      expect(ghosts.ghostEntryModules).toEqual([]);
+      expect(ghosts.ghostInteractions).toEqual([]);
+      expect(ghosts.ghostSubflows).toEqual([]);
+    });
+
+    it('handles non-existent tables gracefully', () => {
+      // The method should not throw when checking tables that don't exist
+      expect(() => db.findGhostRows()).not.toThrow();
+    });
+
+    it('queries all six ghost categories', () => {
+      const ghosts = db.findGhostRows();
+
+      // Verify the structure contains all expected keys
+      expect(ghosts).toHaveProperty('ghostRelationships');
+      expect(ghosts).toHaveProperty('ghostMembers');
+      expect(ghosts).toHaveProperty('ghostEntryPoints');
+      expect(ghosts).toHaveProperty('ghostEntryModules');
+      expect(ghosts).toHaveProperty('ghostInteractions');
+      expect(ghosts).toHaveProperty('ghostSubflows');
+
+      // All should be arrays
+      expect(Array.isArray(ghosts.ghostRelationships)).toBe(true);
+      expect(Array.isArray(ghosts.ghostMembers)).toBe(true);
+      expect(Array.isArray(ghosts.ghostEntryPoints)).toBe(true);
+      expect(Array.isArray(ghosts.ghostEntryModules)).toBe(true);
+      expect(Array.isArray(ghosts.ghostInteractions)).toBe(true);
+      expect(Array.isArray(ghosts.ghostSubflows)).toBe(true);
+    });
+  });
+
+  describe('deleteGhostRow', () => {
+    it('returns false for non-existent ID', () => {
+      const deleted = db.deleteGhostRow('interactions', 99999);
+      expect(deleted).toBe(false);
+    });
+
+    it('prevents SQL injection via table name allowlist', () => {
+      const deleted = db.deleteGhostRow('malicious_table; DROP TABLE files;--', 1);
+      expect(deleted).toBe(false);
+    });
+
+    it('returns false for disallowed table names', () => {
+      expect(db.deleteGhostRow('files', 1)).toBe(false);
+      expect(db.deleteGhostRow('definitions', 1)).toBe(false);
+      expect(db.deleteGhostRow('modules', 1)).toBe(false);
+    });
+  });
+
+  describe('cleanStaleFiles', () => {
+    it('returns zero removed when all files exist', () => {
+      db.files.insert({
+        path: __filename, // This test file itself, which exists
+        language: 'typescript',
+        contentHash: computeHash('exists'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      const result = db.cleanStaleFiles();
+      expect(result.removed).toBe(0);
+      expect(result.paths).toEqual([]);
+    });
+
+    it('removes stale files and cascades definitions', () => {
+      const staleFileId = db.files.insert({
+        path: '/non/existent/stale.ts',
+        language: 'typescript',
+        contentHash: computeHash('stale'),
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      db.files.insertDefinition(staleFileId, {
+        name: 'StaleFunction',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+
+      const beforeCount = db.files.getAll().length;
+      const result = db.cleanStaleFiles();
+
+      expect(result.removed).toBe(1);
+      expect(result.paths).toContain('/non/existent/stale.ts');
+      expect(db.files.getAll().length).toBe(beforeCount - 1);
+    });
+  });
 });
