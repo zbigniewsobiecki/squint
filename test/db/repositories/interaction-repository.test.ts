@@ -870,4 +870,90 @@ describe('InteractionRepository', () => {
       expect(issues.some((i) => i.issue.includes('DIRECTION_CONFUSED'))).toBe(true);
     });
   });
+
+  describe('getFileLevelImportModulePairs', () => {
+    it('excludes multi-module source files from fallback edges', () => {
+      // File F has definitions in two different modules (moduleId1=auth, moduleId2=api)
+      // This is already the case from beforeEach: defId1→moduleId1, defId2→moduleId2 in same file
+
+      // Create file G with a definition in moduleId3 (core)
+      const fileG = fileRepo.insert({
+        path: '/test/fileG.ts',
+        language: 'typescript',
+        contentHash: 'ggg123',
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+      const defG = fileRepo.insertDefinition(fileG, {
+        name: 'CoreHelper',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+      moduleRepo.assignSymbol(defG, moduleId3);
+
+      // File F (multi-module) imports file G
+      const fileF = db.prepare("SELECT id FROM files WHERE path = '/test/file.ts'").get() as { id: number };
+      db.prepare(
+        'INSERT INTO imports (from_file_id, to_file_id, type, source, is_external, is_type_only, line, column) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(fileF.id, fileG, 'import', './fileG', 0, 0, 1, 0);
+
+      // File F has definitions in moduleId1 AND moduleId2, so it's multi-module
+      // The fallback should NOT produce edges (auth→core or api→core)
+      const pairs = repo.getFileLevelImportModulePairs();
+
+      expect(pairs).toHaveLength(0);
+    });
+
+    it('produces edges when source file has all definitions in one module', () => {
+      // Create file H with a single-module definition (moduleId1=auth only)
+      const fileH = fileRepo.insert({
+        path: '/test/fileH.ts',
+        language: 'typescript',
+        contentHash: 'hhh123',
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+      const defH = fileRepo.insertDefinition(fileH, {
+        name: 'AuthHelper',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+      moduleRepo.assignSymbol(defH, moduleId1);
+
+      // Create file G with a definition in moduleId3 (core)
+      const fileG = fileRepo.insert({
+        path: '/test/fileG.ts',
+        language: 'typescript',
+        contentHash: 'ggg123',
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+      const defG = fileRepo.insertDefinition(fileG, {
+        name: 'CoreHelper',
+        kind: 'function',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 10, column: 1 },
+      });
+      moduleRepo.assignSymbol(defG, moduleId3);
+
+      // File H (single-module: auth) imports file G (core)
+      db.prepare(
+        'INSERT INTO imports (from_file_id, to_file_id, type, source, is_external, is_type_only, line, column) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(fileH, fileG, 'import', './fileG', 0, 0, 1, 0);
+
+      const pairs = repo.getFileLevelImportModulePairs();
+
+      expect(pairs).toHaveLength(1);
+      expect(pairs[0].fromModuleId).toBe(moduleId1);
+      expect(pairs[0].toModuleId).toBe(moduleId3);
+    });
+  });
 });

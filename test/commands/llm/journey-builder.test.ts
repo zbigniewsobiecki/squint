@@ -105,6 +105,59 @@ describe('JourneyBuilder', () => {
 
         expect(result).toHaveLength(1);
       });
+
+      it('groups flows with -list and -detail suffixes into one journey', () => {
+        const flows = [
+          makeFlow({
+            slug: 'view-vehicle-list',
+            name: 'View Vehicle List',
+            targetEntity: 'vehicle-list',
+            actionType: 'view',
+            entryPointModuleId: 1,
+          }),
+          makeFlow({
+            slug: 'view-vehicle-detail',
+            name: 'View Vehicle Detail',
+            targetEntity: 'vehicle-detail',
+            actionType: 'view',
+            entryPointModuleId: 2,
+          }),
+        ];
+
+        const result = builder.buildJourneys(flows);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].targetEntity).toBe('vehicle');
+        expect(result[0].name).toContain('vehicle');
+        expect(result[0].name).not.toContain('-list');
+        expect(result[0].name).not.toContain('-detail');
+        expect(result[0].subflowSlugs).toContain('view-vehicle-list');
+        expect(result[0].subflowSlugs).toContain('view-vehicle-detail');
+      });
+
+      it('normalizes entity in journey targetEntity output', () => {
+        const flows = [
+          makeFlow({ slug: 'a', targetEntity: 'vehicle-list', actionType: 'view' }),
+          makeFlow({ slug: 'b', targetEntity: 'vehicle-detail', actionType: 'update' }),
+        ];
+
+        const result = builder.buildJourneys(flows);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].targetEntity).toBe('vehicle');
+      });
+
+      it('plain entity values without suffix still group correctly', () => {
+        const flows = [
+          makeFlow({ slug: 'a', targetEntity: 'customer', actionType: 'view' }),
+          makeFlow({ slug: 'b', targetEntity: 'customer', actionType: 'create' }),
+        ];
+
+        const result = builder.buildJourneys(flows);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].targetEntity).toBe('customer');
+      });
     });
 
     describe('page journeys', () => {
