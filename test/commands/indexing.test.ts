@@ -5,6 +5,7 @@ import type { ParsedFile } from '../../src/parser/ast-parser.js';
 
 function createMockIndexWriter(): IIndexWriter & {
   calls: { method: string; args: unknown[] }[];
+  getConnection: () => unknown;
 } {
   const calls: { method: string; args: unknown[] }[] = [];
   let fileIdCounter = 0;
@@ -13,6 +14,15 @@ function createMockIndexWriter(): IIndexWriter & {
   let symbolIdCounter = 0;
   let usageCounter = 0;
   const definitions = new Map<string, number>(); // "fileId:name" -> defId
+
+  // Mock database connection for insertFileReferences
+  const mockConnection = {
+    prepare: vi.fn(() => ({
+      all: vi.fn(() => []),
+      get: vi.fn(() => null),
+      run: vi.fn(),
+    })),
+  };
 
   return {
     calls,
@@ -58,6 +68,7 @@ function createMockIndexWriter(): IIndexWriter & {
     close: vi.fn(() => {
       calls.push({ method: 'close', args: [] });
     }),
+    getConnection: vi.fn(() => mockConnection),
   };
 }
 

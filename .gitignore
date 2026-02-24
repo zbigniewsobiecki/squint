@@ -30,3 +30,6 @@ npm-debug.log*
 # Environment
 .env
 .env.local
+
+# CASCADE tooling metadata
+.cascade-progress-comment-id

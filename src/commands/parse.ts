@@ -1,11 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Args, Command, Flags } from '@oclif/core';
+import type Database from 'better-sqlite3';
 import chalk from 'chalk';
 import { type IIndexWriter, IndexDatabase, computeHash } from '../db/database.js';
 import { type ParsedFile, parseFile } from '../parser/ast-parser.js';
 import { buildWorkspaceMap } from '../parser/workspace-resolver.js';
-import { followReExportChain, insertInternalUsages, resolveSymbolToDefinition } from '../sync/reference-resolver.js';
+import { insertFileReferences, insertInternalUsages } from '../sync/reference-resolver.js';
 import { scanDirectory } from '../utils/file-scanner.js';
 
 export interface IndexingResult {
@@ -25,7 +26,7 @@ export interface IndexingResult {
  */
 export function indexParsedFiles(
   parsedFiles: Map<string, ParsedFile>,
-  db: IIndexWriter,
+  db: IIndexWriter & { getConnection: () => Database.Database },
   sourceDirectory: string
 ): IndexingResult {
   // Set metadata
@@ -65,37 +66,7 @@ export function indexParsedFiles(
   // Second pass: Insert references and link symbols to definitions
   for (const [filePath, parsed] of parsedFiles) {
     const fromFileId = fileIdMap.get(filePath)!;
-
-    for (const ref of parsed.references) {
-      // Resolve the target file
-      const toFileId = ref.resolvedPath ? (fileIdMap.get(ref.resolvedPath) ?? null) : null;
-
-      const refId = db.insertReference(fromFileId, toFileId, ref);
-
-      // Insert symbols for this reference
-      for (const sym of ref.imports) {
-        // Try to link to the definition if we have a resolved path
-        let defId = resolveSymbolToDefinition(sym, ref, definitionMap, fileIdMap, db);
-
-        // Follow re-export chains when definition wasn't found directly
-        if (defId === null && ref.resolvedPath && !ref.isExternal) {
-          defId = followReExportChain(
-            sym.kind === 'default' ? 'default' : sym.name,
-            ref.resolvedPath,
-            parsedFiles,
-            definitionMap,
-            new Set()
-          );
-        }
-
-        const symbolId = db.insertSymbol(refId, defId, sym);
-
-        // Insert usages for this symbol
-        for (const usage of sym.usages) {
-          db.insertUsage(symbolId, usage);
-        }
-      }
-    }
+    insertFileReferences(parsed, fromFileId, db, fileIdMap, definitionMap, parsedFiles, db.getConnection());
   }
 
   // Third pass: Insert internal usages (same-file calls)
