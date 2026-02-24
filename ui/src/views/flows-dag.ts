@@ -221,6 +221,7 @@ function renderFlowsDagView(store: Store) {
                     <span class="flow-name" title="${flow.name}">${flow.name}</span>
                     ${flow.description ? `<span class="flow-description">${flow.description}</span>` : ''}
                   </div>
+                  ${flow.actionType ? `<span class="flow-action-badge">${flow.actionType}</span>` : ''}
                   <span class="flow-step-count">${flow.stepCount}</span>
                 </div>
               `;

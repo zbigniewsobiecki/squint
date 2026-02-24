@@ -41,8 +41,8 @@ describe('entry-point-detector heuristics', () => {
     it('detects view actions', () => {
       expect(infer('listCustomers', 'project.sales').actionType).toBe('view');
       expect(infer('viewDetails', 'project.sales').actionType).toBe('view');
-      expect(infer('getUser', 'project.users').actionType).toBe('view');
       expect(infer('showDashboard', 'project.admin').actionType).toBe('view');
+      expect(infer('fetchOrders', 'project.orders').actionType).toBe('view');
     });
 
     it('detects process actions', () => {

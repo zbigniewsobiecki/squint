@@ -23,6 +23,7 @@ export function deduplicateByInteractionOverlap(flows: FlowSuggestion[], thresho
     for (let j = i + 1; j < flows.length; j++) {
       if (dropped.has(j)) continue;
       const b = flows[j];
+
       if (b.interactionIds.length === 0) continue;
 
       // Don't dedup flows that represent different user journeys

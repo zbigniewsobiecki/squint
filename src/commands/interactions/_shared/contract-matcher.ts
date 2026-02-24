@@ -1,5 +1,6 @@
 import type { IndexDatabase } from '../../../db/database-facade.js';
 import type { ContractParticipant, ContractWithParticipants } from '../../../db/schema.js';
+import { stripApiPrefix } from '../../contracts/_shared/key-resolver.js';
 import type { ProcessGroups } from '../../llm/_shared/process-utils.js';
 
 /**
@@ -54,6 +55,19 @@ export interface MaterializeResult {
 }
 
 /**
+ * Build a fuzzy key from a normalizedKey by stripping the HTTP method prefix
+ * and common API path prefixes.
+ * e.g., "GET /api/v1/vehicles/{param}" → "GET /vehicles/{param}"
+ */
+function fuzzyKey(normalizedKey: string): string {
+  const httpMatch = normalizedKey.match(/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)$/i);
+  if (httpMatch) {
+    return `${httpMatch[1].toUpperCase()} ${stripApiPrefix(httpMatch[2])}`;
+  }
+  return stripApiPrefix(normalizedKey);
+}
+
+/**
  * Matches contracts with complementary-role participants in different process groups,
  * then materializes them into interactions with definition-level links.
  */
@@ -66,10 +80,20 @@ export class ContractMatcher {
     const contractsWithParticipants = db.contracts.getAllWithParticipants();
     const results: ContractMatch[] = [];
 
+    // Phase 1: exact within-contract matching
+    const matchedContractIds = new Set<number>();
     for (const contract of contractsWithParticipants) {
       const matches = this.matchContract(contract, processGroups);
+      if (matches.length > 0) {
+        matchedContractIds.add(contract.id);
+      }
       results.push(...matches);
     }
+
+    // Phase 2: cross-contract fuzzy matching for unmatched contracts
+    const unmatchedContracts = contractsWithParticipants.filter((c) => !matchedContractIds.has(c.id));
+    const fuzzyMatches = this.fuzzyMatchAcrossContracts(unmatchedContracts, processGroups);
+    results.push(...fuzzyMatches);
 
     return results;
   }
@@ -237,6 +261,74 @@ export class ContractMatcher {
             handler: aIsInitiator ? pB : pA,
             fromModuleId: aIsInitiator ? pA.moduleId : pB.moduleId,
             toModuleId: aIsInitiator ? pB.moduleId : pA.moduleId,
+          });
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Cross-contract fuzzy matching: find complementary-role participants on
+   * _different_ contracts whose normalizedKeys become identical after stripping
+   * common API prefixes (e.g. /api, /v1, /api/v1).
+   */
+  private fuzzyMatchAcrossContracts(
+    contracts: ContractWithParticipants[],
+    _processGroups: ProcessGroups
+  ): ContractMatch[] {
+    const results: ContractMatch[] = [];
+
+    // Index participants by fuzzy key + protocol
+    const byFuzzyKey = new Map<
+      string,
+      Array<{ contract: ContractWithParticipants; participant: ContractParticipant }>
+    >();
+
+    for (const contract of contracts) {
+      const fKey = `${contract.protocol}:${fuzzyKey(contract.normalizedKey)}`;
+      for (const participant of contract.participants) {
+        if (participant.moduleId === null) continue;
+        const list = byFuzzyKey.get(fKey) ?? [];
+        list.push({ contract, participant });
+        byFuzzyKey.set(fKey, list);
+      }
+    }
+
+    // For each fuzzy key group, find complementary role pairs across contracts
+    const matched = new Set<string>(); // deduplicate by "contractA:contractB:modA:modB"
+    for (const [, entries] of byFuzzyKey) {
+      if (entries.length < 2) continue;
+
+      for (let i = 0; i < entries.length; i++) {
+        const a = entries[i];
+        const roleA = a.participant.role;
+        if (!INITIATOR_ROLES.has(roleA)) continue;
+
+        const complementRole = ROLE_COMPLEMENTS[roleA];
+        if (!complementRole) continue;
+
+        for (let j = 0; j < entries.length; j++) {
+          if (i === j) continue;
+          const b = entries[j];
+          if (b.participant.role !== complementRole) continue;
+          if (a.participant.moduleId === b.participant.moduleId) continue;
+          if (a.contract.id === b.contract.id) continue; // already handled by exact matching
+
+          const dedupKey = `${a.contract.id}:${b.contract.id}:${a.participant.moduleId}:${b.participant.moduleId}`;
+          if (matched.has(dedupKey)) continue;
+          matched.add(dedupKey);
+
+          results.push({
+            contractId: a.contract.id,
+            protocol: a.contract.protocol,
+            key: a.contract.key,
+            normalizedKey: a.contract.normalizedKey,
+            initiator: a.participant,
+            handler: b.participant,
+            fromModuleId: a.participant.moduleId!,
+            toModuleId: b.participant.moduleId!,
           });
         }
       }

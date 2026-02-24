@@ -98,6 +98,9 @@ export function getFlowsData(database: IndexDatabase): {
     entryPath: string | null;
     stakeholder: string | null;
     description: string | null;
+    actionType: string | null;
+    targetEntity: string | null;
+    tier: number;
     stepCount: number;
     steps: Array<{
       stepOrder: number;
@@ -134,6 +137,8 @@ export function getFlowsData(database: IndexDatabase): {
           entryPath: flow.entryPath,
           stakeholder: flow.stakeholder,
           description: flow.description,
+          actionType: flow.actionType,
+          targetEntity: flow.targetEntity,
           tier: flow.tier,
           stepCount: steps.length,
           steps: steps.map((step) => ({
@@ -193,6 +198,8 @@ export function getFlowsDagData(database: IndexDatabase): {
     name: string;
     stakeholder: string | null;
     description: string | null;
+    actionType: string | null;
+    targetEntity: string | null;
     tier: number;
     stepCount: number;
     steps: Array<{
@@ -248,6 +255,8 @@ export function getFlowsDagData(database: IndexDatabase): {
           name: flow.name,
           stakeholder: flow.stakeholder,
           description: flow.description,
+          actionType: flow.actionType,
+          targetEntity: flow.targetEntity,
           tier: flow.tier,
           stepCount: defSteps.length,
           steps: defSteps
@@ -271,6 +280,8 @@ export function getFlowsDagData(database: IndexDatabase): {
         name: flow.name,
         stakeholder: flow.stakeholder,
         description: flow.description,
+        actionType: flow.actionType,
+        targetEntity: flow.targetEntity,
         tier: flow.tier,
         stepCount: steps.length,
         steps: steps.map((step) => ({

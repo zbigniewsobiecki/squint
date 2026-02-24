@@ -73,9 +73,16 @@ function updateStatsForView(view: string) {
       <span class="stat">Unassigned: <span class="stat-value" id="stat-unassigned">${unassigned}</span></span>
     `;
   } else if (view === 'flows') {
+    const allFlows = state.flowsDagData?.flows ?? [];
+    const operations = allFlows.filter((f) => f.tier === 1).length;
+    const journeys = allFlows.filter((f) => f.tier === 2).length;
+    const featureCount = state.flowsDagData?.features?.length ?? 0;
+    const moduleCount = state.flowsDagData?.modules.length ?? '-';
     statsContainer.innerHTML = `
-      <span class="stat">Flows: <span class="stat-value" id="stat-flows">${state.flowsDagData?.flows.length ?? '-'}</span></span>
-      <span class="stat">Modules: <span class="stat-value" id="stat-modules">${state.flowsDagData?.modules.length ?? '-'}</span></span>
+      <span class="stat">Operations: <span class="stat-value">${operations}</span></span>
+      <span class="stat">Journeys: <span class="stat-value">${journeys}</span></span>
+      <span class="stat">Features: <span class="stat-value">${featureCount}</span></span>
+      <span class="stat">Modules: <span class="stat-value">${moduleCount}</span></span>
     `;
   } else if (view === 'interactions') {
     const data = state.interactionsData;

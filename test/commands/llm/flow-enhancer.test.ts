@@ -435,6 +435,97 @@ project.frontend.Home::unknown,"user views home","Home page"
     });
   });
 
+  describe('5-column CSV parsing (entry_point, name, description, action_type, target_entity)', () => {
+    const enhancer = createEnhancer();
+    const parseCSV = (response: string, flows: FlowSuggestion[]) =>
+      (enhancer as any).parseEnhancedFlowsCSV(response, flows);
+
+    it('backfills actionType from LLM when original is null', () => {
+      const response = `\`\`\`csv
+entry_point,name,description,action_type,target_entity
+project.frontend.Home::unknown,"user views dashboard","Displays dashboard",view,dashboard
+\`\`\``;
+
+      const flows = [makeFlow({ actionType: null, targetEntity: null, entryPath: 'project.frontend.Home' })];
+      // The compound key uses 'unknown' when actionType is null
+      const result = parseCSV(response, flows);
+
+      expect(result[0].actionType).toBe('view');
+      expect(result[0].targetEntity).toBe('dashboard');
+    });
+
+    it('does NOT override existing actionType from LLM response', () => {
+      const response = `\`\`\`csv
+entry_point,name,description,action_type,target_entity
+project.frontend.Home::view,"user views dashboard","Displays dashboard",create,widget
+\`\`\``;
+
+      const flows = [makeFlow({ actionType: 'view', targetEntity: 'dashboard' })];
+      const result = parseCSV(response, flows);
+
+      // Original actionType and targetEntity should be preserved
+      expect(result[0].actionType).toBe('view');
+      expect(result[0].targetEntity).toBe('dashboard');
+    });
+
+    it('backfills targetEntity from LLM when original is null', () => {
+      const response = `\`\`\`csv
+entry_point,name,description,action_type,target_entity
+project.frontend.Home::view,"user views vehicles","Lists vehicles",view,vehicle
+\`\`\``;
+
+      const flows = [makeFlow({ actionType: 'view', targetEntity: null })];
+      const result = parseCSV(response, flows);
+
+      // actionType already set, should not change; targetEntity should be backfilled
+      expect(result[0].actionType).toBe('view');
+      expect(result[0].targetEntity).toBe('vehicle');
+    });
+
+    it('handles 3-column CSV gracefully (no actionType/targetEntity columns)', () => {
+      const response = `\`\`\`csv
+entry_point,name,description
+project.frontend.Home::view,"user views dashboard","Displays dashboard"
+\`\`\``;
+
+      const flows = [makeFlow({ actionType: null, targetEntity: null })];
+      const result = parseCSV(response, flows);
+
+      // No columns 4-5, so actionType and targetEntity stay null
+      expect(result[0].actionType).toBeNull();
+      expect(result[0].targetEntity).toBeNull();
+    });
+
+    it('rejects invalid actionType from LLM', () => {
+      const response = `\`\`\`csv
+entry_point,name,description,action_type,target_entity
+project.frontend.Home::unknown,"user xyz dashboard","Does something",invalidaction,dashboard
+\`\`\``;
+
+      const flows = [makeFlow({ actionType: null, targetEntity: null, entryPath: 'project.frontend.Home' })];
+      const result = parseCSV(response, flows);
+
+      // Invalid actionType should not be applied
+      expect(result[0].actionType).toBeNull();
+      // targetEntity should still be backfilled
+      expect(result[0].targetEntity).toBe('dashboard');
+    });
+
+    it('handles empty action_type and target_entity columns', () => {
+      const response = `\`\`\`csv
+entry_point,name,description,action_type,target_entity
+project.frontend.Home::view,"user views home","Home page",,
+\`\`\``;
+
+      const flows = [makeFlow({ actionType: 'view', targetEntity: null })];
+      const result = parseCSV(response, flows);
+
+      // Empty columns → null, originals preserved
+      expect(result[0].actionType).toBe('view');
+      expect(result[0].targetEntity).toBeNull();
+    });
+  });
+
   describe('buildEnhancementUserPrompt', () => {
     const enhancer = createEnhancer();
     const buildPrompt = (flows: FlowSuggestion[], interactionMap: Map<number, any>) =>

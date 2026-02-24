@@ -7,7 +7,7 @@ import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command
 import { extractCsvContent, parseRow, splitCsvLines } from '../llm/_shared/csv-utils.js';
 import { completeWithLogging, getErrorMessage } from '../llm/_shared/llm-utils.js';
 import { computeProcessGroups, getProcessGroupLabel } from '../llm/_shared/process-utils.js';
-import { resolveContractKeys } from './_shared/key-resolver.js';
+import { normalizeContractKeys, resolveContractKeys } from './_shared/key-resolver.js';
 import { resolveMounts } from './_shared/mount-resolver.js';
 
 /**
@@ -154,7 +154,7 @@ export default class ContractsExtract extends BaseLlmCommand {
 
         if (!dryRun) {
           for (const { definitionId, moduleId, contracts, filePath: defFilePath } of results) {
-            const resolvedContracts = resolveContractKeys(contracts, defFilePath, mountResult);
+            const resolvedContracts = normalizeContractKeys(resolveContractKeys(contracts, defFilePath, mountResult));
             for (const entry of resolvedContracts) {
               const normalizedKey = sanitizeNormalizedKey(entry.normalizedKey ?? entry.key);
               const contractId = db.contracts.upsertContract(entry.protocol, entry.key, normalizedKey, entry.details);

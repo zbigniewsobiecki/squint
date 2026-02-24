@@ -62,7 +62,7 @@ export default class ModulesGenerate extends BaseLlmCommand {
       description: 'Symbols per LLM call during assignment phase',
     }),
     'max-iterations': Flags.integer({
-      default: 100,
+      default: 200,
       description: 'Maximum LLM iterations for assignment phase',
     }),
     incremental: Flags.boolean({

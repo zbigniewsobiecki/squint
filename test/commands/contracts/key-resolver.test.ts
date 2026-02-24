@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { resolveContractKeys } from '../../../src/commands/contracts/_shared/key-resolver.js';
+import {
+  STRIP_PREFIXES,
+  normalizeContractKeys,
+  resolveContractKeys,
+  stripApiPrefix,
+} from '../../../src/commands/contracts/_shared/key-resolver.js';
 import type { MountResolverResult } from '../../../src/commands/contracts/_shared/mount-resolver.js';
 
 describe('key-resolver', () => {
@@ -219,6 +224,135 @@ describe('key-resolver', () => {
       const result = resolveContractKeys(contracts, '/src/routes/foo.ts', mounts);
 
       expect(result[0].normalizedKey).toBe('GET /api/apifoo');
+    });
+  });
+
+  describe('STRIP_PREFIXES', () => {
+    it('contains expected API version prefixes in priority order', () => {
+      expect(STRIP_PREFIXES).toEqual(['/api/v1', '/api/v2', '/api/v3', '/api']);
+    });
+  });
+
+  describe('stripApiPrefix', () => {
+    it('strips /api/v1 prefix', () => {
+      expect(stripApiPrefix('/api/v1/vehicles')).toBe('/vehicles');
+    });
+
+    it('strips /api/v2 prefix', () => {
+      expect(stripApiPrefix('/api/v2/users')).toBe('/users');
+    });
+
+    it('strips /api/v3 prefix', () => {
+      expect(stripApiPrefix('/api/v3/items')).toBe('/items');
+    });
+
+    it('strips /api prefix', () => {
+      expect(stripApiPrefix('/api/vehicles')).toBe('/vehicles');
+    });
+
+    it('returns / when path equals prefix exactly', () => {
+      expect(stripApiPrefix('/api/v1')).toBe('/');
+      expect(stripApiPrefix('/api')).toBe('/');
+    });
+
+    it('does not strip /api from /apifoo (segment boundary)', () => {
+      expect(stripApiPrefix('/apifoo')).toBe('/apifoo');
+    });
+
+    it('returns path unchanged when no prefix matches', () => {
+      expect(stripApiPrefix('/vehicles')).toBe('/vehicles');
+      expect(stripApiPrefix('/users/123')).toBe('/users/123');
+    });
+
+    it('prefers longest matching prefix (/api/v1 over /api)', () => {
+      // /api/v1/foo should strip /api/v1 (first match), not /api
+      expect(stripApiPrefix('/api/v1/foo')).toBe('/foo');
+    });
+
+    it('handles paths with parameters', () => {
+      expect(stripApiPrefix('/api/v1/vehicles/{id}')).toBe('/vehicles/{id}');
+    });
+  });
+
+  describe('normalizeContractKeys', () => {
+    it('strips API prefix from HTTP contract normalizedKey', () => {
+      const contracts = [
+        { protocol: 'http', role: 'server', key: 'GET /api/v1/vehicles', normalizedKey: 'GET /api/v1/vehicles' },
+      ];
+
+      const result = normalizeContractKeys(contracts);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].normalizedKey).toBe('GET /vehicles');
+    });
+
+    it('preserves original key field', () => {
+      const contracts = [
+        { protocol: 'http', role: 'server', key: 'GET /api/v1/vehicles', normalizedKey: 'GET /api/v1/vehicles' },
+      ];
+
+      const result = normalizeContractKeys(contracts);
+
+      expect(result[0].key).toBe('GET /api/v1/vehicles');
+    });
+
+    it('passes through non-HTTP contracts unchanged', () => {
+      const contracts = [{ protocol: 'websocket', role: 'server', key: 'connection', normalizedKey: 'connection' }];
+
+      const result = normalizeContractKeys(contracts);
+
+      expect(result).toEqual(contracts);
+    });
+
+    it('passes through HTTP contracts without prefix unchanged', () => {
+      const contracts = [{ protocol: 'http', role: 'client', key: 'GET /vehicles', normalizedKey: 'GET /vehicles' }];
+
+      const result = normalizeContractKeys(contracts);
+
+      expect(result[0].normalizedKey).toBe('GET /vehicles');
+    });
+
+    it('falls back to key when normalizedKey is undefined', () => {
+      const contracts = [{ protocol: 'http', role: 'server', key: 'GET /api/v1/users' }];
+
+      const result = normalizeContractKeys(contracts);
+
+      expect(result[0].normalizedKey).toBe('GET /users');
+    });
+
+    it('handles malformed HTTP keys (no method) gracefully', () => {
+      const contracts = [
+        { protocol: 'http', role: 'server', key: '/api/v1/vehicles', normalizedKey: '/api/v1/vehicles' },
+      ];
+
+      const result = normalizeContractKeys(contracts);
+
+      // No HTTP method → regex won't match → pass through unchanged
+      expect(result[0].normalizedKey).toBe('/api/v1/vehicles');
+    });
+
+    it('normalizes multiple contracts in a batch', () => {
+      const contracts = [
+        { protocol: 'http', role: 'server', key: 'GET /api/v1/vehicles', normalizedKey: 'GET /api/v1/vehicles' },
+        { protocol: 'http', role: 'client', key: 'POST /api/users', normalizedKey: 'POST /api/users' },
+        { protocol: 'websocket', role: 'server', key: 'item:update' },
+      ];
+
+      const result = normalizeContractKeys(contracts);
+
+      expect(result[0].normalizedKey).toBe('GET /vehicles');
+      expect(result[1].normalizedKey).toBe('POST /users');
+      expect(result[2]).toEqual(contracts[2]);
+    });
+
+    it('uppercases HTTP method in result', () => {
+      const contracts = [
+        { protocol: 'http', role: 'server', key: 'get /api/v1/items', normalizedKey: 'get /api/v1/items' },
+      ];
+
+      const result = normalizeContractKeys(contracts);
+
+      expect(result[0].normalizedKey).toBe('GET /items');
     });
   });
 });
