@@ -20,6 +20,7 @@ export default class Sync extends Command {
     '<%= config.bin %> sync ./src',
     '<%= config.bin %> sync ./src --check',
     '<%= config.bin %> sync ./src --enrich',
+    '<%= config.bin %> sync ./src --enrich --strict',
     '<%= config.bin %> sync ./src -d .squint.db --verbose',
     '<%= config.bin %> sync ./src --install-hook',
   ];
@@ -48,6 +49,10 @@ export default class Sync extends Command {
       char: 'm',
       description: 'LLM model for --enrich mode',
       default: 'openrouter:google/gemini-2.5-flash',
+    }),
+    strict: Flags.boolean({
+      description: 'Exit non-zero if enrichment warnings occur (CI mode)',
+      default: false,
     }),
     verbose: Flags.boolean({
       description: 'Detailed output',
@@ -149,7 +154,17 @@ export default class Sync extends Command {
 
     // Apply sync
     this.log(chalk.blue('Applying AST sync...'));
-    const result = await applySync(changes, directory, db, flags.verbose, (msg: string) => this.log(chalk.gray(msg)));
+    let result: Awaited<ReturnType<typeof applySync>>;
+    try {
+      result = await applySync(changes, directory, db, flags.verbose, (msg: string) => this.log(chalk.gray(msg)));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('SQLITE_BUSY') || message.includes('database is locked')) {
+        db.close();
+        this.error(chalk.red('Another squint process is writing to this database. Try again shortly.'));
+      }
+      throw error;
+    }
 
     // Report
     this.log('');
@@ -190,13 +205,16 @@ export default class Sync extends Command {
       this.log(chalk.blue('Running LLM enrichment...'));
 
       const llmFlags = ['-d', dbPath, '--model', flags.model!];
+      const enrichmentWarnings: string[] = [];
 
       try {
         this.log(chalk.gray('  Annotating symbols...'));
         await SymbolsAnnotate.run(['--aspect', 'purpose', '--aspect', 'domain', '--aspect', 'pure', ...llmFlags]);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        this.warn(chalk.yellow(`  Symbol annotation warning: ${msg}`));
+        const warning = `Symbol annotation warning: ${msg}`;
+        this.warn(chalk.yellow(`  ${warning}`));
+        enrichmentWarnings.push(warning);
       }
 
       try {
@@ -204,7 +222,9 @@ export default class Sync extends Command {
         await RelationshipsAnnotate.run(llmFlags);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        this.warn(chalk.yellow(`  Relationship annotation warning: ${msg}`));
+        const warning = `Relationship annotation warning: ${msg}`;
+        this.warn(chalk.yellow(`  ${warning}`));
+        enrichmentWarnings.push(warning);
       }
 
       // Step 3: Assign new definitions to existing modules
@@ -214,7 +234,9 @@ export default class Sync extends Command {
           await ModulesGenerate.run(['--incremental', '--phase', 'assign', '--deepen-threshold', '0', ...llmFlags]);
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          this.warn(chalk.yellow(`  Module assignment warning: ${msg}`));
+          const warning = `Module assignment warning: ${msg}`;
+          this.warn(chalk.yellow(`  ${warning}`));
+          enrichmentWarnings.push(warning);
         }
       }
 
@@ -225,7 +247,9 @@ export default class Sync extends Command {
           await ContractsExtract.run(['--force', ...llmFlags]);
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          this.warn(chalk.yellow(`  Contract extraction warning: ${msg}`));
+          const warning = `Contract extraction warning: ${msg}`;
+          this.warn(chalk.yellow(`  ${warning}`));
+          enrichmentWarnings.push(warning);
         }
       }
 
@@ -235,7 +259,9 @@ export default class Sync extends Command {
         await InteractionsGenerate.run(['--force', ...llmFlags]);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        this.warn(chalk.yellow(`  Interaction generation warning: ${msg}`));
+        const warning = `Interaction generation warning: ${msg}`;
+        this.warn(chalk.yellow(`  ${warning}`));
+        enrichmentWarnings.push(warning);
       }
 
       // Step 6: Regenerate flows
@@ -245,7 +271,9 @@ export default class Sync extends Command {
           await FlowsGenerate.run(['--force', ...llmFlags]);
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          this.warn(chalk.yellow(`  Flow generation warning: ${msg}`));
+          const warning = `Flow generation warning: ${msg}`;
+          this.warn(chalk.yellow(`  ${warning}`));
+          enrichmentWarnings.push(warning);
         }
 
         // Step 7: Regenerate features
@@ -254,11 +282,22 @@ export default class Sync extends Command {
           await FeaturesGenerate.run(['--force', ...llmFlags]);
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          this.warn(chalk.yellow(`  Feature generation warning: ${msg}`));
+          const warning = `Feature generation warning: ${msg}`;
+          this.warn(chalk.yellow(`  ${warning}`));
+          enrichmentWarnings.push(warning);
         }
       }
 
       this.log(chalk.green.bold('Enrichment complete.'));
+
+      if (flags.strict && enrichmentWarnings.length > 0) {
+        this.log('');
+        this.log(chalk.yellow(`${enrichmentWarnings.length} enrichment warning(s) in --strict mode:`));
+        for (const w of enrichmentWarnings) {
+          this.log(chalk.yellow(`  - ${w}`));
+        }
+        this.exit(2);
+      }
     } else if (result.staleMetadataCount > 0 || result.unassignedCount > 0) {
       this.log('');
       this.log(chalk.gray("Run 'squint sync --enrich' to update annotations, modules, and flows."));
