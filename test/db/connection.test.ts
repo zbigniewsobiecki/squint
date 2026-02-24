@@ -31,6 +31,14 @@ describe('connection', () => {
       expect(mode).toBe('wal');
       db.close();
     });
+
+    it('sets busy_timeout to 5000ms', () => {
+      const dbPath = path.join(tmpDir, 'busy.db');
+      const db = createConnection(dbPath);
+      const timeout = db.pragma('busy_timeout', { simple: true });
+      expect(timeout).toBe(5000);
+      db.close();
+    });
   });
 
   describe('initializeSchema', () => {

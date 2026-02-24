@@ -31,6 +31,7 @@ Squint indexes TypeScript and JavaScript source code into an SQLite database, th
   - [Show Command JSON Schemas](#show-command-json-schemas)
   - [Example Drill-Down Session](#example-drill-down-session)
 - [Understanding Workflow](#understanding-workflow)
+- [CI/CD Integration](#cicd-integration)
 - [Database Schema](#database-schema)
 - [Development](#development)
 - [License](#license)
@@ -1168,6 +1169,84 @@ squint browse
 
 ```bash
 squint ingest ./src
+```
+
+---
+
+## CI/CD Integration
+
+`squint sync` is designed for automated pipelines. It incrementally updates the SQLite database to match source code changes — no LLM required for the core AST sync.
+
+### The parse → sync Lifecycle
+
+```bash
+# Initial setup (run once)
+squint parse ./src
+
+# On every push — incremental sync
+squint sync ./src
+```
+
+`squint parse` creates the database from scratch. `squint sync` detects new, modified, and deleted files via content hashing, then applies only the necessary changes inside a single atomic transaction. If the process is interrupted, the database rolls back to its previous consistent state.
+
+### `--check` as a CI Gate
+
+Use `--check` for a dry-run that reports changes without modifying the database:
+
+```bash
+squint sync ./src --check
+```
+
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | Database is in sync with source code |
+| 1 | Database is out of sync (changes detected) |
+
+This is useful as a CI gate to ensure the database was committed alongside code changes.
+
+### `--strict` for Enrichment Quality Gates
+
+When running with `--enrich`, enrichment steps (LLM annotation, module assignment, etc.) may produce warnings. By default these are non-fatal. Use `--strict` to fail the pipeline:
+
+```bash
+squint sync ./src --enrich --strict
+```
+
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | Sync and enrichment succeeded |
+| 1 | Out of sync (with `--check`) |
+| 2 | Enrichment completed with warnings (`--strict` mode) |
+
+### Database Persistence Strategies
+
+The `.squint.db` file must persist between CI runs. Common approaches:
+
+- **Commit to repository** — simplest; the DB stays in sync with the code it describes
+- **CI cache** — cache the DB keyed on a hash of the source directory; `squint sync` handles staleness
+- **Artifact storage** — download from a previous run, sync, then re-upload
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `SQUINT_DB_PATH` | Override the default database path (respected by all commands) |
+| `NO_COLOR` | Disable colored output (standard convention) |
+
+### Concurrency
+
+`squint sync` acquires an exclusive database lock during writes. If two processes attempt to sync concurrently, the second will wait up to 5 seconds before producing a clear `SQLITE_BUSY` error. In CI, this is rarely an issue since sync is typically a serial pipeline step.
+
+### Example GitHub Actions Workflow
+
+```yaml
+- name: Sync squint database
+  run: squint sync ./src --check
+  # Fails if the committed DB is stale
+
+- name: Update and enrich
+  run: squint sync ./src --enrich --strict
+  # Fails if enrichment has warnings
 ```
 
 ---
