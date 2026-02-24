@@ -14,6 +14,7 @@ import type { IndexDatabase } from '../../db/database.js';
 import { type InteractionWithPaths, isRuntimeInteraction } from '../../db/schema.js';
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
+import { groupModulesByEntity } from '../llm/_shared/entity-utils.js';
 import {
   calculatePercentage,
   getErrorMessage,
@@ -149,6 +150,15 @@ export default class FlowsGenerate extends BaseLlmCommand {
       }
     }
 
+    // Build module-to-entity map for entity-scoped flow tracing
+    const entityGroups = groupModulesByEntity(allModules, moduleEntityOverrides);
+    const moduleEntityMap = new Map<number, string>();
+    for (const [entity, mods] of entityGroups) {
+      for (const mod of mods) {
+        moduleEntityMap.set(mod.id, entity);
+      }
+    }
+
     const atomicFlowBuilder = new AtomicFlowBuilder();
     const atomicFlows = atomicFlowBuilder.buildAtomicFlows(interactions, allModules, moduleEntityOverrides);
 
@@ -172,7 +182,8 @@ export default class FlowsGenerate extends BaseLlmCommand {
       allModulesWithMembers,
       interactions,
       entryPointModuleIds,
-      definitionLinks
+      definitionLinks,
+      moduleEntityMap
     );
     const flowTracer = new FlowTracer(tracingContext);
     const flowSuggestions = flowTracer.traceFlowsFromEntryPoints(entryPointModules, atomicFlows);
@@ -203,7 +214,11 @@ export default class FlowsGenerate extends BaseLlmCommand {
 
     let coveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
     const gapFlowGenerator = new GapFlowGenerator();
-    let gapFlows = gapFlowGenerator.createGapFlows(coveredIds, interactions);
+    let gapFlows = this.filterGapFlows(
+      gapFlowGenerator.createGapFlows(coveredIds, interactions, moduleEntityMap),
+      verbose,
+      isJson
+    );
     enhancedFlows.push(...gapFlows);
 
     logVerbose(this, `Created ${gapFlows.length} gap flows for uncovered interactions`, verbose, isJson);
@@ -327,7 +342,11 @@ export default class FlowsGenerate extends BaseLlmCommand {
           const oldGapCount = gapFlows.length;
           // Remove old gap flows
           enhancedFlows = enhancedFlows.filter((f) => f.entryPointModuleId !== null);
-          gapFlows = gapFlowGenerator.createGapFlows(coveredIds, interactions);
+          gapFlows = this.filterGapFlows(
+            gapFlowGenerator.createGapFlows(coveredIds, interactions, moduleEntityMap),
+            verbose,
+            isJson
+          );
           enhancedFlows.push(...gapFlows);
           if (gapFlows.length < oldGapCount) {
             logVerbose(this, `  Gap flows reduced: ${oldGapCount} → ${gapFlows.length}`, verbose, isJson);
@@ -372,7 +391,11 @@ export default class FlowsGenerate extends BaseLlmCommand {
 
     // Post-dedup gap flow pass to restore coverage for any interactions lost during dedup
     const finalCoveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
-    const finalGapFlows = gapFlowGenerator.createGapFlows(finalCoveredIds, interactions);
+    const finalGapFlows = this.filterGapFlows(
+      gapFlowGenerator.createGapFlows(finalCoveredIds, interactions, moduleEntityMap),
+      verbose,
+      isJson
+    );
     if (finalGapFlows.length > 0) {
       enhancedFlows.push(...finalGapFlows);
       logVerbose(this, `Post-dedup gap pass added ${finalGapFlows.length} flows to restore coverage`, verbose, isJson);
@@ -593,6 +616,24 @@ export default class FlowsGenerate extends BaseLlmCommand {
     }
 
     return { passed: failures.length === 0, failures };
+  }
+
+  /**
+   * Filter out single-interaction gap flows with no entity (internal plumbing noise).
+   * Logs suppressed count so operators can diagnose coverage dips.
+   */
+  private filterGapFlows(gapFlows: FlowSuggestion[], verbose: boolean, isJson: boolean): FlowSuggestion[] {
+    const meaningful = gapFlows.filter((f) => f.interactionIds.length > 1 || f.targetEntity !== null);
+    const suppressedCount = gapFlows.length - meaningful.length;
+    if (suppressedCount > 0) {
+      logVerbose(
+        this,
+        `  Suppressed ${suppressedCount} single-interaction gap flow(s) with no entity`,
+        verbose,
+        isJson
+      );
+    }
+    return meaningful;
   }
 
   /**

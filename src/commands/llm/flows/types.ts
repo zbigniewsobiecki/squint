@@ -97,6 +97,7 @@ export interface FlowTracingContext {
       source: 'llm-inferred' | 'contract-matched';
     }>
   >;
+  moduleEntityMap: Map<number, string>;
 }
 
 export interface LlmOptions {

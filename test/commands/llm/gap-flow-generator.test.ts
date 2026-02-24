@@ -92,6 +92,72 @@ describe('GapFlowGenerator', () => {
       expect(gaps[0].interactionIds).toEqual([2]);
     });
 
+    it('returns single-interaction entity-less gap flows (filtering is caller responsibility)', () => {
+      const gen = new GapFlowGenerator();
+      const interactions = [
+        makeInteraction({ id: 1, fromModuleId: 10, toModuleId: 20, fromModulePath: 'project.internal' }),
+      ];
+
+      // No entity map → no entity inferred → single interaction, no entity
+      const gaps = gen.createGapFlows(new Set(), interactions);
+      expect(gaps).toHaveLength(1);
+      expect(gaps[0].interactionIds).toEqual([1]);
+      expect(gaps[0].targetEntity).toBeNull();
+    });
+
+    it('infers entity from moduleEntityMap when all interactions share one entity', () => {
+      const gen = new GapFlowGenerator();
+      const interactions = [
+        makeInteraction({ id: 1, fromModuleId: 10, toModuleId: 20, fromModulePath: 'project.services' }),
+        makeInteraction({ id: 2, fromModuleId: 10, toModuleId: 30, fromModulePath: 'project.services' }),
+      ];
+
+      const moduleEntityMap = new Map([
+        [10, 'Vehicle'],
+        [20, 'Vehicle'],
+        [30, 'Vehicle'],
+      ]);
+
+      const gaps = gen.createGapFlows(new Set(), interactions, moduleEntityMap);
+      expect(gaps).toHaveLength(1);
+      expect(gaps[0].targetEntity).toBe('vehicle'); // lowercased
+      expect(gaps[0].actionType).toBe('process'); // entity inferred → actionType set
+    });
+
+    it('does not infer entity when interactions span multiple entities', () => {
+      const gen = new GapFlowGenerator();
+      const interactions = [
+        makeInteraction({ id: 1, fromModuleId: 10, toModuleId: 20, fromModulePath: 'project.services' }),
+        makeInteraction({ id: 2, fromModuleId: 10, toModuleId: 30, fromModulePath: 'project.services' }),
+      ];
+
+      const moduleEntityMap = new Map([
+        [10, 'Vehicle'],
+        [20, 'Vehicle'],
+        [30, 'Customer'],
+      ]);
+
+      const gaps = gen.createGapFlows(new Set(), interactions, moduleEntityMap);
+      expect(gaps).toHaveLength(1);
+      expect(gaps[0].targetEntity).toBeNull();
+    });
+
+    it('ignores _generic entities when inferring entity', () => {
+      const gen = new GapFlowGenerator();
+      const interactions = [
+        makeInteraction({ id: 1, fromModuleId: 10, toModuleId: 20, fromModulePath: 'project.services' }),
+      ];
+
+      const moduleEntityMap = new Map([
+        [10, '_generic'],
+        [20, 'Vehicle'],
+      ]);
+
+      const gaps = gen.createGapFlows(new Set(), interactions, moduleEntityMap);
+      expect(gaps).toHaveLength(1);
+      expect(gaps[0].targetEntity).toBe('vehicle');
+    });
+
     it('includes description with module path', () => {
       const gen = new GapFlowGenerator();
       const interactions = [
