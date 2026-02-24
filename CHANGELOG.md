@@ -1,3 +1,14 @@
+## [1.12.0](https://github.com/zbigniewsobiecki/squint/compare/v1.11.1...v1.12.0) (2026-02-24)
+
+### Features
+
+* make squint sync CI-ready with --strict flag, atomic transactions, and concurrency guard ([174f13e](https://github.com/zbigniewsobiecki/squint/commit/174f13e00a582191502d4603df3a8c319e8e43d1))
+
+### Bug Fixes
+
+* remove dead code and fix logging consistency in phase modules ([13ffa34](https://github.com/zbigniewsobiecki/squint/commit/13ffa34419ddf59e0692fc0ea169d3fbd0feb69d))
+* resolve phantom edges, missing server contracts, and entity grouping ([82a2967](https://github.com/zbigniewsobiecki/squint/commit/82a296720a0b3aad601cb6499f07994b92e9819b))
+
 ## [1.11.1](https://github.com/zbigniewsobiecki/squint/compare/v1.11.0...v1.11.1) (2026-02-24)
 
 ### Bug Fixes
