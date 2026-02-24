@@ -93,11 +93,14 @@ BAD (DO NOT produce):
 
 ## Output
 \`\`\`csv
-entry_point,name,description
-handleItemCreate::create,"admin creates new item","Validates and persists item record"
-ListView::view,"user views item list","Displays available items with filters"
-handleRemove::delete,"user deletes record","Removes record after confirmation"
+entry_point,name,description,action_type,target_entity
+handleItemCreate::create,"admin creates new item","Validates and persists item record",create,item
+ListView::view,"user views item list","Displays available items with filters",view,item
+handleRemove::delete,"user deletes record","Removes record after confirmation",delete,record
 \`\`\`
+
+- action_type: one of view, create, update, delete, process (use the most appropriate for this flow)
+- target_entity: the domain entity this flow operates on (singular, lowercase)
 
 IMPORTANT: The entry_point column MUST match the entry point value from the input exactly (including the ::actionType suffix). This is used to match responses back to flows.`;
   }
@@ -161,7 +164,10 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
     const lines = csvContent.split('\n').filter((l) => l.trim() && !l.startsWith('entry_point'));
 
     // Build a lookup from entry_point value → parsed enhancement
-    const enhancementByKey = new Map<string, { name: string; description: string }>();
+    const enhancementByKey = new Map<
+      string,
+      { name: string; description: string; actionType: string | null; targetEntity: string | null }
+    >();
     for (const line of lines) {
       const fields = parseRow(line);
       if (!fields || fields.length < 3) continue;
@@ -169,9 +175,11 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
       const entryPoint = fields[0].trim().replace(/"/g, '');
       const name = fields[1].trim().replace(/"/g, '');
       const description = fields[2].trim().replace(/"/g, '');
+      const actionType = fields.length >= 4 ? fields[3].trim().replace(/"/g, '') || null : null;
+      const targetEntity = fields.length >= 5 ? fields[4].trim().replace(/"/g, '') || null : null;
 
       if (entryPoint && name) {
-        enhancementByKey.set(entryPoint, { name, description });
+        enhancementByKey.set(entryPoint, { name, description, actionType, targetEntity });
       }
     }
 
@@ -182,6 +190,8 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
       developer: 'developer',
       external: 'external',
     };
+
+    const validActionTypes = new Set(['view', 'create', 'update', 'delete', 'process']);
 
     // Match each original flow to its enhancement by entry_point key
     return originalFlows.map((original) => {
@@ -199,11 +209,21 @@ IMPORTANT: Follow the exact format "[stakeholder] [verb]s [entity]" - all lowerc
       const firstWord = newName.split(' ')[0]?.toLowerCase();
       const derivedStakeholder = validStakeholders[firstWord] ?? null;
 
+      // Backfill action_type and target_entity from LLM if the flow is missing them
+      const backfilledActionType =
+        !original.actionType && enhancement.actionType && validActionTypes.has(enhancement.actionType)
+          ? (enhancement.actionType as FlowSuggestion['actionType'])
+          : original.actionType;
+      const backfilledTargetEntity =
+        !original.targetEntity && enhancement.targetEntity ? enhancement.targetEntity : original.targetEntity;
+
       return {
         ...original,
         name: newName || original.name,
         slug: newSlug || original.slug,
         description: enhancement.description || original.description,
+        actionType: backfilledActionType,
+        targetEntity: backfilledTargetEntity,
         ...(derivedStakeholder ? { stakeholder: derivedStakeholder } : {}),
       };
     });

@@ -188,6 +188,75 @@ describe('ContractMatcher', () => {
     });
   });
 
+  describe('fuzzy cross-contract matching', () => {
+    it('matches complementary roles across two contracts with different API prefixes', () => {
+      // Server contract: /api/v1/vehicles
+      const c1 = db.contracts.upsertContract('http', 'GET /api/v1/vehicles', 'GET /api/v1/vehicles');
+      db.contracts.addParticipant(c1, defId1, moduleId1, 'server');
+
+      // Client contract: /vehicles (no prefix)
+      const c2 = db.contracts.upsertContract('http', 'GET /vehicles', 'GET /vehicles');
+      db.contracts.addParticipant(c2, defId2, moduleId2, 'client');
+
+      const matches = matcher.match(db, processGroups);
+
+      // Phase 1 (exact) finds nothing, Phase 2 (fuzzy) should find the cross-contract match
+      expect(matches).toHaveLength(1);
+      expect(matches[0].fromModuleId).toBe(moduleId2); // client = initiator
+      expect(matches[0].toModuleId).toBe(moduleId1); // server = handler
+    });
+
+    it('does not fuzzy-match contracts that are already exactly matched', () => {
+      // Single contract with both roles — exact match handles it
+      const c1 = db.contracts.upsertContract('http', 'GET /vehicles', 'GET /vehicles');
+      db.contracts.addParticipant(c1, defId1, moduleId1, 'server');
+      db.contracts.addParticipant(c1, defId2, moduleId2, 'client');
+
+      const matches = matcher.match(db, processGroups);
+
+      // Should get exactly 1 match from Phase 1, not duplicated by Phase 2
+      expect(matches).toHaveLength(1);
+    });
+
+    it('does not fuzzy-match across different protocols', () => {
+      const c1 = db.contracts.upsertContract('http', 'GET /vehicles', 'GET /vehicles');
+      db.contracts.addParticipant(c1, defId1, moduleId1, 'server');
+
+      const c2 = db.contracts.upsertContract('websocket', 'GET /vehicles', 'GET /vehicles');
+      db.contracts.addParticipant(c2, defId2, moduleId2, 'client');
+
+      const matches = matcher.match(db, processGroups);
+
+      expect(matches).toHaveLength(0);
+    });
+
+    it('does not fuzzy-match same module', () => {
+      const c1 = db.contracts.upsertContract('http', 'GET /api/v1/vehicles', 'GET /api/v1/vehicles');
+      db.contracts.addParticipant(c1, defId1, moduleId1, 'server');
+
+      const c2 = db.contracts.upsertContract('http', 'GET /vehicles', 'GET /vehicles');
+      db.contracts.addParticipant(c2, defId3, moduleId1, 'client'); // same module as server
+
+      const matches = matcher.match(db, processGroups);
+
+      expect(matches).toHaveLength(0);
+    });
+
+    it('fuzzy-matches /api prefix variants', () => {
+      const c1 = db.contracts.upsertContract('http', 'POST /api/users', 'POST /api/users');
+      db.contracts.addParticipant(c1, defId1, moduleId1, 'server');
+
+      const c2 = db.contracts.upsertContract('http', 'POST /users', 'POST /users');
+      db.contracts.addParticipant(c2, defId2, moduleId2, 'client');
+
+      const matches = matcher.match(db, processGroups);
+
+      expect(matches).toHaveLength(1);
+      expect(matches[0].fromModuleId).toBe(moduleId2);
+      expect(matches[0].toModuleId).toBe(moduleId1);
+    });
+  });
+
   describe('materializeInteractions', () => {
     it('creates interactions from matches with correct weights', () => {
       const c1 = db.contracts.upsertContract('http', 'GET /vehicles', 'GET /vehicles');

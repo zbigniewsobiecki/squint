@@ -25,6 +25,9 @@ import type {
   ModuleCandidate,
 } from './types.js';
 
+/** AST kinds that represent callable/behavioral code (not type-only definitions). */
+const CALLABLE_KINDS = new Set(['function', 'class', 'const', 'variable', 'method']);
+
 export class EntryPointDetector {
   private memberClassifications: MemberClassification[] = [];
 
@@ -48,8 +51,7 @@ export class EntryPointDetector {
       if (mod.isTest) continue; // Test modules are never entry points
 
       // Skip modules where ALL members are type-only (no callable code)
-      const callableKinds = new Set(['function', 'class', 'const', 'variable', 'method']);
-      const hasCallableMembers = mod.members.some((m) => callableKinds.has(m.kind));
+      const hasCallableMembers = mod.members.some((m) => CALLABLE_KINDS.has(m.kind));
       if (!hasCallableMembers) continue;
 
       candidates.push({
@@ -405,18 +407,36 @@ Modules containing only interfaces, types, and enums are data structure definiti
     let actionType: ActionType | null = null;
     if (name.includes('create') || name.includes('add') || name.includes('new') || name.includes('insert')) {
       actionType = 'create';
-    } else if (name.includes('update') || name.includes('edit') || name.includes('modify') || name.includes('save')) {
+    } else if (
+      name.includes('update') ||
+      name.includes('edit') ||
+      name.includes('modify') ||
+      name.includes('save') ||
+      name.includes('patch')
+    ) {
       actionType = 'update';
-    } else if (name.includes('delete') || name.includes('remove')) {
+    } else if (name.includes('delete') || name.includes('remove') || name.includes('destroy')) {
       actionType = 'delete';
-    } else if (name.includes('list') || name.includes('view') || name.includes('get') || name.includes('show')) {
+    } else if (
+      name.includes('list') ||
+      name.includes('view') ||
+      name.includes('show') ||
+      name.includes('fetch') ||
+      name.includes('load')
+    ) {
       actionType = 'view';
     } else if (
       name.includes('login') ||
       name.includes('logout') ||
       name.includes('auth') ||
       name.includes('process') ||
-      name.includes('sync')
+      name.includes('sync') ||
+      name.includes('middleware') ||
+      name.includes('handler') ||
+      name.includes('submit') ||
+      name.includes('send') ||
+      name.includes('export') ||
+      name.includes('import')
     ) {
       actionType = 'process';
     }
@@ -502,7 +522,7 @@ Modules containing only interfaces, types, and enums are data structure definiti
 
       for (const mc of moduleClassifications) {
         const member = mod.members.find((m) => m.name === mc.memberName);
-        if (member) {
+        if (member && CALLABLE_KINDS.has(member.kind)) {
           memberDefinitions.push({
             id: member.definitionId,
             name: member.name,
@@ -536,9 +556,10 @@ Modules containing only interfaces, types, and enums are data structure definiti
         }
       }
 
-      // For members without any classification, add them with null action type
+      // For members without any classification, add them with null action type (only callable kinds)
       for (const member of mod.members) {
         if (addedMemberNames.has(member.name)) continue;
+        if (!CALLABLE_KINDS.has(member.kind)) continue;
         const hasClassification = moduleClassifications.some((mc) => mc.memberName === member.name);
         if (!hasClassification) {
           memberDefinitions.push({

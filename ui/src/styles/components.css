@@ -453,6 +453,17 @@
   border-radius: var(--radius-pill);
 }
 
+.flow-action-badge {
+  font-size: 10px;
+  color: var(--accent-blue);
+  padding: 1px 5px;
+  background: var(--accent-blue-bg);
+  border: 1px solid var(--accent-blue-border);
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .flow-item-content {
   flex: 1;
   min-width: 0;
@@ -1112,7 +1123,7 @@
 
 /* Contract source badge in interaction sidebar */
 .chord-sidebar-badge.contract {
-  background: rgba(79, 193, 255, 0.15);
+  background: var(--accent-blue-bg);
   color: var(--accent-blue);
 }
 
@@ -1122,7 +1133,7 @@
   padding: 1px 6px;
   border-radius: var(--radius-pill);
   font-size: 9px;
-  background: rgba(79, 193, 255, 0.15);
+  background: var(--accent-blue-bg);
   color: var(--accent-blue);
   margin-left: var(--spacing-xs);
 }

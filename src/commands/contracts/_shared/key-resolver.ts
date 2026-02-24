@@ -78,6 +78,52 @@ export function resolveContractKeys(
   });
 }
 
+/**
+ * Common API prefixes to strip during normalization.
+ */
+export const STRIP_PREFIXES = ['/api/v1', '/api/v2', '/api/v3', '/api'];
+
+/**
+ * Normalize a path by stripping common API version prefixes.
+ * This ensures client and server normalizedKeys align even when one side
+ * uses a base URL prefix and the other doesn't.
+ */
+export function stripApiPrefix(path: string): string {
+  for (const prefix of STRIP_PREFIXES) {
+    if (path.startsWith(prefix) && (path.length === prefix.length || path[prefix.length] === '/')) {
+      return path.slice(prefix.length) || '/';
+    }
+  }
+  return path;
+}
+
+/**
+ * Post-process resolved contracts: strip common API version prefixes
+ * from normalizedKey so that client and server keys align.
+ * The original key is preserved in the `key` field; only `normalizedKey` is replaced.
+ */
+export function normalizeContractKeys(contracts: ContractEntry[]): ContractEntry[] {
+  return contracts.map((entry) => {
+    if (entry.protocol !== 'http') return entry;
+
+    const normalizedKey = entry.normalizedKey ?? entry.key;
+    const httpMatch = HTTP_KEY_RE.exec(normalizedKey);
+    if (!httpMatch) return entry;
+
+    const method = httpMatch[1].toUpperCase();
+    const path = httpMatch[2];
+    const stripped = stripApiPrefix(path);
+
+    if (stripped === path) return entry;
+
+    // Replace the normalizedKey with the stripped version so both sides align
+    return {
+      ...entry,
+      normalizedKey: `${method} ${stripped}`,
+    };
+  });
+}
+
 function isServerRole(role: string): boolean {
   return role === 'server' || role === 'producer' || role === 'emitter' || role === 'publisher';
 }
