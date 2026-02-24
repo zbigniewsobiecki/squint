@@ -1,3 +1,9 @@
+## [1.11.1](https://github.com/zbigniewsobiecki/squint/compare/v1.11.0...v1.11.1) (2026-02-24)
+
+### Bug Fixes
+
+* entity scope case mismatch, phantom dedup robustness, gap flow visibility ([1dfa38a](https://github.com/zbigniewsobiecki/squint/commit/1dfa38ad37beea0fbac8f02150dfc87c5c88537a))
+
 ## [1.11.0](https://github.com/zbigniewsobiecki/squint/compare/v1.10.2...v1.11.0) (2026-02-24)
 
 ### Features
