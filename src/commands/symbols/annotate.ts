@@ -1,7 +1,14 @@
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
-import type { IndexDatabase, ReadySymbolInfo } from '../../db/database.js';
-import { LlmFlags, SharedFlags, readSourceAsString } from '../_shared/index.js';
+import type { ReadySymbolInfo } from '../../db/database.js';
+import {
+  LlmFlags,
+  RelationshipRetryQueue,
+  SharedFlags,
+  enhanceSymbols,
+  readSourceAsString,
+  validateAnnotationValue,
+} from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
 import {
   type AnnotationResult,
@@ -16,63 +23,10 @@ import { parseCombinedCsv } from '../llm/_shared/csv.js';
 import { completeWithLogging } from '../llm/_shared/llm-utils.js';
 import {
   type CoverageInfo,
-  type DependencyContextEnhanced,
-  type IncomingDependencyContext,
-  type RelationshipToAnnotate,
   type SymbolContextEnhanced,
   buildSystemPrompt,
   buildUserPromptEnhanced,
 } from '../llm/_shared/prompts.js';
-import { detectImpurePatterns } from '../llm/_shared/pure-check.js';
-
-interface EnhancedSymbol extends ReadySymbolInfo {
-  sourceCode: string;
-  isExported: boolean;
-  dependencies: DependencyContextEnhanced[];
-  relationshipsToAnnotate: RelationshipToAnnotate[];
-  incomingDependencies: IncomingDependencyContext[];
-  incomingDependencyCount: number;
-}
-
-/**
- * Tracks failed relationship annotations for retry.
- */
-class RelationshipRetryQueue {
-  private failures = new Map<string, { fromId: number; toId: number; attempts: number; error: string }>();
-
-  private key(fromId: number, toId: number): string {
-    return `${fromId}:${toId}`;
-  }
-
-  add(fromId: number, toId: number, error: string): void {
-    const k = this.key(fromId, toId);
-    const existing = this.failures.get(k);
-    this.failures.set(k, {
-      fromId,
-      toId,
-      attempts: (existing?.attempts ?? 0) + 1,
-      error,
-    });
-  }
-
-  getRetryable(maxAttempts = 3): Array<{ fromId: number; toId: number }> {
-    const result: Array<{ fromId: number; toId: number }> = [];
-    for (const entry of this.failures.values()) {
-      if (entry.attempts < maxAttempts) {
-        result.push({ fromId: entry.fromId, toId: entry.toId });
-      }
-    }
-    return result;
-  }
-
-  clear(): void {
-    this.failures.clear();
-  }
-
-  get size(): number {
-    return this.failures.size;
-  }
-}
 
 interface JsonOutput {
   iterations: IterationJsonOutput[];
@@ -289,7 +243,7 @@ export default class Annotate extends BaseLlmCommand {
             }
 
             // Enhance symbols with source code
-            const enhancedCycleSymbols = await this.enhanceSymbols(db, cycleSymbols, aspects, relationshipLimit);
+            const enhancedCycleSymbols = await enhanceSymbols(db, cycleSymbols, aspects, relationshipLimit);
 
             // Get current coverage for the prompt
             const cycleCoverage = db.metadata.getAspectCoverage({
@@ -372,7 +326,7 @@ export default class Annotate extends BaseLlmCommand {
               if (!aspects.includes(row.aspect)) continue;
 
               let value = row.value;
-              const validationError = this.validateValue(
+              const validationError = validateAnnotationValue(
                 row.aspect,
                 value,
                 cycleSourceCodeById.get(row.symbolId),
@@ -437,7 +391,7 @@ export default class Annotate extends BaseLlmCommand {
       }
 
       // Enhance symbols with source code and dependency context
-      const enhancedSymbols = await this.enhanceSymbols(db, symbols, aspects, relationshipLimit);
+      const enhancedSymbols = await enhanceSymbols(db, symbols, aspects, relationshipLimit);
 
       // Get current coverage for the prompt
       const allCoverage = db.metadata.getAspectCoverage({
@@ -581,7 +535,7 @@ export default class Annotate extends BaseLlmCommand {
 
         // Validate value (aspect-specific)
         let value = row.value;
-        const validationError = this.validateValue(
+        const validationError = validateAnnotationValue(
           row.aspect,
           value,
           sourceCodeById.get(symbolId),
@@ -887,181 +841,5 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
         this.log(line);
       }
     }
-  }
-
-  /**
-   * Enhance symbols with source code, dependency context, and relationships to annotate.
-   */
-  private async enhanceSymbols(
-    db: IndexDatabase,
-    symbols: ReadySymbolInfo[],
-    aspects: string[],
-    relationshipLimit: number
-  ): Promise<EnhancedSymbol[]> {
-    const enhanced: EnhancedSymbol[] = [];
-
-    for (const symbol of symbols) {
-      const sourceCode = await readSourceAsString(db.resolveFilePath(symbol.filePath), symbol.line, symbol.endLine);
-
-      // Get dependencies with all their metadata
-      const deps = db.dependencies.getWithMetadata(symbol.id, aspects[0]);
-      const dependencies: DependencyContextEnhanced[] = deps.map((dep) => {
-        // Get all metadata for this dependency
-        const metadata = db.metadata.get(dep.id);
-
-        let domains: string[] | null = null;
-        try {
-          if (metadata.domain) {
-            domains = JSON.parse(metadata.domain) as string[];
-          }
-        } catch {
-          /* ignore */
-        }
-
-        return {
-          id: dep.id,
-          name: dep.name,
-          kind: dep.kind,
-          filePath: dep.filePath,
-          line: dep.line,
-          purpose: metadata.purpose || null,
-          domains,
-          role: metadata.role || null,
-          pure: metadata.pure ? metadata.pure === 'true' : null,
-        };
-      });
-
-      // Get unannotated relationships from this symbol (handle missing table)
-      let unannotatedRels: ReturnType<typeof db.relationships.getUnannotated> = [];
-      try {
-        const limit = relationshipLimit > 0 ? relationshipLimit : undefined;
-        unannotatedRels = db.relationships.getUnannotated({ fromDefinitionId: symbol.id, limit });
-      } catch {
-        // Table doesn't exist - continue with empty relationships
-      }
-      // These are usage-based relationships (calls), so they're all 'uses' type
-      const relationshipsToAnnotate: RelationshipToAnnotate[] = unannotatedRels.map((rel) => ({
-        toId: rel.toDefinitionId,
-        toName: rel.toName,
-        toKind: rel.toKind,
-        usageLine: rel.fromLine, // Use fromLine as approximate usage location
-        relationshipType: 'uses' as const,
-      }));
-
-      // Get incoming dependencies (who uses this symbol)
-      const incomingDeps = db.dependencies.getIncoming(symbol.id, 5);
-      const incomingDependencyCount = db.dependencies.getIncomingCount(symbol.id);
-      const incomingDependencies: IncomingDependencyContext[] = incomingDeps.map((inc) => ({
-        id: inc.id,
-        name: inc.name,
-        kind: inc.kind,
-        filePath: inc.filePath,
-      }));
-
-      // Get the definition to check if it's exported
-      const defInfo = db.definitions.getById(symbol.id);
-      const isExported = defInfo?.isExported ?? false;
-
-      enhanced.push({
-        ...symbol,
-        sourceCode,
-        isExported,
-        dependencies,
-        relationshipsToAnnotate,
-        incomingDependencies,
-        incomingDependencyCount,
-      });
-    }
-
-    return enhanced;
-  }
-
-  /**
-   * Validate a value for a specific aspect.
-   */
-  private validateValue(
-    aspect: string,
-    value: string,
-    sourceCode?: string,
-    deps?: DependencyContextEnhanced[],
-    kind?: string
-  ): string | null {
-    switch (aspect) {
-      case 'domain':
-        try {
-          const parsed = JSON.parse(value);
-          if (!Array.isArray(parsed)) {
-            return 'domain must be a JSON array';
-          }
-          if (!parsed.every((d) => typeof d === 'string')) {
-            return 'domain array must contain only strings';
-          }
-        } catch {
-          return 'domain must be valid JSON array';
-        }
-        break;
-
-      case 'pure':
-        if (value !== 'true' && value !== 'false') {
-          return 'pure must be "true" or "false"';
-        }
-        // Gate 0: type-level declarations are always pure
-        if (value === 'false' && kind && (kind === 'type' || kind === 'interface' || kind === 'enum')) {
-          return 'overridden to true: type-level declaration';
-        }
-        // Gate 0b: classes are always impure (instances have mutable state)
-        if (value === 'true' && kind === 'class') {
-          return 'overridden to false: class (mutable instances)';
-        }
-        // Gate 1: override LLM's "true" if source code contains impure patterns
-        if (value === 'true' && sourceCode) {
-          const impureReasons = detectImpurePatterns(sourceCode);
-          if (impureReasons.length > 0) {
-            return `overridden to false: ${impureReasons[0]}`;
-          }
-        }
-        // Gate 2: transitive impurity — if any dependency is pure:false, this can't be pure:true
-        if (value === 'true' && deps && deps.length > 0) {
-          const impureDep = deps.find((d) => d.pure === false);
-          if (impureDep) {
-            return `overridden to false: calls impure dependency '${impureDep.name}'`;
-          }
-        }
-        break;
-
-      case 'purpose':
-        if (!value || value.length < 5) {
-          return 'purpose must be at least 5 characters';
-        }
-        break;
-
-      case 'contracts':
-        if (value === 'null') break;
-        try {
-          const parsed = JSON.parse(value);
-          if (!Array.isArray(parsed)) {
-            return 'contracts must be a JSON array or "null"';
-          }
-          for (const entry of parsed) {
-            if (typeof entry !== 'object' || entry === null) {
-              return 'each contract entry must be an object';
-            }
-            if (!entry.protocol || typeof entry.protocol !== 'string') {
-              return 'each contract entry must have a non-empty "protocol" string';
-            }
-            if (!entry.role || typeof entry.role !== 'string') {
-              return 'each contract entry must have a non-empty "role" string';
-            }
-            if (!entry.key || typeof entry.key !== 'string') {
-              return 'each contract entry must have a non-empty "key" string';
-            }
-          }
-        } catch {
-          return 'contracts must be valid JSON array or "null"';
-        }
-        break;
-    }
-
-    return null;
   }
 }
