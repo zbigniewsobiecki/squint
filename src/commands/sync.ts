@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { IndexDatabase } from '../db/database-facade.js';
 import { detectChanges } from '../sync/change-detector.js';
 import { applySync } from '../sync/incremental-indexer.js';
+import { selectStrategy } from '../sync/sync-strategy.js';
 import ContractsExtract from './contracts/extract.js';
 import FeaturesGenerate from './features/generate.js';
 import FlowsGenerate from './flows/generate.js';
@@ -191,6 +192,37 @@ export default class Sync extends Command {
     this.log(chalk.white(`  Stale metadata:       ${result.staleMetadataCount} definitions (in modified files)`));
     this.log(chalk.white(`  Unassigned to module: ${result.unassignedCount} definitions (new)`));
     this.log(chalk.white(`  Interactions recalc:  ${result.interactionsRecalculated ? 'Yes' : 'No (no modules)'}`));
+
+    // Report dirty set summary and enrichment strategy
+    const dirtySummary = db.syncDirty.getSummary();
+    const dirtyTotal = db.syncDirty.countAll();
+    if (dirtyTotal > 0) {
+      this.log('');
+      this.log(chalk.white.bold('Dirty sets populated:'));
+      for (const [layer, count] of Object.entries(dirtySummary)) {
+        if (count > 0) {
+          this.log(chalk.white(`  ${layer.padEnd(16)} ${count} entities`));
+        }
+      }
+    }
+
+    const decision = selectStrategy(db, result);
+    this.log('');
+    this.log(chalk.white.bold('Enrichment strategy:'));
+    this.log(chalk.white(`  Strategy: ${decision.strategy}`));
+    this.log(chalk.white(`  Reason:   ${decision.reason}`));
+    if (flags.verbose) {
+      const m = decision.metrics;
+      this.log(
+        chalk.gray(`  Defs: ${m.changedDefinitions}/${m.totalDefinitions} (${(m.changeRatio * 100).toFixed(1)}%)`)
+      );
+      this.log(chalk.gray(`  Modules: ${m.affectedModules}/${m.totalModules} (${(m.moduleRatio * 100).toFixed(1)}%)`));
+      this.log(
+        chalk.gray(
+          `  Interactions: ${m.affectedInteractions}/${m.totalInteractions} (${(m.interactionRatio * 100).toFixed(1)}%)`
+        )
+      );
+    }
 
     // Update metadata
     db.setMetadata('indexed_at', new Date().toISOString());

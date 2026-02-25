@@ -494,6 +494,28 @@ export function ensureInteractionDefinitionLinks(db: Database.Database): void {
 }
 
 /**
+ * Ensure the sync_dirty table exists for incremental sync tracking.
+ */
+export function ensureSyncDirtyTable(db: Database.Database): void {
+  const tableExists = db
+    .prepare(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='sync_dirty'
+  `)
+    .get();
+
+  if (!tableExists) {
+    db.exec(`
+      CREATE TABLE sync_dirty (
+        layer TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        PRIMARY KEY (layer, entity_id)
+      );
+    `);
+  }
+}
+
+/**
  * Ensure the relationship_type column exists on relationship_annotations.
  */
 export function ensureRelationshipTypeColumn(db: Database.Database): void {
