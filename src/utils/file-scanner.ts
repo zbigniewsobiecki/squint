@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { glob } from 'glob';
 
-const DEFAULT_IGNORE_PATTERNS = [
+export const DEFAULT_IGNORE_PATTERNS = [
   '**/node_modules/**',
   '**/dist/**',
   '**/build/**',

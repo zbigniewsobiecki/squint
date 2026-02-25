@@ -101,6 +101,12 @@ export default class Ingest extends Command {
       description: 'Show full LLM responses',
       default: false,
     }),
+    exclude: Flags.string({
+      char: 'e',
+      description: 'Additional glob patterns to exclude (e.g. "**/tests/**")',
+      multiple: true,
+      default: [],
+    }),
     'from-stage': Flags.string({
       description: 'Resume from a specific stage (skips earlier stages)',
       options: [...STAGE_IDS],
@@ -126,6 +132,9 @@ export default class Ingest extends Command {
     const fromStage = flags['from-stage'] as StageId | undefined;
     const toStage = flags['to-stage'] as StageId | undefined;
 
+    // Build exclude flags for parse stage
+    const excludeFlags = flags.exclude.flatMap((p: string) => ['--exclude', p]);
+
     // Build common flag arrays
     const llmFlags = ['--model', model, '-d', dbPath];
     const debugFlags: string[] = [];
@@ -139,7 +148,7 @@ export default class Ingest extends Command {
       {
         id: 'parse',
         label: 'Parse codebase',
-        run: () => Parse.run([directory, '-o', dbPath]),
+        run: () => Parse.run([directory, '-o', dbPath, ...excludeFlags]),
       },
       {
         id: 'symbols',

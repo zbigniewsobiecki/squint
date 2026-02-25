@@ -7,7 +7,7 @@ import { type IIndexWriter, IndexDatabase, computeHash } from '../db/database.js
 import { type ParsedFile, parseFile } from '../parser/ast-parser.js';
 import { buildWorkspaceMap } from '../parser/workspace-resolver.js';
 import { insertFileReferences, insertInternalUsages } from '../sync/reference-resolver.js';
-import { scanDirectory } from '../utils/file-scanner.js';
+import { DEFAULT_IGNORE_PATTERNS, scanDirectory } from '../utils/file-scanner.js';
 
 export interface IndexingResult {
   definitionCount: number;
@@ -104,6 +104,12 @@ export default class Parse extends Command {
       char: 'o',
       description: 'Output database file path (default: <directory>/.squint.db)',
     }),
+    exclude: Flags.string({
+      char: 'e',
+      description: 'Additional glob patterns to exclude (e.g. "**/tests/**")',
+      multiple: true,
+      default: [],
+    }),
   };
 
   public async run(): Promise<void> {
@@ -128,7 +134,8 @@ export default class Parse extends Command {
 
     // Scan for files
     this.log(chalk.blue('Scanning for TypeScript/JavaScript files...'));
-    const files = await scanDirectory(directory);
+    const ignorePatterns = [...DEFAULT_IGNORE_PATTERNS, ...flags.exclude];
+    const files = await scanDirectory(directory, { ignorePatterns });
 
     if (files.length === 0) {
       this.warn(chalk.yellow('No TypeScript or JavaScript files found in the directory'));
