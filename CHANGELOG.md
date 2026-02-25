@@ -1,3 +1,10 @@
+## [1.14.0](https://github.com/zbigniewsobiecki/squint/compare/v1.13.0...v1.14.0) (2026-02-25)
+
+### Features
+
+* add --exclude flag to parse and ingest commands ([1cc8fa3](https://github.com/zbigniewsobiecki/squint/commit/1cc8fa3c81055f685c59d95b44c2ac051dbb938a))
+* add incremental sync dirty tracking with strategy selection ([#49](https://github.com/zbigniewsobiecki/squint/issues/49)) ([9d85854](https://github.com/zbigniewsobiecki/squint/commit/9d8585417559bf7d6e4cf5a5fd172399b920c400))
+
 ## [1.13.0](https://github.com/zbigniewsobiecki/squint/compare/v1.12.1...v1.13.0) (2026-02-25)
 
 ### Features
