@@ -5,7 +5,7 @@
 
 import type { Command } from '@oclif/core';
 import chalk from 'chalk';
-import { type LLMMessage, LLMist, type TokenUsage, resolveModel } from 'llmist';
+import { type LLMMessage, LLMist, type TokenUsage, isRetryableError, resolveModel } from 'llmist';
 
 /**
  * Safely extract error message from unknown error type.
@@ -253,22 +253,47 @@ export async function completeWithLogging(options: CompleteWithLoggingOptions): 
     { role: 'user', content: userPrompt },
   ];
 
+  const MAX_RETRIES = 3;
+  const BASE_DELAY_MS = 1000;
+
   const client = getClient();
   const startTime = Date.now();
   let text = '';
   let usage: TokenUsage | undefined;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      text = '';
+      usage = undefined;
 
-  const stream = client.stream({
-    model: resolvedModel,
-    messages,
-    ...(temperature !== undefined && { temperature }),
-    ...(maxTokens !== undefined && { maxTokens }),
-  });
+      const stream = client.stream({
+        model: resolvedModel,
+        messages,
+        ...(temperature !== undefined && { temperature }),
+        ...(maxTokens !== undefined && { maxTokens }),
+      });
 
-  for await (const chunk of stream) {
-    text += chunk.text;
-    if (chunk.usage) {
-      usage = chunk.usage;
+      for await (const chunk of stream) {
+        text += chunk.text;
+        if (chunk.usage) {
+          usage = chunk.usage;
+        }
+      }
+
+      break;
+    } catch (error) {
+      if (attempt < MAX_RETRIES && error instanceof Error && isRetryableError(error)) {
+        const delay = BASE_DELAY_MS * 2 ** attempt * (0.5 + Math.random() * 0.5);
+        if (!isJson) {
+          command.log(
+            chalk.yellow(
+              `  ⟳ LLM error (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${getErrorMessage(error)} — retrying in ${(delay / 1000).toFixed(1)}s`
+            )
+          );
+        }
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw error;
     }
   }
 
