@@ -10,3 +10,7 @@ export {
   collectModuleIdsFromSteps,
   collectFlowsForInteractions,
 } from './context-helpers.js';
+export { enhanceSymbols, type EnhancedSymbol } from './symbol-enhancer.js';
+export { buildSourceGroups } from './relationship-source-groups.js';
+export { validateAnnotationValue } from './annotation-validators.js';
+export { RelationshipRetryQueue } from './retry-queue.js';
