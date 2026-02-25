@@ -1,3 +1,9 @@
+## [1.13.0](https://github.com/zbigniewsobiecki/squint/compare/v1.12.1...v1.13.0) (2026-02-25)
+
+### Features
+
+* add retry logic for transient LLM errors in completeWithLogging ([73dad5c](https://github.com/zbigniewsobiecki/squint/commit/73dad5c53df7e45bdb5d2b16239da00566aee2f3))
+
 ## [1.12.1](https://github.com/zbigniewsobiecki/squint/compare/v1.12.0...v1.12.1) (2026-02-24)
 
 ### Bug Fixes
