@@ -66,6 +66,9 @@ export type {
   FlowStats,
 } from './flow-repository.js';
 
+// Sync dirty tracking
+export { SyncDirtyRepository } from './sync-dirty-repository.js';
+
 // Graph analysis repository
 export { GraphRepository } from './graph-repository.js';
 export type {

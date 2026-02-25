@@ -250,6 +250,19 @@ export interface EnrichedModuleCallEdge extends ModuleCallEdge {
 }
 
 // ============================================================
+// Sync Dirty Tracking Types
+// ============================================================
+
+export type DirtyLayer = 'metadata' | 'relationships' | 'modules' | 'contracts' | 'interactions' | 'flows' | 'features';
+export type DirtyReason = 'added' | 'modified' | 'removed' | 'dependency_changed' | 'parent_dirty';
+
+export interface SyncDirtyEntry {
+  layer: DirtyLayer;
+  entityId: number;
+  reason: DirtyReason;
+}
+
+// ============================================================
 // Flow Types (User Journeys)
 // ============================================================
 
@@ -749,6 +762,14 @@ CREATE TABLE flow_definition_steps (
 
 CREATE INDEX idx_flow_def_steps_from ON flow_definition_steps(from_definition_id);
 CREATE INDEX idx_flow_def_steps_to ON flow_definition_steps(to_definition_id);
+
+-- Incremental sync dirty tracking
+CREATE TABLE sync_dirty (
+  layer TEXT NOT NULL,
+  entity_id INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  PRIMARY KEY (layer, entity_id)
+);
 `;
 
 // ============================================================

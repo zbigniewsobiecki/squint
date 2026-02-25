@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { IndexDatabase } from '../db/database-facade.js';
 import { computeHash } from '../db/schema.js';
+import type { DirtyLayer, DirtyReason, SyncDirtyEntry } from '../db/schema.js';
 import type { ParsedFile } from '../parser/ast-parser.js';
 import { parseFile } from '../parser/ast-parser.js';
 import { buildWorkspaceMap } from '../parser/workspace-resolver.js';
@@ -30,6 +31,12 @@ export interface SyncResult {
   danglingRefsCleaned: number;
   ghostRowsCleaned: number;
   inheritanceResult: { created: number };
+  /** IDs of definitions added during this sync (new files + new defs in modified files) */
+  addedDefinitionIds: number[];
+  /** IDs of definitions removed during this sync (deleted files + removed defs in modified files) */
+  removedDefinitionIds: number[];
+  /** IDs of definitions updated in-place during this sync (matched by name:kind in modified files) */
+  updatedDefinitionIds: number[];
 }
 
 /**
@@ -63,6 +70,9 @@ export async function applySync(
     danglingRefsCleaned: 0,
     ghostRowsCleaned: 0,
     inheritanceResult: { created: 0 },
+    addedDefinitionIds: [],
+    removedDefinitionIds: [],
+    updatedDefinitionIds: [],
   };
 
   if (changes.length === 0) return result;
@@ -137,12 +147,40 @@ export async function applySync(
   // If the process crashes, SQLite rolls back the entire sync.
   // ============================================================
   const syncTransaction = conn.transaction(() => {
+    // Set to collect module IDs for removed definitions before cascade-delete
+    // removes module_members rows. Used by populateDirtySets to mark affected modules.
+    const preDeleteModuleIds = new Set<number>();
+
     // ============================================================
     // Phase 1 — Delete removed files
     // ============================================================
     if (deleted.length > 0) {
       if (verbose) log(`  Deleting ${deleted.length} removed file(s)...`);
       for (const change of deleted) {
+        // Collect definition IDs before cascade-delete (for removedDefinitionIds tracking)
+        const deletedFileDefs = conn
+          .prepare('SELECT id FROM definitions WHERE file_id = ?')
+          .all(change.fileId!) as Array<{ id: number }>;
+        const deletedDefIds = deletedFileDefs.map((d) => d.id);
+        for (const d of deletedFileDefs) {
+          result.removedDefinitionIds.push(d.id);
+          result.definitionsRemoved++;
+        }
+
+        // Collect module IDs before cascade-delete removes module_members rows
+        if (deletedDefIds.length > 0) {
+          const placeholders = deletedDefIds.map(() => '?').join(',');
+          const moduleRows = conn
+            .prepare(
+              `SELECT DISTINCT module_id as moduleId FROM module_members
+               WHERE definition_id IN (${placeholders})`
+            )
+            .all(...deletedDefIds) as Array<{ moduleId: number }>;
+          for (const row of moduleRows) {
+            preDeleteModuleIds.add(row.moduleId);
+          }
+        }
+
         cascadeDeleteFile(conn, change.fileId!);
       }
     }
@@ -204,6 +242,7 @@ export async function applySync(
             extendsInterfaces: newDef.extendsAll ? JSON.stringify(newDef.extendsAll) : null,
           });
           result.definitionsUpdated++;
+          result.updatedDefinitionIds.push(oldDef.id);
 
           allDefMap.set(newDef.name, oldDef.id);
           if (newDef.isExported) {
@@ -222,6 +261,7 @@ export async function applySync(
           const defId = db.insertDefinition(fileId, newDef);
           result.definitionsAdded++;
           result.unassignedCount++;
+          result.addedDefinitionIds.push(defId);
 
           allDefMap.set(newDef.name, defId);
           if (newDef.isExported) {
@@ -236,9 +276,22 @@ export async function applySync(
         if (!matchedOldKeys.has(key)) {
           removedDefIds.push(oldDef.id);
           result.definitionsRemoved++;
+          result.removedDefinitionIds.push(oldDef.id);
         }
       }
       if (removedDefIds.length > 0) {
+        // Collect module IDs before cascade-delete removes module_members rows
+        const rmPlaceholders = removedDefIds.map(() => '?').join(',');
+        const moduleRows = conn
+          .prepare(
+            `SELECT DISTINCT module_id as moduleId FROM module_members
+             WHERE definition_id IN (${rmPlaceholders})`
+          )
+          .all(...removedDefIds) as Array<{ moduleId: number }>;
+        for (const row of moduleRows) {
+          preDeleteModuleIds.add(row.moduleId);
+        }
+
         cascadeDeleteDefinitions(conn, removedDefIds);
       }
 
@@ -280,6 +333,7 @@ export async function applySync(
         }
         result.definitionsAdded++;
         result.unassignedCount++;
+        result.addedDefinitionIds.push(defId);
       }
       definitionMap.set(change.absolutePath, exportedDefMap);
       allDefinitionMap.set(change.absolutePath, allDefMap);
@@ -477,10 +531,151 @@ export async function applySync(
       if (db.deleteGhostRow(g.table, g.rowid)) ghostCount++;
     }
     result.ghostRowsCleaned = ghostCount;
+
+    // ============================================================
+    // Phase 8b — Populate sync_dirty sets for incremental enrichment
+    // ============================================================
+    if (verbose) log('  Populating dirty sets for incremental enrichment...');
+    populateDirtySets(db, result, preDeleteModuleIds);
   });
 
   // Execute as exclusive transaction for concurrency safety
   syncTransaction.exclusive();
 
   return result;
+}
+
+/** Chunk size for IN queries to avoid SQLite variable limit */
+const DIRTY_CHUNK_SIZE = 500;
+
+/** Build SyncDirtyEntry array from a set of IDs */
+function entriesToMark(layer: DirtyLayer, ids: Iterable<number>, reason: DirtyReason): SyncDirtyEntry[] {
+  return [...ids].map((entityId) => ({ layer, entityId, reason }));
+}
+
+/**
+ * Populate the sync_dirty table based on definition changes from the AST sync.
+ * Each layer marks entities that need re-processing during incremental enrichment.
+ *
+ * Propagation order (bottom-up):
+ *   definitions → metadata, relationships → modules → contracts, interactions → flows → features
+ *
+ * @param preCollectedModuleIds Module IDs collected before cascade-deletes removed
+ *   the module_members rows for deleted/removed definitions.
+ */
+function populateDirtySets(db: IndexDatabase, result: SyncResult, preCollectedModuleIds: Set<number>): void {
+  const { addedDefinitionIds, updatedDefinitionIds, removedDefinitionIds } = result;
+  const conn = db.getConnection();
+
+  // Skip if no definition changes
+  if (addedDefinitionIds.length === 0 && updatedDefinitionIds.length === 0 && removedDefinitionIds.length === 0) {
+    return;
+  }
+
+  // Clear any stale dirty entries from a previous interrupted sync
+  db.syncDirty.clear();
+
+  // --- Layer 1: metadata (definitions needing re-annotation) ---
+  db.syncDirty.markDirtyBatch([
+    ...entriesToMark('metadata', addedDefinitionIds, 'added'),
+    ...entriesToMark('metadata', updatedDefinitionIds, 'modified'),
+  ]);
+
+  // --- Layer 2: relationships (edges touching changed definitions) ---
+  db.syncDirty.markDirtyBatch([
+    ...entriesToMark('relationships', addedDefinitionIds, 'added'),
+    ...entriesToMark('relationships', updatedDefinitionIds, 'modified'),
+    ...entriesToMark('relationships', removedDefinitionIds, 'removed'),
+  ]);
+
+  // --- Layer 3: modules (modules containing changed definitions) ---
+  // For removed definitions, module_members rows are already cascade-deleted,
+  // so we use preCollectedModuleIds gathered before the cascade.
+  const affectedModuleIds = new Set<number>(preCollectedModuleIds);
+  for (let i = 0; i < updatedDefinitionIds.length; i += DIRTY_CHUNK_SIZE) {
+    const chunk = updatedDefinitionIds.slice(i, i + DIRTY_CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = conn
+      .prepare(
+        `SELECT DISTINCT module_id as moduleId FROM module_members
+         WHERE definition_id IN (${placeholders})`
+      )
+      .all(...chunk) as Array<{ moduleId: number }>;
+    for (const row of rows) affectedModuleIds.add(row.moduleId);
+  }
+  db.syncDirty.markDirtyBatch(entriesToMark('modules', affectedModuleIds, 'modified'));
+
+  // --- Layer 4: contracts ---
+  // Intentionally over-broad: all changed definitions are marked, though only ~2-5%
+  // are boundary candidates. The contracts layer filters to actual participants when it runs.
+  db.syncDirty.markDirtyBatch([
+    ...entriesToMark('contracts', addedDefinitionIds, 'added'),
+    ...entriesToMark('contracts', updatedDefinitionIds, 'modified'),
+  ]);
+
+  // --- Layer 5: interactions (interactions touching affected modules) ---
+  if (affectedModuleIds.size === 0) return;
+
+  const moduleIdArr = [...affectedModuleIds];
+  const affectedInteractionIds = new Set<number>();
+  for (let i = 0; i < moduleIdArr.length; i += DIRTY_CHUNK_SIZE) {
+    const chunk = moduleIdArr.slice(i, i + DIRTY_CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(',');
+    try {
+      const rows = conn
+        .prepare(
+          `SELECT DISTINCT id FROM interactions
+           WHERE from_module_id IN (${placeholders}) OR to_module_id IN (${placeholders})`
+        )
+        .all(...chunk, ...chunk) as Array<{ id: number }>;
+      for (const row of rows) affectedInteractionIds.add(row.id);
+    } catch {
+      // interactions table may not exist yet
+    }
+  }
+  db.syncDirty.markDirtyBatch(entriesToMark('interactions', affectedInteractionIds, 'parent_dirty'));
+
+  // --- Layer 6: flows (flows whose steps reference affected interactions) ---
+  if (affectedInteractionIds.size === 0) return;
+
+  const interactionIdArr = [...affectedInteractionIds];
+  const affectedFlowIds = new Set<number>();
+  for (let i = 0; i < interactionIdArr.length; i += DIRTY_CHUNK_SIZE) {
+    const chunk = interactionIdArr.slice(i, i + DIRTY_CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(',');
+    try {
+      const rows = conn
+        .prepare(
+          `SELECT DISTINCT flow_id as id FROM flow_steps
+           WHERE interaction_id IN (${placeholders})`
+        )
+        .all(...chunk) as Array<{ id: number }>;
+      for (const row of rows) affectedFlowIds.add(row.id);
+    } catch {
+      // flow_steps table may not exist yet
+    }
+  }
+  db.syncDirty.markDirtyBatch(entriesToMark('flows', affectedFlowIds, 'parent_dirty'));
+
+  // --- Layer 7: features (features containing affected flows) ---
+  if (affectedFlowIds.size === 0) return;
+
+  const flowIdArr = [...affectedFlowIds];
+  const affectedFeatureIds = new Set<number>();
+  for (let i = 0; i < flowIdArr.length; i += DIRTY_CHUNK_SIZE) {
+    const chunk = flowIdArr.slice(i, i + DIRTY_CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(',');
+    try {
+      const rows = conn
+        .prepare(
+          `SELECT DISTINCT feature_id as id FROM feature_flows
+           WHERE flow_id IN (${placeholders})`
+        )
+        .all(...chunk) as Array<{ id: number }>;
+      for (const row of rows) affectedFeatureIds.add(row.id);
+    } catch {
+      // feature_flows table may not exist yet
+    }
+  }
+  db.syncDirty.markDirtyBatch(entriesToMark('features', affectedFeatureIds, 'parent_dirty'));
 }
