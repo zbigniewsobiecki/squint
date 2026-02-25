@@ -19,6 +19,7 @@ import { InteractionRepository } from './repositories/interaction-repository.js'
 import { MetadataRepository } from './repositories/metadata-repository.js';
 import { ModuleRepository } from './repositories/module-repository.js';
 import { RelationshipRepository } from './repositories/relationship-repository.js';
+import { SyncDirtyRepository } from './repositories/sync-dirty-repository.js';
 
 /**
  * Database access layer that owns the connection and exposes repositories.
@@ -43,6 +44,7 @@ export class IndexDatabase implements IIndexWriter {
   public readonly graph: GraphRepository;
   public readonly callGraph: CallGraphService;
   public readonly interactionAnalysis: InteractionAnalysis;
+  public readonly syncDirty: SyncDirtyRepository;
 
   constructor(dbPath: string) {
     this.conn = new Database(dbPath);
@@ -63,6 +65,7 @@ export class IndexDatabase implements IIndexWriter {
     this.graph = new GraphRepository(this.conn);
     this.callGraph = new CallGraphService(this.conn);
     this.interactionAnalysis = new InteractionAnalysis(this.conn);
+    this.syncDirty = new SyncDirtyRepository(this.conn);
   }
 
   // ============================================================
@@ -71,6 +74,7 @@ export class IndexDatabase implements IIndexWriter {
 
   initialize(): void {
     this.conn.exec(`
+      DROP TABLE IF EXISTS sync_dirty;
       DROP TABLE IF EXISTS flows;
       DROP TABLE IF EXISTS module_members;
       DROP TABLE IF EXISTS modules;
