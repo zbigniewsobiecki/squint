@@ -515,6 +515,170 @@ describe('ModuleRepository', () => {
     });
   });
 
+  describe('getBaseClassCandidates', () => {
+    it('returns classes extended by 2+ subclasses', () => {
+      const rootId = repo.ensureRoot();
+      const modA = repo.insert(rootId, 'a', 'ModuleA');
+      const modB = repo.insert(rootId, 'b', 'ModuleB');
+
+      // BaseClass in modA
+      const baseId = fileRepo.insertDefinition(fileId, {
+        name: 'BaseClass',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        position: { row: 50, column: 0 },
+        endPosition: { row: 60, column: 1 },
+      });
+      repo.assignSymbol(baseId, modA);
+
+      // Two subclasses extending BaseClass
+      const sub1 = fileRepo.insertDefinition(fileId, {
+        name: 'SubA',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        extends: 'BaseClass',
+        position: { row: 70, column: 0 },
+        endPosition: { row: 80, column: 1 },
+      });
+      repo.assignSymbol(sub1, modA);
+
+      const sub2 = fileRepo.insertDefinition(fileId, {
+        name: 'SubB',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        extends: 'BaseClass',
+        position: { row: 90, column: 0 },
+        endPosition: { row: 100, column: 1 },
+      });
+      repo.assignSymbol(sub2, modB);
+
+      const candidates = repo.getBaseClassCandidates();
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0].name).toBe('BaseClass');
+      expect(candidates[0].moduleId).toBe(modA);
+      expect(candidates[0].extendedByCount).toBe(2);
+    });
+
+    it('excludes classes with fewer than 2 extenders', () => {
+      const rootId = repo.ensureRoot();
+      const modA = repo.insert(rootId, 'a', 'ModuleA');
+
+      const baseId = fileRepo.insertDefinition(fileId, {
+        name: 'LonelyBase',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        position: { row: 50, column: 0 },
+        endPosition: { row: 60, column: 1 },
+      });
+      repo.assignSymbol(baseId, modA);
+
+      // Only one subclass
+      const sub1 = fileRepo.insertDefinition(fileId, {
+        name: 'OnlySub',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        extends: 'LonelyBase',
+        position: { row: 70, column: 0 },
+        endPosition: { row: 80, column: 1 },
+      });
+      repo.assignSymbol(sub1, modA);
+
+      const candidates = repo.getBaseClassCandidates();
+      expect(candidates).toHaveLength(0);
+    });
+  });
+
+  describe('getExtenderModules', () => {
+    it('returns extenders with their module assignments', () => {
+      const rootId = repo.ensureRoot();
+      const modA = repo.insert(rootId, 'a', 'ModuleA');
+      const modB = repo.insert(rootId, 'b', 'ModuleB');
+
+      const sub1 = fileRepo.insertDefinition(fileId, {
+        name: 'SubA',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        extends: 'BaseClass',
+        position: { row: 70, column: 0 },
+        endPosition: { row: 80, column: 1 },
+      });
+      repo.assignSymbol(sub1, modA);
+
+      const sub2 = fileRepo.insertDefinition(fileId, {
+        name: 'SubB',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        extends: 'BaseClass',
+        position: { row: 90, column: 0 },
+        endPosition: { row: 100, column: 1 },
+      });
+      repo.assignSymbol(sub2, modB);
+
+      const extenders = repo.getExtenderModules('BaseClass');
+      expect(extenders).toHaveLength(2);
+      expect(extenders.map((e) => e.moduleId).sort()).toEqual([modA, modB].sort());
+    });
+
+    it('returns empty array for non-existent class name', () => {
+      repo.ensureRoot();
+      const extenders = repo.getExtenderModules('NonExistent');
+      expect(extenders).toHaveLength(0);
+    });
+  });
+
+  describe('getAllExtenderModulesByClass', () => {
+    it('returns all extenders grouped by class name', () => {
+      const rootId = repo.ensureRoot();
+      const modA = repo.insert(rootId, 'a', 'ModuleA');
+      const modB = repo.insert(rootId, 'b', 'ModuleB');
+
+      const sub1 = fileRepo.insertDefinition(fileId, {
+        name: 'SubA',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        extends: 'BaseOne',
+        position: { row: 70, column: 0 },
+        endPosition: { row: 80, column: 1 },
+      });
+      repo.assignSymbol(sub1, modA);
+
+      const sub2 = fileRepo.insertDefinition(fileId, {
+        name: 'SubB',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        extends: 'BaseOne',
+        position: { row: 90, column: 0 },
+        endPosition: { row: 100, column: 1 },
+      });
+      repo.assignSymbol(sub2, modB);
+
+      const sub3 = fileRepo.insertDefinition(fileId, {
+        name: 'SubC',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        extends: 'BaseTwo',
+        position: { row: 110, column: 0 },
+        endPosition: { row: 120, column: 1 },
+      });
+      repo.assignSymbol(sub3, modA);
+
+      const grouped = repo.getAllExtenderModulesByClass();
+      expect(grouped.get('BaseOne')).toHaveLength(2);
+      expect(grouped.get('BaseTwo')).toHaveLength(1);
+      expect(grouped.has('NonExistent')).toBe(false);
+    });
+  });
+
   describe('getBranchModulesWithDirectMembers', () => {
     it('returns branch modules with direct members exceeding threshold', () => {
       const rootId = repo.ensureRoot();

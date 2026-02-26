@@ -585,6 +585,90 @@ export class ModuleRepository {
   }
 
   /**
+   * Get all assigned symbols grouped by file path.
+   * Returns definition_id, module_id, and file path for every module member.
+   */
+  getAssignedSymbolsByFile(): Array<{ definitionId: number; moduleId: number; filePath: string }> {
+    ensureModulesTables(this.db);
+    return this.db
+      .prepare(
+        `SELECT mm.definition_id as definitionId, mm.module_id as moduleId, f.path as filePath
+         FROM module_members mm
+         JOIN definitions d ON d.id = mm.definition_id
+         JOIN files f ON d.file_id = f.id`
+      )
+      .all() as Array<{ definitionId: number; moduleId: number; filePath: string }>;
+  }
+
+  /**
+   * Get definitions that are base classes (extended by 2+ subclasses) with their current module assignment.
+   *
+   * Note: matches by simple class name (extends_name column). If two unrelated
+   * classes share the same name, they will be conflated. This is an inherent
+   * limitation of the extends_name schema.
+   */
+  getBaseClassCandidates(): Array<{ definitionId: number; name: string; moduleId: number; extendedByCount: number }> {
+    ensureModulesTables(this.db);
+    return this.db
+      .prepare(`
+        SELECT d.id as definitionId, d.name, mm.module_id as moduleId, cnt.extendedByCount
+        FROM definitions d
+        JOIN module_members mm ON mm.definition_id = d.id
+        JOIN (
+            SELECT extends_name, COUNT(*) as extendedByCount
+            FROM definitions
+            WHERE extends_name IS NOT NULL
+            GROUP BY extends_name
+            HAVING COUNT(*) >= 2
+        ) cnt ON cnt.extends_name = d.name
+      `)
+      .all() as Array<{ definitionId: number; name: string; moduleId: number; extendedByCount: number }>;
+  }
+
+  /**
+   * Get definitions that extend a given class name, with their module assignments.
+   *
+   * Note: matches by simple class name (extends_name column). If two unrelated
+   * classes share the same name, they will be conflated. This is an inherent
+   * limitation of the extends_name schema.
+   */
+  getExtenderModules(className: string): Array<{ definitionId: number; moduleId: number }> {
+    ensureModulesTables(this.db);
+    return this.db
+      .prepare(`
+        SELECT d.id as definitionId, mm.module_id as moduleId
+        FROM definitions d
+        JOIN module_members mm ON mm.definition_id = d.id
+        WHERE d.extends_name = ?
+      `)
+      .all(className) as Array<{ definitionId: number; moduleId: number }>;
+  }
+
+  /**
+   * Get all extender definitions grouped by class name, in a single query.
+   * Used to avoid N+1 queries when processing multiple base class candidates.
+   */
+  getAllExtenderModulesByClass(): Map<string, Array<{ definitionId: number; moduleId: number }>> {
+    ensureModulesTables(this.db);
+    const rows = this.db
+      .prepare(`
+        SELECT d.extends_name as className, d.id as definitionId, mm.module_id as moduleId
+        FROM definitions d
+        JOIN module_members mm ON mm.definition_id = d.id
+        WHERE d.extends_name IS NOT NULL
+      `)
+      .all() as Array<{ className: string; definitionId: number; moduleId: number }>;
+
+    const result = new Map<string, Array<{ definitionId: number; moduleId: number }>>();
+    for (const row of rows) {
+      const existing = result.get(row.className) ?? [];
+      existing.push({ definitionId: row.definitionId, moduleId: row.moduleId });
+      result.set(row.className, existing);
+    }
+    return result;
+  }
+
+  /**
    * Get all callers of a definition with their module assignments.
    */
   getIncomingEdgesFor(definitionId: number): IncomingEdge[] {

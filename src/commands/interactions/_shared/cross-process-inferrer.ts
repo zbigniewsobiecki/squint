@@ -95,7 +95,7 @@ export async function inferCrossProcessInteractions(
       command.log(chalk.gray(response));
     }
 
-    const results = parseLogicalInteractionCSV(response, modules, existingPairs, db);
+    const results = parseLogicalInteractionCSV(response, modules, existingPairs, membersMap, db);
     allResults.push(...results);
   }
 
@@ -110,26 +110,32 @@ function buildCrossProcessSystemPrompt(): string {
 These modules have NO import connectivity — they communicate via runtime protocols
 (HTTP/REST, gRPC, WebSocket, IPC, message queues, CLI invocation, file I/O, etc.).
 
-For each connection:
-- Identify the SOURCE module (the one initiating the call/request)
-- Identify the TARGET module (the one handling/receiving)
-- Describe the communication mechanism and purpose
+PRECISION OVER RECALL — missing a real connection is far better than inventing a fake one.
 
-Use entity/name matching to pair modules:
-- "useAccounts" (process A) likely calls "accountController" (process B)
-- Match by entity name, action verbs, and module descriptions
+For each connection, you MUST identify:
+1. The specific member function in the SOURCE module that initiates the call
+2. The specific member function in the TARGET module that handles/receives it
+3. The concrete protocol (HTTP endpoint path, WebSocket channel, queue name, CLI command, etc.)
+
+Do NOT report connections based solely on:
+- Name similarity ("useAccounts" and "accountController" is NOT sufficient alone)
+- General architectural plausibility ("frontend probably calls backend")
+- Module descriptions mentioning the same entity
+
+Only report connections where you can trace a concrete data flow from a specific source
+member to a specific target member via a known protocol.
 
 Only report connections with medium or high confidence.
 
 ## Output Format
 \`\`\`csv
-from_module_path,to_module_path,reason,confidence
-project.frontend.hooks.useAccounts,project.backend.api.controllers,"Account data hooks call account API controllers via HTTP",high
+from_module_path,to_module_path,source_member,target_member,reason,confidence
+project.frontend.hooks.useAccounts,project.backend.api.controllers,fetchAccounts,handleGetAccounts,"Fetches account list via GET /api/accounts",high
 \`\`\`
 
 Confidence levels:
-- high: Names/patterns strongly suggest connection
-- medium: Context supports it but names don't match exactly
+- high: Concrete protocol and member functions clearly identified
+- medium: Strong evidence but protocol details partially inferred
 - Skip low confidence - only report likely connections
 
 DO NOT report:
@@ -142,7 +148,7 @@ DO NOT report:
   Backend modules do NOT push to specific frontend components.
 - Dev-time modules (CLI scripts, seed scripts, migrations) have NO runtime callers.
   Do NOT connect production modules to dev-time utilities.
-- A realistic cross-process call surface has 3-8 callers per target, not dozens.
+- A realistic cross-process call surface has 1-5 callers per target, not dozens.
   If you find yourself connecting most modules in one group to a single target, stop.`;
 }
 
@@ -165,6 +171,10 @@ function buildCrossProcessUserPrompt(
   const MAX_MEMBERS = 8;
   const KIND_PRIORITY: Record<string, number> = { function: 0, class: 1, variable: 2 };
 
+  // Pre-fetch purposes for all member definitions to avoid N individual queries
+  const allMemberDefIds = [...membersMap.values()].flatMap((m) => m.members.map((mem) => mem.definitionId));
+  const purposeMap = db.metadata.getValuesByKey(allMemberDefIds, 'purpose');
+
   const formatMembers = (moduleId: number): string => {
     const modWithMembers = membersMap.get(moduleId);
     if (!modWithMembers || modWithMembers.members.length === 0) return '';
@@ -172,9 +182,13 @@ function buildCrossProcessUserPrompt(
       (a, b) => (KIND_PRIORITY[a.kind] ?? 3) - (KIND_PRIORITY[b.kind] ?? 3)
     );
     const shown = sorted.slice(0, MAX_MEMBERS);
-    const memberList = shown.map((m) => `${m.name} (${m.kind})`).join(', ');
-    const extra = sorted.length > MAX_MEMBERS ? ` (+${sorted.length - MAX_MEMBERS} more)` : '';
-    return `\n  Members: ${memberList}${extra}`;
+    const lines = shown.map((m) => {
+      const purpose = purposeMap.get(m.definitionId);
+      const purposeStr = purpose ? ` — ${purpose}` : '';
+      return `    ${m.name} (${m.kind})${purposeStr} [${m.filePath}]`;
+    });
+    const extra = sorted.length > MAX_MEMBERS ? `\n    (+${sorted.length - MAX_MEMBERS} more)` : '';
+    return `\n  Members:\n${lines.join('\n')}${extra}`;
   };
 
   const groupAIds = new Set(groupA.map((m) => m.id));
@@ -299,6 +313,7 @@ function parseLogicalInteractionCSV(
   response: string,
   modules: Module[],
   existingPairs: Set<string>,
+  membersMap: Map<number, ModuleWithMembers>,
   db: IndexDatabase
 ): InferredInteraction[] {
   const results: InferredInteraction[] = [];
@@ -311,9 +326,27 @@ function parseLogicalInteractionCSV(
     if (!line.trim() || line.startsWith('from_module')) continue;
 
     const fields = parseRow(line);
+    // Support both old 4-column and new 6-column format
     if (!fields || fields.length < 4) continue;
 
-    const [fromPath, toPath, reason, confidenceStr] = fields;
+    let fromPath: string;
+    let toPath: string;
+    let sourceMember: string | undefined;
+    let targetMember: string | undefined;
+    let reason: string;
+    let confidenceStr: string;
+
+    if (fields.length >= 6) {
+      // New format: from_module_path,to_module_path,source_member,target_member,reason,confidence
+      [fromPath, toPath, sourceMember, targetMember, reason, confidenceStr] = fields;
+    } else if (fields.length === 5) {
+      // 5-column: new format with confidence omitted — default to medium
+      [fromPath, toPath, sourceMember, targetMember, reason] = fields;
+      confidenceStr = 'medium';
+    } else {
+      // Old format: from_module_path,to_module_path,reason,confidence
+      [fromPath, toPath, reason, confidenceStr] = fields;
+    }
 
     const fromModule = moduleByPath.get(fromPath.trim());
     const toModule = moduleByPath.get(toPath.trim());
@@ -322,6 +355,18 @@ function parseLogicalInteractionCSV(
 
     const normalizedConfidence = confidenceStr.trim().toLowerCase();
     if (normalizedConfidence === 'low') continue;
+
+    // Gate E — Member citation verification
+    if (sourceMember) {
+      const fromMembers = membersMap.get(fromModule.id);
+      const memberExists = fromMembers?.members.some((m) => m.name === sourceMember.trim());
+      if (!memberExists) continue; // Hallucinated member name → skip
+    }
+    if (targetMember) {
+      const toMembers = membersMap.get(toModule.id);
+      const memberExists = toMembers?.members.some((m) => m.name === targetMember.trim());
+      if (!memberExists) continue; // Hallucinated member name → skip
+    }
 
     // Apply structural gating
     const gate = gateInferredInteraction(fromModule, toModule, existingPairs, db);

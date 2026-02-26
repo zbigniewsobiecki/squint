@@ -181,6 +181,8 @@ async function inferTargetedInteractions(
   const systemPrompt = `You are reviewing module pairs that have symbol-level relationships but no detected interaction.
 For each pair, determine if a real runtime interaction exists and describe it.
 
+PRECISION OVER RECALL — when in doubt, SKIP. Only CONFIRM connections where you can identify a concrete data flow from a specific source member to a specific target member.
+
 ## Decision Rules (CRITICAL)
 - If "Forward imports: NONE" AND "Process: same-process" → SKIP (no static dependency exists)
 - If "Reverse AST interaction: YES" → SKIP (the relationship direction is reversed; the reverse is already detected)
@@ -198,6 +200,17 @@ project.shared.types,project.backend.models,SKIP,"Shared type definitions, no ru
 For each pair:
 - CONFIRM if a real interaction exists (provide a semantic description as reason)
 - SKIP if it's an artifact (shared types, transitive dependency, test-only, or no static evidence)`;
+
+  // Pre-fetch purposes for all member definitions to avoid N individual queries
+  const allModuleIds = new Set(uncoveredPairs.flatMap((p) => [p.fromModuleId, p.toModuleId]));
+  const memberDefIds: number[] = [];
+  for (const modId of allModuleIds) {
+    const symbols = db.modules.getSymbols(modId);
+    for (const s of symbols.slice(0, 5)) {
+      memberDefIds.push(s.id);
+    }
+  }
+  const memberPurposeMap = db.metadata.getValuesByKey(memberDefIds, 'purpose');
 
   // Build enriched pair descriptions
   const pairDescriptions = uncoveredPairs
@@ -237,6 +250,24 @@ For each pair:
         }
         if (relDetails.length > 5) {
           desc += `\n     (+${relDetails.length - 5} more)`;
+        }
+      }
+
+      // Key members with purposes
+      const fromMembers = db.modules.getSymbols(p.fromModuleId).slice(0, 5);
+      const toMembers = db.modules.getSymbols(p.toModuleId).slice(0, 5);
+      if (fromMembers.length > 0) {
+        desc += '\n   Source members:';
+        for (const m of fromMembers) {
+          const purpose = memberPurposeMap.get(m.id);
+          desc += `\n     - ${m.name} (${m.kind})${purpose ? ` — ${purpose}` : ''}`;
+        }
+      }
+      if (toMembers.length > 0) {
+        desc += '\n   Target members:';
+        for (const m of toMembers) {
+          const purpose = memberPurposeMap.get(m.id);
+          desc += `\n     - ${m.name} (${m.kind})${purpose ? ` — ${purpose}` : ''}`;
         }
       }
 

@@ -257,6 +257,174 @@ export function applyParsedAssignments(
   return { assigned, fuzzy, invalidPath, notFound };
 }
 
+/**
+ * Post-assignment file cohesion consolidation.
+ * For each file whose symbols are split across multiple modules,
+ * reassign minority symbols to the majority module.
+ * Barrel/index files are skipped.
+ */
+export function consolidateFileCohesion(ctx: { db: IndexDatabase; command: Command; isJson: boolean }): void {
+  const { db, command, isJson } = ctx;
+
+  // Query all assigned symbols with file path and module ID
+  const rows = db.modules.getAssignedSymbolsByFile();
+
+  // Group by file path
+  const byFile = new Map<string, Array<{ definitionId: number; moduleId: number }>>();
+  for (const row of rows) {
+    const existing = byFile.get(row.filePath);
+    if (existing) {
+      existing.push({ definitionId: row.definitionId, moduleId: row.moduleId });
+    } else {
+      byFile.set(row.filePath, [{ definitionId: row.definitionId, moduleId: row.moduleId }]);
+    }
+  }
+
+  let consolidatedFiles = 0;
+  let reassignedSymbols = 0;
+
+  for (const [filePath, symbols] of byFile) {
+    // Skip barrel/index files (index.ts, index.js, index.tsx, index.mjs, etc.)
+    const basename = filePath.split('/').pop() ?? '';
+    if (basename.startsWith('index.')) continue;
+
+    // Check if symbols are split across multiple modules
+    const moduleIds = new Set(symbols.map((s) => s.moduleId));
+    if (moduleIds.size <= 1) continue;
+
+    // Find the majority module
+    const moduleCounts = new Map<number, number>();
+    for (const s of symbols) {
+      moduleCounts.set(s.moduleId, (moduleCounts.get(s.moduleId) ?? 0) + 1);
+    }
+
+    // Find the majority module; on tie, prefer higher module ID (stable)
+    let majorityModule = 0;
+    let majorityCount = 0;
+    for (const [moduleId, count] of moduleCounts) {
+      if (count > majorityCount || (count === majorityCount && moduleId > majorityModule)) {
+        majorityModule = moduleId;
+        majorityCount = count;
+      }
+    }
+
+    // Reassign minority symbols to the majority module
+    for (const s of symbols) {
+      if (s.moduleId !== majorityModule) {
+        db.modules.assignSymbol(s.definitionId, majorityModule);
+        reassignedSymbols++;
+      }
+    }
+    consolidatedFiles++;
+  }
+
+  if (consolidatedFiles > 0 && !isJson) {
+    command.log(
+      chalk.green(`  File cohesion: consolidated ${consolidatedFiles} files, reassigned ${reassignedSymbols} symbols`)
+    );
+  }
+}
+
+/**
+ * Post-assignment base class enforcement.
+ * If a base class (extended by 2+ subclasses in different modules) is assigned to a leaf module,
+ * reassign it to the nearest common ancestor of all extender modules.
+ */
+export function enforceBaseClassRule(ctx: {
+  db: IndexDatabase;
+  command: Command;
+  isJson: boolean;
+  verbose?: boolean;
+}): void {
+  const { db, command, isJson } = ctx;
+
+  const allModules = db.modules.getAll();
+  const moduleById = new Map(allModules.map((m) => [m.id, m]));
+
+  // Identify non-leaf modules (modules that have children)
+  const modulesWithChildren = new Set(allModules.filter((m) => m.parentId !== null).map((m) => m.parentId!));
+
+  const baseCandidates = db.modules.getBaseClassCandidates();
+  const extendersByClass = db.modules.getAllExtenderModulesByClass();
+  let reassigned = 0;
+
+  for (const base of baseCandidates) {
+    // Only act if the base class is in a leaf module
+    if (modulesWithChildren.has(base.moduleId)) continue;
+
+    const extenders = extendersByClass.get(base.name) ?? [];
+    const extenderModuleIds = new Set(extenders.map((e) => e.moduleId));
+
+    // Only act if subclasses span 2+ different modules
+    if (extenderModuleIds.size < 2) continue;
+
+    // Find the common ancestor of all extender modules
+    const commonAncestor = findCommonAncestor([...extenderModuleIds], moduleById);
+    if (!commonAncestor) continue;
+
+    // Skip if the common ancestor is the root module (depth 0) — root is never a meaningful home
+    const ancestorModule = moduleById.get(commonAncestor);
+    if (!ancestorModule || ancestorModule.depth === 0) continue;
+
+    // Check if the current module IS an ancestor (all extender paths start with its path)
+    const currentModule = moduleById.get(base.moduleId);
+    if (currentModule) {
+      const isAlreadyAncestor = [...extenderModuleIds].every((eid) => {
+        const em = moduleById.get(eid);
+        return em && (em.fullPath === currentModule.fullPath || em.fullPath.startsWith(`${currentModule.fullPath}.`));
+      });
+      if (isAlreadyAncestor) continue;
+    }
+
+    db.modules.assignSymbol(base.definitionId, commonAncestor);
+    reassigned++;
+
+    if (ctx.verbose && !isJson) {
+      const fromPath = currentModule?.fullPath ?? '?';
+      const toPath = ancestorModule.fullPath;
+      command.log(chalk.gray(`    ${base.name}: ${fromPath} → ${toPath}`));
+    }
+  }
+
+  if (reassigned > 0 && !isJson) {
+    command.log(chalk.green(`  Base class rule: reassigned ${reassigned} base classes to common ancestor modules`));
+  }
+}
+
+/**
+ * Find the deepest module that is an ancestor of ALL given module IDs.
+ */
+function findCommonAncestor(moduleIds: number[], moduleById: Map<number, Module>): number | null {
+  if (moduleIds.length === 0) return null;
+
+  // Build ancestor chain (path from module to root) for each module
+  function getAncestorChain(moduleId: number): number[] {
+    const chain: number[] = [];
+    let current = moduleById.get(moduleId);
+    while (current) {
+      chain.unshift(current.id);
+      current = current.parentId ? moduleById.get(current.parentId) : undefined;
+    }
+    return chain;
+  }
+
+  const chains = moduleIds.map(getAncestorChain);
+
+  // Walk from root, find the deepest common prefix
+  let commonAncestor: number | null = null;
+  const minLen = Math.min(...chains.map((c) => c.length));
+  for (let i = 0; i < minLen; i++) {
+    const id = chains[0][i];
+    if (chains.every((c) => c[i] === id)) {
+      commonAncestor = id;
+    } else {
+      break;
+    }
+  }
+
+  return commonAncestor;
+}
+
 export interface CoverageGateContext {
   db: IndexDatabase;
   command: Command;
@@ -313,7 +481,7 @@ assignment,42,project.frontend.screens.login
 - Every symbol must be assigned to exactly one module
 - Module paths must match existing modules in the tree
 - Prefer more specific modules, but if unsure use the closest parent
-- Consider the file path as a strong hint
+- Consider the file path as a strong hint — keep symbols from the same file together
 - CRITICAL: Output exactly one assignment row for every symbol listed. Do not skip any.`;
 
   for (let retry = 0; retry < maxGateRetries; retry++) {

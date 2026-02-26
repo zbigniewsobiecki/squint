@@ -212,8 +212,13 @@ assignment,123,project.shared.utils
 - Every symbol must be assigned to exactly one module
 - Module paths must match existing modules in the tree
 - Prefer more specific modules over general ones
+- **File cohesion is paramount**: all exported symbols from the same file should go to the
+  same module. Files are the developer's chosen unit of code organization. Only split a
+  file's symbols across modules for barrel/index files that re-export from many sources.
+- When a symbol has multiple domain tags, use the file path and co-located symbols
+  to choose the single most appropriate module — do NOT scatter same-file symbols
+  across different domain branches.
 - Group related symbols together
-- Consider the file path as a hint but prioritize functionality
 
 ## Shared / Base Class Rule
 - If a class is "Extended by: N class(es)" (where N >= 2), it is a shared base class.

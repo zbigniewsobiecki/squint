@@ -134,6 +134,13 @@ Given a list of user journey flows and a module tree, group the flows into produ
 - Aim for 4-8 features for a typical application
 - Feature slugs should be kebab-case (e.g., "content-management")
 
+## Entity Grouping (CRITICAL)
+- Flows targeting related entity variants ALWAYS belong to the same feature:
+  - "{entity}-list", "{entity}-detail", and "{entity}" → same feature
+  - Example: "vehicle-list", "vehicle-detail", and "vehicle" flows → "Vehicle Management"
+- Group by the BASE entity (strip -list/-detail suffixes), not by the view type
+- CRUD operations on the same entity belong together (view + create + update + delete)
+
 ## Output Format
 Respond with ONLY a CSV (no markdown fences, no explanation).
 
@@ -149,8 +156,25 @@ Rules:
   }
 
   buildUserPrompt(flows: Flow[], modules: Module[]): string {
-    const flowLines = flows
-      .map((f) => {
+    const moduleMap = new Map(modules.map((m) => [m.id, m]));
+
+    // Group flows by normalized entity for clearer presentation
+    const normalizeEntity = (e: string | null) => e?.replace(/-(list|detail)$/, '') ?? null;
+    const byEntity = new Map<string | null, Flow[]>();
+    for (const f of flows) {
+      const entity = normalizeEntity(f.targetEntity);
+      const group = byEntity.get(entity);
+      if (group) {
+        group.push(f);
+      } else {
+        byEntity.set(entity, [f]);
+      }
+    }
+
+    // Present flows grouped by entity
+    const entitySections: string[] = [];
+    for (const [entity, entityFlows] of byEntity) {
+      const flowLines = entityFlows.map((f) => {
         const parts = [
           `slug=${f.slug}`,
           `name="${f.name}"`,
@@ -158,17 +182,19 @@ Rules:
           f.targetEntity ? `entity=${f.targetEntity}` : null,
           f.stakeholder ? `stakeholder=${f.stakeholder}` : null,
           `tier=${f.tier}`,
+          f.entryPointModuleId ? `entryModule=${moduleMap.get(f.entryPointModuleId)?.fullPath ?? 'unknown'}` : null,
           f.description ? `desc="${f.description}"` : null,
         ].filter(Boolean);
-        return parts.join(', ');
-      })
-      .join('\n');
+        return `  ${parts.join(', ')}`;
+      });
+      entitySections.push(`### ${entity ? `Entity: ${entity}` : 'Other Flows'}\n${flowLines.join('\n')}`);
+    }
 
     const moduleTree = this.buildModuleTreeText(modules);
 
-    return `## Flows (${flows.length} total)
+    return `## Flows (${flows.length} total, grouped by base entity)
 
-${flowLines}
+${entitySections.join('\n\n')}
 
 ## Module Tree
 

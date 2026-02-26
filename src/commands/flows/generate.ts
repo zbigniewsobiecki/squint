@@ -34,6 +34,7 @@ import {
   JourneyBuilder,
   buildFlowTracingContext,
   deduplicateByInteractionOverlap,
+  deduplicateByInteractionSet,
 } from '../llm/flows/index.js';
 import type { EntryPointModuleInfo } from '../llm/flows/types.js';
 
@@ -406,9 +407,16 @@ export default class FlowsGenerate extends BaseLlmCommand {
     // Interaction-overlap dedup across all tiers
     const preDedup = enhancedFlows.length;
     enhancedFlows = deduplicateByInteractionOverlap(enhancedFlows);
-    const dedupRemoved = preDedup - enhancedFlows.length;
-    if (dedupRemoved > 0) {
-      logVerbose(this, `Interaction-overlap dedup removed ${dedupRemoved} flows`, verbose, isJson);
+    const afterOverlap = enhancedFlows.length;
+    enhancedFlows = deduplicateByInteractionSet(enhancedFlows);
+    const afterSet = enhancedFlows.length;
+    const overlapRemoved = preDedup - afterOverlap;
+    const setRemoved = afterOverlap - afterSet;
+    if (overlapRemoved > 0) {
+      logVerbose(this, `Overlap dedup removed ${overlapRemoved} flows`, verbose, isJson);
+    }
+    if (setRemoved > 0) {
+      logVerbose(this, `Exact-set dedup removed ${setRemoved} flows`, verbose, isJson);
     }
 
     // Post-dedup gap flow pass to restore coverage for any interactions lost during dedup
@@ -434,24 +442,43 @@ export default class FlowsGenerate extends BaseLlmCommand {
     // Step 7: Persist all tiers (atomics first, then composites with subflow refs)
     logStep(this, 7, 'Persisting Flows', isJson);
 
+    let persistedCount = enhancedFlows.length;
     if (!dryRun && enhancedFlows.length > 0) {
-      this.persistFlows(db, enhancedFlows, verbose, isJson);
+      persistedCount = this.persistFlows(db, enhancedFlows, verbose, isJson);
     }
 
     // Output results
-    this.outputResults(db, enhancedFlows, gapFlows, entryPointModules, interactions, dryRun, isJson);
+    this.outputResults(db, enhancedFlows, persistedCount, gapFlows, entryPointModules, interactions, dryRun, isJson);
   }
 
   /**
    * Persist flows to the database.
    * Persists tier-0 first (to get IDs), then tier-1+ with subflow step refs.
    */
-  private persistFlows(db: IndexDatabase, flows: FlowSuggestion[], verbose: boolean, isJson: boolean): void {
+  private persistFlows(db: IndexDatabase, flows: FlowSuggestion[], verbose: boolean, isJson: boolean): number {
     const usedSlugs = new Set<string>();
     const slugToFlowId = new Map<string, number>();
 
+    // Collect subflow references from tier 1+ flows
+    const referencedSlugs = new Set<string>();
+    for (const flow of flows) {
+      if (flow.tier > 0) {
+        for (const slug of flow.subflowSlugs) {
+          referencedSlugs.add(slug);
+        }
+      }
+    }
+
+    // Filter: keep tier-1+, and only tier-0 flows that are referenced as subflows
+    const toPersist = flows.filter((f) => f.tier > 0 || referencedSlugs.has(f.slug));
+    const suppressedCount = flows.length - toPersist.length;
+    if (suppressedCount > 0) {
+      logVerbose(this, `Suppressed ${suppressedCount} unreferenced tier-0 flows at persistence`, verbose, isJson);
+    }
+
     // Sort: tier-0 first, then tier-1, then tier-2
-    const sorted = [...flows].sort((a, b) => a.tier - b.tier);
+    const sorted = [...toPersist].sort((a, b) => a.tier - b.tier);
+    let persistedCount = 0;
 
     for (const flow of sorted) {
       const slug = flow.slug;
@@ -474,6 +501,7 @@ export default class FlowsGenerate extends BaseLlmCommand {
         });
 
         slugToFlowId.set(slug, flowId);
+        persistedCount++;
 
         // Add module-level steps
         if (flow.interactionIds.length > 0) {
@@ -506,6 +534,8 @@ export default class FlowsGenerate extends BaseLlmCommand {
         }
       }
     }
+
+    return persistedCount;
   }
 
   /**
@@ -514,6 +544,7 @@ export default class FlowsGenerate extends BaseLlmCommand {
   private outputResults(
     db: IndexDatabase,
     enhancedFlows: FlowSuggestion[],
+    persistedCount: number,
     gapFlows: FlowSuggestion[],
     entryPointModules: Array<{ moduleId: number }>,
     interactions: InteractionWithPaths[],
@@ -536,7 +567,7 @@ export default class FlowsGenerate extends BaseLlmCommand {
 
     const result = {
       entryPointModules: entryPointModules.length,
-      flowsCreated: enhancedFlows.length,
+      flowsCreated: persistedCount,
       userFlows: userFlowCount,
       internalFlows: internalFlowCount,
       coverage,

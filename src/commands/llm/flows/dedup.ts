@@ -11,7 +11,7 @@ import type { FlowSuggestion } from './types.js';
  *
  * Overlap ratio = |intersection| / min(|A|, |B|)
  */
-export function deduplicateByInteractionOverlap(flows: FlowSuggestion[], threshold = 0.7): FlowSuggestion[] {
+export function deduplicateByInteractionOverlap(flows: FlowSuggestion[], threshold = 0.5): FlowSuggestion[] {
   const dropped = new Set<number>(); // indices into `flows`
 
   for (let i = 0; i < flows.length; i++) {
@@ -54,6 +54,38 @@ export function deduplicateByInteractionOverlap(flows: FlowSuggestion[], thresho
   }
 
   return flows.filter((_, idx) => !dropped.has(idx));
+}
+
+/**
+ * Deduplicate flows that have the exact same set of interaction IDs.
+ * When two flows share identical interaction sets, the lower-quality one is removed.
+ */
+export function deduplicateByInteractionSet(flows: FlowSuggestion[]): FlowSuggestion[] {
+  const seen = new Map<string, number>(); // hash -> index of best flow
+
+  for (let i = 0; i < flows.length; i++) {
+    const flow = flows[i];
+    if (flow.interactionIds.length === 0) continue;
+
+    const hash = [...flow.interactionIds].sort((a, b) => a - b).join(',');
+    const existingIdx = seen.get(hash);
+
+    if (existingIdx === undefined) {
+      seen.set(hash, i);
+    } else {
+      // Keep the higher-quality flow
+      const existing = flows[existingIdx];
+      const dropIdx = pickFlowToDrop(existing, flow, existingIdx, i);
+      if (dropIdx === existingIdx) {
+        seen.set(hash, i);
+      }
+      // The dropped one will be filtered out below
+    }
+  }
+
+  const keepIndices = new Set(seen.values());
+  // Keep flows with no interactions (never entered into seen) and all winners from seen
+  return flows.filter((f, i) => f.interactionIds.length === 0 || keepIndices.has(i));
 }
 
 /**
