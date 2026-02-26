@@ -63,7 +63,7 @@ export class FlowEnhancer {
     return `You are creating user story names for code flows.
 
 ## REQUIRED Name Format
-"[stakeholder] [verb]s [entity]"
+"[stakeholder] [verb]s [entity phrase]"
 
 Rules:
 - Stakeholder MUST come first (user, admin, system, developer, external)
@@ -73,19 +73,26 @@ Rules:
   - update → updates, edits, modifies
   - delete → deletes, removes
   - process → processes, logs into, authenticates
+- Entity phrase MUST use natural language (not slugs):
+  - "vehicle list" NOT "vehicle-list"
+  - "vehicle details" NOT "vehicle-detail"
+- When the entity has a -list/-detail suffix, convert to natural form
 - Entity MUST be derived from the actual code — use the target_entity from the flow data
 - All lowercase sentence format
 
 ## Examples
 
 GOOD:
-- "user views item list"
-- "admin creates new record"
-- "user updates account details"
+- "user views vehicle list"
+- "user views vehicle details"
+- "admin creates new customer"
+- "user updates account settings"
 - "user deletes draft entry"
 - "user logs into system"
 
 BAD (DO NOT produce):
+- "user views vehicle-list" ❌ (slug, not natural language)
+- "user views vehicle-detail" ❌ (slug, not natural language)
 - "ItemFlow" ❌ (wrong format)
 - "Record Management" ❌ (too vague)
 - "views items" ❌ (missing stakeholder)

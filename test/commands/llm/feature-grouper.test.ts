@@ -317,7 +317,7 @@ feat,"Feature","desc","flow-a"`;
       expect(prompt).toContain('stakeholder=user');
       expect(prompt).toContain('tier=1');
       expect(prompt).toContain('project');
-      expect(prompt).toContain('## Flows (1 total)');
+      expect(prompt).toContain('## Flows (1 total, grouped by base entity)');
       expect(prompt).toContain('## Module Tree');
     });
 
@@ -356,7 +356,7 @@ feat,"Feature","desc","flow-a"`;
 
       const prompt = grouper.buildUserPrompt(flows, []);
 
-      expect(prompt).toContain('## Flows (3 total)');
+      expect(prompt).toContain('## Flows (3 total, grouped by base entity)');
     });
 
     it('renders module tree with depth-based indentation', () => {
@@ -427,7 +427,7 @@ feat,"Feature","desc","flow-a"`;
 
       expect(prompt).toContain('## Module Tree');
       // Should not crash, just have empty tree
-      expect(prompt).toContain('## Flows (1 total)');
+      expect(prompt).toContain('## Flows (1 total, grouped by base entity)');
     });
 
     it('handles empty flows list', () => {
@@ -435,8 +435,62 @@ feat,"Feature","desc","flow-a"`;
 
       const prompt = grouper.buildUserPrompt([], [makeModule()]);
 
-      expect(prompt).toContain('## Flows (0 total)');
+      expect(prompt).toContain('## Flows (0 total, grouped by base entity)');
       expect(prompt).toContain('## Module Tree');
+    });
+
+    it('includes entryModule when flow has entryPointModuleId', () => {
+      const grouper = createGrouper();
+
+      const flows = [makeFlow({ entryPointModuleId: 2 })];
+      const modules = [
+        makeModule({ id: 1 }),
+        makeModule({ id: 2, slug: 'frontend', fullPath: 'project.frontend', depth: 1, parentId: 1 }),
+      ];
+
+      const prompt = grouper.buildUserPrompt(flows, modules);
+
+      expect(prompt).toContain('entryModule=project.frontend');
+    });
+
+    it('omits entryModule when flow has no entryPointModuleId', () => {
+      const grouper = createGrouper();
+
+      const flows = [makeFlow({ entryPointModuleId: null })];
+      const modules = [makeModule()];
+
+      const prompt = grouper.buildUserPrompt(flows, modules);
+
+      expect(prompt).not.toContain('entryModule=');
+    });
+
+    it('groups flows by normalized base entity', () => {
+      const grouper = createGrouper();
+
+      const flows = [
+        makeFlow({ id: 1, slug: 'view-vehicle', targetEntity: 'vehicle', actionType: 'view' }),
+        makeFlow({ id: 2, slug: 'view-vehicle-list', targetEntity: 'vehicle-list', actionType: 'view' }),
+        makeFlow({ id: 3, slug: 'view-vehicle-detail', targetEntity: 'vehicle-detail', actionType: 'view' }),
+      ];
+
+      const prompt = grouper.buildUserPrompt(flows, []);
+
+      // All three should be under the same "vehicle" entity section
+      expect(prompt).toContain('### Entity: vehicle');
+      // Should NOT have separate sections for vehicle-list or vehicle-detail
+      expect(prompt).not.toContain('### Entity: vehicle-list');
+      expect(prompt).not.toContain('### Entity: vehicle-detail');
+    });
+
+    it('uses Other Flows header for flows with null targetEntity', () => {
+      const grouper = createGrouper();
+
+      const flows = [makeFlow({ targetEntity: null })];
+
+      const prompt = grouper.buildUserPrompt(flows, []);
+
+      expect(prompt).toContain('### Other Flows');
+      expect(prompt).not.toContain('### Entity: unknown');
     });
   });
 });

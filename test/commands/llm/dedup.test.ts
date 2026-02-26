@@ -47,7 +47,7 @@ describe('deduplicateByInteractionOverlap', () => {
     const b = makeFlow({ interactionIds: [1, 6, 7, 8, 9] });
 
     const result = deduplicateByInteractionOverlap([a, b]);
-    // 1/5 = 0.2, below 0.7 threshold
+    // 1/5 = 0.2, below 0.5 threshold
     expect(result).toHaveLength(2);
   });
 

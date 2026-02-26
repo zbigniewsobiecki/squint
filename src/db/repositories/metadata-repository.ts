@@ -85,6 +85,34 @@ export class MetadataRepository {
   }
 
   /**
+   * Batch-fetch a metadata value for multiple definition IDs.
+   * Returns a Map from definition_id to value for those that have the key set.
+   */
+  getValuesByKey(definitionIds: number[], key: string): Map<number, string> {
+    if (definitionIds.length === 0) return new Map();
+
+    const result = new Map<number, string>();
+    const CHUNK_SIZE = 900;
+
+    for (let i = 0; i < definitionIds.length; i += CHUNK_SIZE) {
+      const chunk = definitionIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = this.db
+        .prepare(
+          `SELECT definition_id, value FROM definition_metadata
+           WHERE key = ? AND definition_id IN (${placeholders})`
+        )
+        .all(key, ...chunk) as Array<{ definition_id: number; value: string }>;
+
+      for (const row of rows) {
+        result.set(row.definition_id, row.value);
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Get definition IDs that have a specific metadata key set
    */
   getDefinitionsWith(key: string): number[] {

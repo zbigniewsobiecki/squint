@@ -68,10 +68,10 @@ describe('InteractionAnalysis', () => {
       expect(anomalies).toHaveLength(0);
     });
 
-    it('does not flag modules with fan-in below absolute minimum (8)', () => {
+    it('does not flag modules with fan-in below absolute minimum (4)', () => {
       const target = createModule('target', 'Target');
-      // Only 5 llm-inferred inbound (below threshold of 8)
-      for (let i = 0; i < 5; i++) {
+      // Only 3 llm-inferred inbound (below threshold of 4)
+      for (let i = 0; i < 3; i++) {
         const m = createModule(`m${i}`, `Module ${i}`);
         repo.insert(m, target, { source: 'llm-inferred' });
       }

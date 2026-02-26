@@ -124,6 +124,23 @@ describe('flow-tracer', () => {
       expect(inferred[0].id).toBe(100);
     });
 
+    it('only adds contract-matched targets to boundaryTargetModuleIds', () => {
+      const interactions = [
+        makeInteraction({ id: 100, fromModuleId: 1, toModuleId: 2, source: 'llm-inferred' }),
+        makeInteraction({ id: 101, fromModuleId: 1, toModuleId: 3, source: 'contract-matched' }),
+      ];
+      const ctx = buildFlowTracingContext(new Map(), [], interactions);
+
+      // Both should appear in inferredFromModule
+      const inferred = ctx.inferredFromModule.get(1) ?? [];
+      expect(inferred).toHaveLength(2);
+      expect(inferred.map((i) => i.id)).toEqual([100, 101]);
+
+      // Only contract-matched target should be in boundaryTargetModuleIds
+      expect(ctx.boundaryTargetModuleIds.has(3)).toBe(true);
+      expect(ctx.boundaryTargetModuleIds.has(2)).toBe(false);
+    });
+
     it('builds defIdToName lookup', () => {
       const modules = [
         {

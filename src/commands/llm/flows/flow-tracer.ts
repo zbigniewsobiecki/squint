@@ -468,7 +468,12 @@ export function buildFlowTracingContext(
       const existing = inferredFromModule.get(interaction.fromModuleId) ?? [];
       existing.push(interaction);
       inferredFromModule.set(interaction.fromModuleId, existing);
-      boundaryTargetModuleIds.add(interaction.toModuleId);
+
+      // Only contract-matched targets are true process boundaries (HTTP/IPC).
+      // llm-inferred targets may be same-process and shouldn't stop flow tracing.
+      if (interaction.source === 'contract-matched') {
+        boundaryTargetModuleIds.add(interaction.toModuleId);
+      }
     }
   }
 

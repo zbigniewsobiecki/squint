@@ -5,7 +5,12 @@ import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
 import type { LlmLogOptions } from '../llm/_shared/llm-utils.js';
 import { assignByFileCohortFallback } from './_shared/fallback-assignment.js';
-import { runAssignmentCoverageGate, runAssignmentPhase } from './phases/assignment-phase.js';
+import {
+  consolidateFileCohesion,
+  enforceBaseClassRule,
+  runAssignmentCoverageGate,
+  runAssignmentPhase,
+} from './phases/assignment-phase.js';
 import { runDeepenPhase } from './phases/deepen-phase.js';
 import { runTreePhase } from './phases/tree-phase.js';
 
@@ -142,6 +147,12 @@ export default class ModulesGenerate extends BaseLlmCommand {
             this.log(chalk.green(`  Deterministic fallback: assigned ${fallbackCount} remaining symbols`));
           }
         }
+      }
+
+      // Consolidate file cohesion: reassign minority symbols so same-file symbols share a module
+      if (!dryRun) {
+        consolidateFileCohesion({ db, command: this, isJson });
+        enforceBaseClassRule({ db, command: this, isJson, verbose });
       }
 
       // Prune empty leaf modules after assignment

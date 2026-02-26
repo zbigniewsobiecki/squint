@@ -354,7 +354,7 @@ export class InteractionAnalysis {
    * Detect fan-in anomalies: modules with unusually high llm-inferred inbound
    * connections but zero AST inbound connections (hallucination pattern).
    *
-   * Uses Tukey's far-outlier fence (Q3 + 3*IQR) with an absolute minimum of 8.
+   * Uses Tukey's standard outlier fence (Q3 + 1.5*IQR) with an absolute minimum of 4.
    */
   detectFanInAnomalies(): Array<{
     moduleId: number;
@@ -395,7 +395,7 @@ export class InteractionAnalysis {
     const q1 = fanInValues[Math.floor(n * 0.25)];
     const q3 = fanInValues[Math.floor(n * 0.75)];
     const iqr = q3 - q1;
-    const farFence = q3 + 3 * iqr;
+    const farFence = q3 + 1.5 * iqr;
 
     // Get module paths for reporting
     const modulePathRows = this.db
@@ -415,7 +415,7 @@ export class InteractionAnalysis {
     for (const row of llmFanInRows) {
       const astFanIn = astFanInMap.get(row.moduleId) ?? 0;
 
-      if (row.fanIn > farFence && row.fanIn >= 8 && astFanIn === 0) {
+      if (row.fanIn > farFence && row.fanIn >= 4 && astFanIn === 0) {
         anomalies.push({
           moduleId: row.moduleId,
           modulePath: modulePathMap.get(row.moduleId) ?? `module#${row.moduleId}`,
