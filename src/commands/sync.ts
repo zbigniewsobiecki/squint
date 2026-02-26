@@ -3,9 +3,10 @@ import path from 'node:path';
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { IndexDatabase } from '../db/database-facade.js';
+import type { DirtyLayer } from '../db/schema.js';
 import { detectChanges } from '../sync/change-detector.js';
 import { applySync } from '../sync/incremental-indexer.js';
-import { selectStrategy } from '../sync/sync-strategy.js';
+import { type EnrichmentStrategy, selectStrategy } from '../sync/sync-strategy.js';
 import ContractsExtract from './contracts/extract.js';
 import FeaturesGenerate from './features/generate.js';
 import FlowsGenerate from './flows/generate.js';
@@ -148,8 +149,44 @@ export default class Sync extends Command {
 
     // No changes
     if (changes.length === 0) {
-      db.close();
-      this.log(chalk.green('No changes detected. Database is up to date.'));
+      if (flags.enrich) {
+        // Even with no AST changes, there may be dirty entries or unannotated
+        // definitions from a prior sync that didn't include --enrich.
+        const dirtyCount = db.syncDirty.countAll();
+        const conn = db.getConnection();
+        const unassigned = (
+          conn
+            .prepare(
+              'SELECT COUNT(*) as cnt FROM definitions WHERE id NOT IN (SELECT definition_id FROM module_members)'
+            )
+            .get() as { cnt: number }
+        ).cnt;
+        const hasModules = (conn.prepare('SELECT COUNT(*) as cnt FROM modules').get() as { cnt: number }).cnt > 0;
+
+        if (dirtyCount > 0 || unassigned > 0) {
+          this.log(
+            chalk.gray(
+              `No AST changes, but ${dirtyCount} dirty entries and ${unassigned} unannotated definitions remain.`
+            )
+          );
+          db.close();
+          await this.runEnrichment(
+            dbPath,
+            flags.model!,
+            flags.strict,
+            unassigned,
+            hasModules,
+            'incremental',
+            flags.verbose
+          );
+        } else {
+          db.close();
+          this.log(chalk.green('No changes detected. Database is up to date.'));
+        }
+      } else {
+        db.close();
+        this.log(chalk.green('No changes detected. Database is up to date.'));
+      }
       return;
     }
 
@@ -233,15 +270,62 @@ export default class Sync extends Command {
 
     // --enrich mode: run LLM enrichment
     if (flags.enrich) {
+      await this.runEnrichment(
+        dbPath,
+        flags.model!,
+        flags.strict,
+        result.unassignedCount,
+        result.interactionsRecalculated,
+        decision.strategy,
+        flags.verbose
+      );
+    } else if (result.staleMetadataCount > 0 || result.unassignedCount > 0) {
       this.log('');
-      this.log(chalk.blue('Running LLM enrichment...'));
+      this.log(chalk.gray("Run 'squint sync --enrich' to update annotations, modules, and flows."));
+    }
+  }
 
-      const llmFlags = ['-d', dbPath, '--model', flags.model!];
-      const enrichmentWarnings: string[] = [];
+  private async runEnrichment(
+    dbPath: string,
+    model: string,
+    strict: boolean,
+    unassignedCount: number,
+    hasModules: boolean,
+    strategy: EnrichmentStrategy = 'full',
+    verbose = false
+  ): Promise<void> {
+    this.log('');
+    this.log(chalk.blue(`Running LLM enrichment (strategy: ${strategy})...`));
 
+    const llmFlags = ['-d', dbPath, '--model', model];
+    const enrichmentWarnings: string[] = [];
+
+    // Strategy: 'none' — drain all dirty, skip enrichment
+    if (strategy === 'none') {
+      this.drainAllLayers(dbPath);
+      this.log(chalk.green.bold('Enrichment skipped (strategy: none).'));
+      return;
+    }
+
+    // Strategy: 'full' — drain all dirty, run all commands with --force
+    if (strategy === 'full') {
+      this.drainAllLayers(dbPath);
+      await this.runFullEnrichment(llmFlags, enrichmentWarnings, unassignedCount, hasModules);
+      this.finishEnrichment(strict, enrichmentWarnings);
+      return;
+    }
+
+    // Strategy: 'incremental' — run the incremental pipeline with layer skipping
+    const db = new IndexDatabase(dbPath);
+    try {
+      // Clean stale annotations for modified definitions
+      this.cleanStaleAnnotations(db, verbose);
+
+      // Step 1: Annotate symbols (picks up stale + new as unannotated)
       try {
         this.log(chalk.gray('  Annotating symbols...'));
         await SymbolsAnnotate.run(['--aspect', 'purpose', '--aspect', 'domain', '--aspect', 'pure', ...llmFlags]);
+        db.syncDirty.drain('metadata');
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         const warning = `Symbol annotation warning: ${msg}`;
@@ -249,9 +333,11 @@ export default class Sync extends Command {
         enrichmentWarnings.push(warning);
       }
 
+      // Step 2: Annotate relationships
       try {
         this.log(chalk.gray('  Annotating relationships...'));
         await RelationshipsAnnotate.run(llmFlags);
+        db.syncDirty.drain('relationships');
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         const warning = `Relationship annotation warning: ${msg}`;
@@ -259,8 +345,8 @@ export default class Sync extends Command {
         enrichmentWarnings.push(warning);
       }
 
-      // Step 3: Assign new definitions to existing modules
-      if (result.unassignedCount > 0 && result.interactionsRecalculated) {
+      // Step 3: Assign new definitions to modules
+      if (this.shouldRunLayer(db, 'modules', verbose) && unassignedCount > 0 && hasModules) {
         try {
           this.log(chalk.gray('  Assigning new definitions to modules...'));
           await ModulesGenerate.run(['--incremental', '--phase', 'assign', '--deepen-threshold', '0', ...llmFlags]);
@@ -272,11 +358,12 @@ export default class Sync extends Command {
         }
       }
 
-      // Step 4: Extract contracts (if modules exist)
-      if (result.interactionsRecalculated) {
+      // Step 4: Extract contracts
+      if (this.shouldRunLayer(db, 'contracts', verbose) && hasModules) {
         try {
           this.log(chalk.gray('  Extracting contracts...'));
           await ContractsExtract.run(['--force', ...llmFlags]);
+          db.syncDirty.drain('contracts');
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           const warning = `Contract extraction warning: ${msg}`;
@@ -285,33 +372,44 @@ export default class Sync extends Command {
         }
       }
 
-      // Step 5: Generate interactions
-      try {
-        this.log(chalk.gray('  Generating interactions...'));
-        await InteractionsGenerate.run(['--force', ...llmFlags]);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        const warning = `Interaction generation warning: ${msg}`;
-        this.warn(chalk.yellow(`  ${warning}`));
-        enrichmentWarnings.push(warning);
+      // Step 5: Generate interactions (scoped to dirty modules)
+      // Note: reads 'modules' dirty set, so modules must NOT be drained yet
+      if (this.shouldRunLayer(db, 'interactions', verbose)) {
+        try {
+          this.log(chalk.gray('  Generating interactions (incremental)...'));
+          await InteractionsGenerate.run(['--incremental', ...llmFlags]);
+          db.syncDirty.drain('interactions');
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          const warning = `Interaction generation warning: ${msg}`;
+          this.warn(chalk.yellow(`  ${warning}`));
+          enrichmentWarnings.push(warning);
+        }
       }
 
-      // Step 6: Regenerate flows
-      if (result.interactionsRecalculated) {
+      // Drain modules AFTER interactions (interactions reads the modules dirty set)
+      db.syncDirty.drain('modules');
+
+      // Step 6: Regenerate flows (skip if no dirty flows)
+      if (this.shouldRunLayer(db, 'flows', verbose) && hasModules) {
         try {
-          this.log(chalk.gray('  Regenerating flows...'));
-          await FlowsGenerate.run(['--force', ...llmFlags]);
+          this.log(chalk.gray('  Regenerating flows (incremental)...'));
+          await FlowsGenerate.run(['--incremental', ...llmFlags]);
+          db.syncDirty.drain('flows');
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           const warning = `Flow generation warning: ${msg}`;
           this.warn(chalk.yellow(`  ${warning}`));
           enrichmentWarnings.push(warning);
         }
+      }
 
-        // Step 7: Regenerate features
+      // Step 7: Regenerate features (always full — cheap, 1-2 LLM calls)
+      if (hasModules) {
         try {
           this.log(chalk.gray('  Regenerating features...'));
           await FeaturesGenerate.run(['--force', ...llmFlags]);
+          db.syncDirty.drain('features');
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           const warning = `Feature generation warning: ${msg}`;
@@ -319,20 +417,169 @@ export default class Sync extends Command {
           enrichmentWarnings.push(warning);
         }
       }
+    } finally {
+      db.close();
+    }
 
-      this.log(chalk.green.bold('Enrichment complete.'));
+    this.finishEnrichment(strict, enrichmentWarnings);
+  }
 
-      if (flags.strict && enrichmentWarnings.length > 0) {
-        this.log('');
-        this.log(chalk.yellow(`${enrichmentWarnings.length} enrichment warning(s) in --strict mode:`));
-        for (const w of enrichmentWarnings) {
-          this.log(chalk.yellow(`  - ${w}`));
-        }
-        this.exit(2);
+  /**
+   * Run all enrichment commands with --force (full rebuild).
+   */
+  private async runFullEnrichment(
+    llmFlags: string[],
+    enrichmentWarnings: string[],
+    unassignedCount: number,
+    hasModules: boolean
+  ): Promise<void> {
+    // Step 1: Annotate symbols
+    try {
+      this.log(chalk.gray('  Annotating symbols...'));
+      await SymbolsAnnotate.run(['--aspect', 'purpose', '--aspect', 'domain', '--aspect', 'pure', ...llmFlags]);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const warning = `Symbol annotation warning: ${msg}`;
+      this.warn(chalk.yellow(`  ${warning}`));
+      enrichmentWarnings.push(warning);
+    }
+
+    // Step 2: Annotate relationships
+    try {
+      this.log(chalk.gray('  Annotating relationships...'));
+      await RelationshipsAnnotate.run(llmFlags);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const warning = `Relationship annotation warning: ${msg}`;
+      this.warn(chalk.yellow(`  ${warning}`));
+      enrichmentWarnings.push(warning);
+    }
+
+    // Step 3: Assign new definitions to existing modules
+    if (unassignedCount > 0 && hasModules) {
+      try {
+        this.log(chalk.gray('  Assigning new definitions to modules...'));
+        await ModulesGenerate.run(['--incremental', '--phase', 'assign', '--deepen-threshold', '0', ...llmFlags]);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        const warning = `Module assignment warning: ${msg}`;
+        this.warn(chalk.yellow(`  ${warning}`));
+        enrichmentWarnings.push(warning);
       }
-    } else if (result.staleMetadataCount > 0 || result.unassignedCount > 0) {
+    }
+
+    // Step 4: Extract contracts (if modules exist)
+    if (hasModules) {
+      try {
+        this.log(chalk.gray('  Extracting contracts...'));
+        await ContractsExtract.run(['--force', ...llmFlags]);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        const warning = `Contract extraction warning: ${msg}`;
+        this.warn(chalk.yellow(`  ${warning}`));
+        enrichmentWarnings.push(warning);
+      }
+    }
+
+    // Step 5: Generate interactions
+    try {
+      this.log(chalk.gray('  Generating interactions...'));
+      await InteractionsGenerate.run(['--force', ...llmFlags]);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const warning = `Interaction generation warning: ${msg}`;
+      this.warn(chalk.yellow(`  ${warning}`));
+      enrichmentWarnings.push(warning);
+    }
+
+    // Step 6: Regenerate flows (if modules exist)
+    if (hasModules) {
+      try {
+        this.log(chalk.gray('  Regenerating flows...'));
+        await FlowsGenerate.run(['--force', ...llmFlags]);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        const warning = `Flow generation warning: ${msg}`;
+        this.warn(chalk.yellow(`  ${warning}`));
+        enrichmentWarnings.push(warning);
+      }
+
+      // Step 7: Regenerate features
+      try {
+        this.log(chalk.gray('  Regenerating features...'));
+        await FeaturesGenerate.run(['--force', ...llmFlags]);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        const warning = `Feature generation warning: ${msg}`;
+        this.warn(chalk.yellow(`  ${warning}`));
+        enrichmentWarnings.push(warning);
+      }
+    }
+  }
+
+  /**
+   * Delete purpose/domain/pure metadata and relationship annotations
+   * for definitions that were modified (not just added).
+   * This makes them "unannotated" again so existing annotate commands pick them up.
+   */
+  private cleanStaleAnnotations(db: IndexDatabase, verbose: boolean): void {
+    const dirtyEntries = db.syncDirty.getDirty('metadata');
+    const modifiedDefIds = dirtyEntries.filter((e) => e.reason === 'modified').map((e) => e.entityId);
+
+    if (modifiedDefIds.length === 0) return;
+
+    const metaRemoved = db.metadata.removeForDefinitions(modifiedDefIds, ['purpose', 'domain', 'pure']);
+    const relRemoved = db.relationships.deleteAnnotationsForDefinitions(modifiedDefIds);
+
+    if (verbose) {
+      this.log(
+        chalk.gray(
+          `  Cleaned stale annotations: ${metaRemoved} metadata, ${relRemoved} relationships for ${modifiedDefIds.length} modified definitions`
+        )
+      );
+    }
+  }
+
+  /**
+   * Drain all dirty entries across all layers.
+   */
+  private drainAllLayers(dbPath: string): void {
+    const db = new IndexDatabase(dbPath);
+    try {
+      db.syncDirty.clear();
+    } finally {
+      db.close();
+    }
+  }
+
+  /**
+   * Check if a layer has dirty entries and should be processed.
+   * Returns false and logs skip message if no dirty entries.
+   */
+  private shouldRunLayer(db: IndexDatabase, layer: DirtyLayer, verbose: boolean): boolean {
+    const count = db.syncDirty.count(layer);
+    if (count === 0) {
+      if (verbose) {
+        this.log(chalk.gray(`  ${layer} (skipped — no dirty entries)`));
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Finish enrichment: log completion, check strict mode warnings.
+   */
+  private finishEnrichment(strict: boolean, enrichmentWarnings: string[]): void {
+    this.log(chalk.green.bold('Enrichment complete.'));
+
+    if (strict && enrichmentWarnings.length > 0) {
       this.log('');
-      this.log(chalk.gray("Run 'squint sync --enrich' to update annotations, modules, and flows."));
+      this.log(chalk.yellow(`${enrichmentWarnings.length} enrichment warning(s) in --strict mode:`));
+      for (const w of enrichmentWarnings) {
+        this.log(chalk.yellow(`  - ${w}`));
+      }
+      this.exit(2);
     }
   }
 

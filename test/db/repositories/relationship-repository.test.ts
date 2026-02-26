@@ -335,4 +335,37 @@ describe('RelationshipRepository', () => {
       }
     });
   });
+
+  describe('deleteAnnotationsForDefinitions', () => {
+    it('removes annotations for given source definitions', () => {
+      repo.set(defId1, defId2, 'ServiceA calls ServiceB');
+      repo.set(defId1, defId3, 'ServiceA uses HelperC');
+      repo.set(defId2, defId3, 'ServiceB uses HelperC');
+
+      const removed = repo.deleteAnnotationsForDefinitions([defId1]);
+      expect(removed).toBe(2);
+
+      // defId1 annotations gone
+      expect(repo.get(defId1, defId2)).toBeNull();
+      expect(repo.get(defId1, defId3)).toBeNull();
+    });
+
+    it('preserves annotations for other definitions', () => {
+      repo.set(defId1, defId2, 'ServiceA calls ServiceB');
+      repo.set(defId2, defId3, 'ServiceB uses HelperC');
+
+      repo.deleteAnnotationsForDefinitions([defId1]);
+
+      // defId2 → defId3 still exists
+      const remaining = repo.get(defId2, defId3);
+      expect(remaining).not.toBeNull();
+      expect(remaining!.semantic).toBe('ServiceB uses HelperC');
+    });
+
+    it('handles empty array', () => {
+      repo.set(defId1, defId2, 'test');
+      expect(repo.deleteAnnotationsForDefinitions([])).toBe(0);
+      expect(repo.get(defId1, defId2)).not.toBeNull();
+    });
+  });
 });

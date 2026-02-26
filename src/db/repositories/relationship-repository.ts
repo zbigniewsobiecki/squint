@@ -201,6 +201,29 @@ export class RelationshipRepository {
   }
 
   /**
+   * Delete all relationship annotations originating from the given definitions.
+   * Used by incremental sync to clear stale annotations for modified definitions.
+   */
+  deleteAnnotationsForDefinitions(definitionIds: number[]): number {
+    if (definitionIds.length === 0) return 0;
+
+    let totalRemoved = 0;
+    const CHUNK_SIZE = 400;
+
+    for (let i = 0; i < definitionIds.length; i += CHUNK_SIZE) {
+      const chunk = definitionIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const stmt = this.db.prepare(
+        `DELETE FROM relationship_annotations WHERE from_definition_id IN (${placeholders})`
+      );
+      const result = stmt.run(...chunk);
+      totalRemoved += result.changes;
+    }
+
+    return totalRemoved;
+  }
+
+  /**
    * Get count of relationship annotations.
    */
   getCount(): number {

@@ -387,4 +387,60 @@ describe('MetadataRepository', () => {
       expect(repo.getDefinitionsWithNoMetadataCount({ kind: 'variable' })).toBe(0);
     });
   });
+
+  describe('removeForDefinitions', () => {
+    it('deletes specified keys for given definitions', () => {
+      repo.set(defId1, 'purpose', 'test purpose');
+      repo.set(defId1, 'domain', '["auth"]');
+      repo.set(defId1, 'pure', 'true');
+      repo.set(defId2, 'purpose', 'other purpose');
+
+      const removed = repo.removeForDefinitions([defId1], ['purpose', 'domain', 'pure']);
+      expect(removed).toBe(3);
+      expect(repo.getValue(defId1, 'purpose')).toBeNull();
+      expect(repo.getValue(defId1, 'domain')).toBeNull();
+      expect(repo.getValue(defId1, 'pure')).toBeNull();
+    });
+
+    it('does not affect other definitions', () => {
+      repo.set(defId1, 'purpose', 'purpose 1');
+      repo.set(defId2, 'purpose', 'purpose 2');
+
+      repo.removeForDefinitions([defId1], ['purpose']);
+      expect(repo.getValue(defId1, 'purpose')).toBeNull();
+      expect(repo.getValue(defId2, 'purpose')).toBe('purpose 2');
+    });
+
+    it('handles empty arrays', () => {
+      repo.set(defId1, 'purpose', 'test');
+      expect(repo.removeForDefinitions([], ['purpose'])).toBe(0);
+      expect(repo.removeForDefinitions([defId1], [])).toBe(0);
+      expect(repo.getValue(defId1, 'purpose')).toBe('test');
+    });
+
+    it('handles large arrays via chunking', () => {
+      // Create many definitions
+      const defIds: number[] = [];
+      for (let i = 0; i < 500; i++) {
+        const id = fileRepo.insertDefinition(fileId, {
+          name: `func_${i}`,
+          kind: 'function',
+          isExported: true,
+          isDefault: false,
+          position: { row: i * 20, column: 0 },
+          endPosition: { row: i * 20 + 10, column: 1 },
+        });
+        defIds.push(id);
+        repo.set(id, 'purpose', `purpose ${i}`);
+      }
+
+      const removed = repo.removeForDefinitions(defIds, ['purpose']);
+      expect(removed).toBe(500);
+
+      // Verify all removed
+      for (const id of defIds) {
+        expect(repo.getValue(id, 'purpose')).toBeNull();
+      }
+    });
+  });
 });

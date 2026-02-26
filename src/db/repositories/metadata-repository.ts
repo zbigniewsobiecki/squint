@@ -345,6 +345,30 @@ export class MetadataRepository {
   }
 
   /**
+   * Bulk-remove metadata entries for given definitions and keys.
+   * Chunked for SQLite parameter limits.
+   */
+  removeForDefinitions(definitionIds: number[], keys: string[]): number {
+    if (definitionIds.length === 0 || keys.length === 0) return 0;
+
+    let totalRemoved = 0;
+    const CHUNK_SIZE = Math.floor(900 - keys.length); // Dynamic to stay within SQLite's ~999 parameter limit
+
+    for (let i = 0; i < definitionIds.length; i += CHUNK_SIZE) {
+      const chunk = definitionIds.slice(i, i + CHUNK_SIZE);
+      const defPlaceholders = chunk.map(() => '?').join(', ');
+      const keyPlaceholders = keys.map(() => '?').join(', ');
+      const stmt = this.db.prepare(
+        `DELETE FROM definition_metadata WHERE definition_id IN (${defPlaceholders}) AND key IN (${keyPlaceholders})`
+      );
+      const result = stmt.run(...chunk, ...keys);
+      totalRemoved += result.changes;
+    }
+
+    return totalRemoved;
+  }
+
+  /**
    * Get symbols filtered by purity (pure = no side effects).
    * Returns symbols where 'pure' metadata matches the specified value.
    */
