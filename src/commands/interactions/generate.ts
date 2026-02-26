@@ -23,6 +23,10 @@ export default class InteractionsGenerate extends BaseLlmCommand {
     database: SharedFlags.database,
     json: SharedFlags.json,
     ...LlmFlags,
+    incremental: Flags.boolean({
+      description: 'Only process dirty modules (from sync dirty tracking)',
+      default: false,
+    }),
     'batch-size': Flags.integer({
       description: 'Module edges per LLM batch for semantic generation',
       default: 10,
@@ -40,6 +44,13 @@ export default class InteractionsGenerate extends BaseLlmCommand {
   protected async execute(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
     const { db, isJson, dryRun, verbose, model } = ctx;
     const batchSize = flags['batch-size'] as number;
+    const isIncremental = flags.incremental as boolean;
+
+    // Incremental mode: scope to dirty modules only
+    if (isIncremental) {
+      await this.executeIncremental(ctx, flags);
+      return;
+    }
 
     // Check if interactions already exist
     const existingCount = db.interactions.getCount();
@@ -275,6 +286,266 @@ export default class InteractionsGenerate extends BaseLlmCommand {
   }
 
   /**
+   * Incremental mode: only process dirty modules.
+   * Skips cross-process inference and coverage validation.
+   */
+  private async executeIncremental(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
+    const { db, isJson, dryRun, verbose, model } = ctx;
+    const batchSize = flags['batch-size'] as number;
+
+    // Read dirty module IDs
+    const dirtyModuleIds = db.syncDirty.getDirtyIds('modules');
+    if (dirtyModuleIds.length === 0) {
+      if (!isJson) {
+        this.log(chalk.gray('No dirty modules — skipping incremental interaction generation.'));
+      }
+      return;
+    }
+
+    this.logHeader(ctx, 'Interaction Detection (Incremental)');
+
+    const dirtyModuleSet = new Set(dirtyModuleIds);
+
+    if (!isJson && verbose) {
+      this.log(chalk.gray(`Dirty modules: ${dirtyModuleIds.length}`));
+    }
+
+    // Delete interactions where BOTH endpoints are dirty (full re-evaluation)
+    if (!dryRun) {
+      const deleted = db.interactions.deleteForModulePairsBothDirty(dirtyModuleIds);
+      if (!isJson && verbose && deleted > 0) {
+        this.log(chalk.gray(`  Deleted ${deleted} interactions between dirty module pairs`));
+      }
+    }
+
+    // Get enriched call graph scoped to dirty modules
+    const enrichedEdges = db.callGraph.getEnrichedModuleCallGraph(dirtyModuleSet);
+
+    if (enrichedEdges.length === 0) {
+      if (!isJson) {
+        this.log(chalk.gray('No call graph edges for dirty modules.'));
+      }
+      return;
+    }
+
+    const utilityCount = enrichedEdges.filter((e) => e.edgePattern === 'utility').length;
+    const businessCount = enrichedEdges.filter((e) => e.edgePattern === 'business').length;
+
+    if (!isJson && verbose) {
+      this.log(chalk.gray(`Found ${enrichedEdges.length} module-to-module edges touching dirty modules`));
+      this.log(chalk.gray(`  Business logic: ${businessCount}, Utility: ${utilityCount}`));
+    }
+
+    // Generate semantics via LLM (in batches)
+    const interactions: InteractionSuggestion[] = [];
+
+    for (let i = 0; i < enrichedEdges.length; i += batchSize) {
+      const batch = enrichedEdges.slice(i, i + batchSize);
+      try {
+        const batchIdx = Math.floor(i / batchSize);
+        const totalBatches = Math.ceil(enrichedEdges.length / batchSize);
+        const suggestions = await generateAstSemantics(batch, model, db, this, isJson, batchIdx + 1, totalBatches);
+        interactions.push(...suggestions);
+      } catch (error) {
+        const message = getErrorMessage(error);
+        if (!isJson) {
+          this.log(chalk.yellow(`  Batch ${Math.floor(i / batchSize) + 1} failed: ${message}`));
+        }
+        for (const edge of batch) {
+          interactions.push(createDefaultInteraction(edge));
+        }
+      }
+    }
+
+    // Tag test-internal interactions
+    const testModuleIds = db.modules.getTestModuleIds();
+    if (testModuleIds.size > 0) {
+      for (const interaction of interactions) {
+        if (testModuleIds.has(interaction.fromModuleId) || testModuleIds.has(interaction.toModuleId)) {
+          interaction.pattern = 'test-internal';
+        }
+      }
+    }
+
+    // Persist via upsert (preserves IDs for clean-endpoint interactions)
+    if (!dryRun) {
+      for (const interaction of interactions) {
+        try {
+          db.interactions.upsert(interaction.fromModuleId, interaction.toModuleId, {
+            weight: interaction.weight,
+            pattern: interaction.pattern,
+            symbols: interaction.symbols,
+            semantic: interaction.semantic,
+          });
+        } catch {
+          if (verbose && !isJson) {
+            this.log(chalk.yellow(`  Skipping duplicate: ${interaction.fromModulePath} → ${interaction.toModulePath}`));
+          }
+        }
+      }
+
+      // Sync inheritance-based interactions
+      const inheritanceResult = db.interactionAnalysis.syncInheritanceInteractions();
+      if (!isJson && verbose && inheritanceResult.created > 0) {
+        this.log(chalk.gray(`  Inheritance edges: ${inheritanceResult.created}`));
+      }
+    }
+
+    // Import-based interactions scoped to dirty modules
+    const { importBasedCount } = !dryRun
+      ? this.createImportBasedInteractionsScoped(ctx, testModuleIds, dirtyModuleSet)
+      : { importBasedCount: 0 };
+
+    // Contract matching scoped to dirty modules
+    let contractMatchedCount = 0;
+    let contractLinkedCount = 0;
+    if (!dryRun && db.contracts.getCount() > 0) {
+      const processGroups = computeProcessGroups(db);
+      const result = this.createContractInteractionsScoped(ctx, processGroups, dirtyModuleSet);
+      contractMatchedCount = result.contractMatchedCount;
+      contractLinkedCount = result.contractLinkedCount;
+    }
+
+    // Skip cross-process inference + coverage validation in incremental mode
+
+    // Output results
+    this.reportResults(ctx, {
+      totalEdges: enrichedEdges.length,
+      interactions: interactions.length,
+      importBasedCount,
+      contractMatchedCount,
+      contractLinkedCount,
+      inferredCount: 0,
+      businessCount,
+      utilityCount,
+    });
+  }
+
+  /**
+   * Import-based interactions scoped to dirty modules.
+   */
+  private createImportBasedInteractionsScoped(
+    ctx: LlmContext,
+    testModuleIds: Set<number>,
+    dirtyModuleIds: Set<number>
+  ): { importBasedCount: number; fileLevelCount: number } {
+    const { db, isJson, verbose } = ctx;
+
+    let importBasedCount = 0;
+    const importPairs = db.interactions
+      .getImportOnlyModulePairs()
+      .filter((p) => dirtyModuleIds.has(p.fromModuleId) || dirtyModuleIds.has(p.toModuleId));
+
+    if (importPairs.length > 0) {
+      if (!isJson && verbose) {
+        this.log(chalk.gray(`  Processing ${importPairs.length} import-based pairs touching dirty modules`));
+      }
+
+      for (const pair of importPairs) {
+        if (this.upsertImportInteraction(db, pair, testModuleIds)) {
+          importBasedCount++;
+        }
+      }
+
+      if (!isJson && verbose) {
+        this.log(chalk.green(`  Added/updated ${importBasedCount} import-based interactions`));
+      }
+    }
+
+    // File-level import fallback (scoped to dirty modules)
+    let fileLevelCount = 0;
+    const fileLevelPairs = db.interactions
+      .getFileLevelImportModulePairs()
+      .filter((p) => dirtyModuleIds.has(p.fromModuleId) || dirtyModuleIds.has(p.toModuleId));
+
+    if (fileLevelPairs.length > 0) {
+      for (const pair of fileLevelPairs) {
+        const pattern =
+          testModuleIds.has(pair.fromModuleId) || testModuleIds.has(pair.toModuleId) ? 'test-internal' : 'business';
+        try {
+          db.interactions.upsert(pair.fromModuleId, pair.toModuleId, {
+            weight: pair.importCount,
+            pattern,
+            semantic: pair.isTypeOnly ? 'Type dependency (file-level import)' : 'File-level import dependency',
+            source: 'ast-import',
+          });
+          fileLevelCount++;
+        } catch {
+          // Skip if already exists
+        }
+      }
+
+      if (!isJson && verbose && fileLevelCount > 0) {
+        this.log(chalk.green(`  Added ${fileLevelCount} file-level import interactions (scoped)`));
+      }
+    }
+
+    return { importBasedCount, fileLevelCount };
+  }
+
+  /**
+   * Contract matching scoped to dirty modules.
+   */
+  private createContractInteractionsScoped(
+    ctx: LlmContext,
+    processGroups: ProcessGroups,
+    dirtyModuleIds: Set<number>
+  ): { contractMatchedCount: number; contractLinkedCount: number } {
+    const { db, isJson, verbose } = ctx;
+
+    db.contracts.backfillModuleIds();
+    const matcher = new ContractMatcher();
+    const allMatches = matcher.match(db, processGroups);
+
+    // Filter to matches touching dirty modules
+    const scopedMatches = allMatches.filter(
+      (m) => dirtyModuleIds.has(m.fromModuleId) || dirtyModuleIds.has(m.toModuleId)
+    );
+
+    if (scopedMatches.length === 0) {
+      return { contractMatchedCount: 0, contractLinkedCount: 0 };
+    }
+
+    const result = matcher.materializeInteractions(db, scopedMatches);
+
+    if (!isJson && verbose) {
+      this.log(
+        chalk.gray(
+          `  Contract-matched: ${result.created} interactions (${result.linked} definition links) [scoped to dirty modules]`
+        )
+      );
+    }
+
+    return { contractMatchedCount: result.created, contractLinkedCount: result.linked };
+  }
+
+  /**
+   * Upsert a single symbol-level import interaction. Returns true if persisted.
+   */
+  private upsertImportInteraction(
+    db: LlmContext['db'],
+    pair: { fromModuleId: number; toModuleId: number; symbols: string[]; weight: number; isTypeOnly: boolean },
+    testModuleIds: Set<number>
+  ): boolean {
+    const pattern =
+      testModuleIds.has(pair.fromModuleId) || testModuleIds.has(pair.toModuleId) ? 'test-internal' : 'business';
+    try {
+      db.interactions.upsert(pair.fromModuleId, pair.toModuleId, {
+        weight: pair.weight,
+        pattern,
+        symbols: pair.symbols.length > 0 ? pair.symbols.slice(0, 20) : undefined,
+        semantic: pair.isTypeOnly
+          ? `Type/interface dependency (${pair.symbols.slice(0, 3).join(', ')}${pair.symbols.length > 3 ? '...' : ''})`
+          : `Imports ${pair.symbols.slice(0, 3).join(', ')}${pair.symbols.length > 3 ? ` (+${pair.symbols.length - 3} more)` : ''}`,
+        source: 'ast-import',
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Step 2: Create import-based interactions (deterministic, no LLM).
    */
   private createImportBasedInteractions(
@@ -292,21 +563,8 @@ export default class InteractionsGenerate extends BaseLlmCommand {
       }
 
       for (const pair of importPairs) {
-        const pattern =
-          testModuleIds.has(pair.fromModuleId) || testModuleIds.has(pair.toModuleId) ? 'test-internal' : 'business';
-        try {
-          db.interactions.upsert(pair.fromModuleId, pair.toModuleId, {
-            weight: pair.weight,
-            pattern,
-            symbols: pair.symbols.length > 0 ? pair.symbols.slice(0, 20) : undefined,
-            semantic: pair.isTypeOnly
-              ? `Type/interface dependency (${pair.symbols.slice(0, 3).join(', ')}${pair.symbols.length > 3 ? '...' : ''})`
-              : `Imports ${pair.symbols.slice(0, 3).join(', ')}${pair.symbols.length > 3 ? ` (+${pair.symbols.length - 3} more)` : ''}`,
-            source: 'ast-import',
-          });
+        if (this.upsertImportInteraction(db, pair, testModuleIds)) {
           importBasedCount++;
-        } catch {
-          // Skip if already exists
         }
       }
 

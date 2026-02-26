@@ -956,4 +956,69 @@ describe('InteractionRepository', () => {
       expect(pairs[0].toModuleId).toBe(moduleId3);
     });
   });
+
+  describe('deleteForModulePairsBothDirty', () => {
+    it('deletes interactions where both endpoints are in the dirty set', () => {
+      repo.insert(moduleId1, moduleId2, { pattern: 'business' });
+      repo.insert(moduleId2, moduleId3, { pattern: 'utility' });
+      repo.insert(moduleId1, moduleId3, { pattern: 'business' });
+
+      // Mark modules 1 and 2 as dirty
+      const removed = repo.deleteForModulePairsBothDirty([moduleId1, moduleId2]);
+
+      // Only moduleId1 → moduleId2 should be deleted (both dirty)
+      expect(removed).toBe(1);
+      expect(repo.getByModules(moduleId1, moduleId2)).toBeNull();
+    });
+
+    it('preserves interactions where only one endpoint is dirty', () => {
+      repo.insert(moduleId1, moduleId2, { pattern: 'business' });
+      repo.insert(moduleId1, moduleId3, { pattern: 'business' });
+      repo.insert(moduleId2, moduleId3, { pattern: 'utility' });
+
+      // Modules 1 and 2 are dirty, module 3 is clean
+      const removed = repo.deleteForModulePairsBothDirty([moduleId1, moduleId2]);
+
+      // moduleId1 → moduleId2: both dirty → deleted
+      expect(removed).toBe(1);
+      expect(repo.getByModules(moduleId1, moduleId2)).toBeNull();
+
+      // moduleId1 → moduleId3: from dirty, to clean → preserved
+      expect(repo.getByModules(moduleId1, moduleId3)).not.toBeNull();
+
+      // moduleId2 → moduleId3: from dirty, to clean → preserved
+      expect(repo.getByModules(moduleId2, moduleId3)).not.toBeNull();
+    });
+
+    it('handles empty array', () => {
+      repo.insert(moduleId1, moduleId2, { pattern: 'business' });
+      expect(repo.deleteForModulePairsBothDirty([])).toBe(0);
+      expect(repo.getByModules(moduleId1, moduleId2)).not.toBeNull();
+    });
+  });
+
+  describe('getForModules', () => {
+    it('returns interactions involving any of the given modules', () => {
+      repo.insert(moduleId1, moduleId2, { pattern: 'business' });
+      repo.insert(moduleId2, moduleId3, { pattern: 'utility' });
+      repo.insert(moduleId1, moduleId3, { pattern: 'business' });
+
+      const result = repo.getForModules([moduleId1]);
+      // moduleId1 is source in two interactions
+      expect(result.length).toBe(2);
+    });
+
+    it('returns empty array for empty input', () => {
+      repo.insert(moduleId1, moduleId2, { pattern: 'business' });
+      expect(repo.getForModules([])).toHaveLength(0);
+    });
+
+    it('includes interactions where module is target', () => {
+      repo.insert(moduleId1, moduleId2, { pattern: 'business' });
+      repo.insert(moduleId3, moduleId2, { pattern: 'utility' });
+
+      const result = repo.getForModules([moduleId2]);
+      expect(result.length).toBe(2);
+    });
+  });
 });

@@ -352,6 +352,49 @@ export class InteractionRepository {
     return result.changes;
   }
 
+  /**
+   * Delete interactions where BOTH endpoints are in the dirty module set.
+   * Interactions with one clean endpoint are preserved (will be updated via upsert).
+   */
+  deleteForModulePairsBothDirty(moduleIds: number[]): number {
+    if (moduleIds.length === 0) return 0;
+    ensureInteractionsTables(this.db);
+
+    const CHUNK_SIZE = 400;
+    let totalRemoved = 0;
+
+    for (let i = 0; i < moduleIds.length; i += CHUNK_SIZE) {
+      const chunk = moduleIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const stmt = this.db.prepare(
+        `DELETE FROM interactions WHERE from_module_id IN (${placeholders}) AND to_module_id IN (${placeholders})`
+      );
+      // Pass chunk twice — once for from, once for to
+      const result = stmt.run(...chunk, ...chunk);
+      totalRemoved += result.changes;
+    }
+
+    return totalRemoved;
+  }
+
+  /**
+   * Get all interactions involving any of the given modules (as source or target).
+   */
+  getForModules(moduleIds: number[]): InteractionWithPaths[] {
+    if (moduleIds.length === 0) return [];
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+
+    const placeholders = moduleIds.map(() => '?').join(', ');
+    return this.db
+      .prepare(
+        `${INTERACTION_WITH_PATHS_SELECT}
+         WHERE i.from_module_id IN (${placeholders}) OR i.to_module_id IN (${placeholders})
+         ORDER BY i.weight DESC`
+      )
+      .all(...moduleIds, ...moduleIds) as InteractionWithPaths[];
+  }
+
   // ============================================================
   // Definition-Level Call Graph (for flow tracing)
   // ============================================================
