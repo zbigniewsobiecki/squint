@@ -51,6 +51,10 @@ export default class FlowsGenerate extends BaseLlmCommand {
     database: SharedFlags.database,
     json: SharedFlags.json,
     ...LlmFlags,
+    incremental: Flags.boolean({
+      description: 'Skip if no dirty flows, otherwise full rebuild',
+      default: false,
+    }),
     'min-interaction-coverage': Flags.integer({
       description: 'Minimum % of interactions that must appear in flows',
       default: 90,
@@ -80,21 +84,39 @@ export default class FlowsGenerate extends BaseLlmCommand {
   protected async execute(ctx: LlmContext, flags: Record<string, unknown>): Promise<void> {
     const { db, isJson, dryRun, verbose, model, llmOptions } = ctx;
 
-    // Check if flows already exist
-    const existingCount = db.flows.getCount();
-    if (
-      !this.checkExistingAndClear(ctx, {
-        entityName: 'Flows',
-        existingCount,
-        force: flags.force as boolean,
-        clearFn: () => {
-          db.flows.clear();
-          db.features.clear();
-        },
-        forceHint: 'Use --force to re-detect',
-      })
-    ) {
-      return;
+    // Incremental mode: skip entirely if no dirty flows, otherwise fall back to full rebuild
+    if (flags.incremental as boolean) {
+      const dirtyFlowCount = db.syncDirty.count('flows');
+      if (dirtyFlowCount === 0) {
+        if (!isJson) {
+          this.log(chalk.gray('No dirty flows — skipping flow generation.'));
+        }
+        return;
+      }
+      // Dirty flows exist → fall through to full rebuild (--force behavior)
+      if (!isJson && verbose) {
+        this.log(chalk.gray(`${dirtyFlowCount} dirty flow entries — running full flow rebuild.`));
+      }
+      // Clear existing flows for full rebuild
+      db.flows.clear();
+      db.features.clear();
+    } else {
+      // Check if flows already exist
+      const existingCount = db.flows.getCount();
+      if (
+        !this.checkExistingAndClear(ctx, {
+          entityName: 'Flows',
+          existingCount,
+          force: flags.force as boolean,
+          clearFn: () => {
+            db.flows.clear();
+            db.features.clear();
+          },
+          forceHint: 'Use --force to re-detect',
+        })
+      ) {
+        return;
+      }
     }
 
     // Check if interactions exist

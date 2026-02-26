@@ -68,9 +68,20 @@ export class CallGraphService {
 
   /**
    * Get enriched module-level call graph with symbol details.
+   * When moduleIds is provided, only returns edges touching those modules.
    */
-  getEnrichedModuleCallGraph(): EnrichedModuleCallEdge[] {
+  getEnrichedModuleCallGraph(moduleIds?: Set<number>): EnrichedModuleCallEdge[] {
     ensureModulesTables(this.db);
+
+    // Build optional WHERE clause for module filtering
+    let moduleFilter = '';
+    const filterParams: number[] = [];
+    if (moduleIds && moduleIds.size > 0) {
+      const ids = Array.from(moduleIds);
+      const placeholders = ids.map(() => '?').join(', ');
+      moduleFilter = ` AND (from_mm.module_id IN (${placeholders}) OR to_mm.module_id IN (${placeholders}))`;
+      filterParams.push(...ids, ...ids);
+    }
 
     // Query for symbol-level details with module context
     const symbolEdges = this.db
@@ -98,6 +109,7 @@ export class CallGraphService {
         AND from_d.line <= u.line AND u.line <= from_d.end_line
         AND s.definition_id != from_d.id
         AND from_mm.module_id != to_mm.module_id
+        ${moduleFilter}
       GROUP BY from_mm.module_id, to_mm.module_id, to_d.id, from_d.id
       UNION ALL
       SELECT
@@ -124,9 +136,10 @@ export class CallGraphService {
         AND from_d.line <= u.line AND u.line <= from_d.end_line
         AND s.definition_id != from_d.id
         AND from_mm.module_id != to_mm.module_id
+        ${moduleFilter}
       GROUP BY from_mm.module_id, to_mm.module_id, to_d.id, from_d.id
     `)
-      .all() as Array<{
+      .all(...filterParams, ...filterParams) as Array<{
       from_module_id: number;
       to_module_id: number;
       from_module_path: string;
