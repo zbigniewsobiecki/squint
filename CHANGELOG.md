@@ -1,3 +1,9 @@
+## [1.15.0](https://github.com/zbigniewsobiecki/squint/compare/v1.14.0...v1.15.0) (2026-02-26)
+
+### Features
+
+* add incremental enrichment pipeline with scoped dirty tracking ([5138948](https://github.com/zbigniewsobiecki/squint/commit/5138948af899b39d763f38f41e2cefe4e4854b50))
+
 ## [1.14.0](https://github.com/zbigniewsobiecki/squint/compare/v1.13.0...v1.14.0) (2026-02-25)
 
 ### Features
