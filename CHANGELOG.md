@@ -1,3 +1,9 @@
+## [1.15.1](https://github.com/zbigniewsobiecki/squint/compare/v1.15.0...v1.15.1) (2026-02-26)
+
+### Bug Fixes
+
+* pipeline quality — robustness, consistency, and test coverage ([02c6ce2](https://github.com/zbigniewsobiecki/squint/commit/02c6ce2ecdbf33e0a6cc816eeb9d61000e1b483b))
+
 ## [1.15.0](https://github.com/zbigniewsobiecki/squint/compare/v1.14.0...v1.15.0) (2026-02-26)
 
 ### Features
