@@ -1,13 +1,9 @@
 /**
- * Flows module - Entry point detection and flow tracing.
+ * Flows module - Entry point detection, LLM-first flow design, and journey composition.
  */
 
 export * from './types.js';
-export { AtomicFlowBuilder } from './atomic-flow-builder.js';
 export { deduplicateByInteractionOverlap, deduplicateByInteractionSet } from './dedup.js';
 export { EntryPointDetector } from './entry-point-detector.js';
-export { FlowTracer, buildFlowTracingContext } from './flow-tracer.js';
-export { FlowEnhancer } from './flow-enhancer.js';
-export { GapFlowGenerator } from './gap-flow-generator.js';
-export { FlowValidator } from './flow-validator.js';
+export { FlowArchitect } from './flow-architect.js';
 export { JourneyBuilder } from './journey-builder.js';

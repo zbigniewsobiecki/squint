@@ -661,7 +661,7 @@ export class InteractionRepository {
 
   /**
    * Get all definition links originating from definitions in a specific module.
-   * Used by FlowTracer for contract-aware bridge traversal.
+   * Used by FlowArchitect for contract-aware bridge traversal.
    */
   getDefinitionLinksFromModule(moduleId: number): Array<
     InteractionDefinitionLink & {
@@ -698,7 +698,7 @@ export class InteractionRepository {
 
   /**
    * Get all definition links with target module ID and interaction source.
-   * Used by FlowTracer for definition-level bridge precision.
+   * Used by FlowArchitect for definition-level bridge precision.
    */
   getAllDefinitionLinks(): Array<InteractionDefinitionLink & { toModuleId: number; source: string }> {
     ensureInteractionDefinitionLinks(this.db);

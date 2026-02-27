@@ -2,7 +2,7 @@
  * Shared types for the flows module.
  */
 
-import type { FlowStakeholder, InteractionWithPaths } from '../../../db/schema.js';
+import type { FlowStakeholder } from '../../../db/schema.js';
 
 export type ActionType = 'view' | 'create' | 'update' | 'delete' | 'process';
 
@@ -56,12 +56,6 @@ export interface TracedDefinitionStep {
   toModuleId: number | null;
 }
 
-export interface InferredFlowStep {
-  fromModuleId: number;
-  toModuleId: number;
-  source: 'llm-inferred' | 'contract-matched';
-}
-
 export interface FlowSuggestion {
   name: string;
   slug: string;
@@ -72,22 +66,16 @@ export interface FlowSuggestion {
   description: string;
   interactionIds: number[];
   definitionSteps: TracedDefinitionStep[];
-  inferredSteps: InferredFlowStep[];
   actionType: ActionType | null;
   targetEntity: string | null;
-  tier: 0 | 1 | 2;
+  tier: 1 | 2;
   subflowSlugs: string[];
 }
 
-export interface FlowTracingContext {
+export interface DefinitionEnrichmentContext {
   definitionCallGraph: Map<number, number[]>;
   defToModule: Map<number, { moduleId: number; modulePath: string }>;
-  interactionByModulePair: Map<string, number>;
-  inferredFromModule: Map<number, InteractionWithPaths[]>;
   moduleToDefIds: Map<number, number[]>;
-  defIdToName: Map<number, string>;
-  entryPointModuleIds: Set<number>;
-  boundaryTargetModuleIds: Set<number>;
   definitionBridgeMap: Map<
     number,
     Array<{
@@ -97,7 +85,17 @@ export interface FlowTracingContext {
       source: 'llm-inferred' | 'contract-matched';
     }>
   >;
-  moduleEntityMap: Map<number, string>;
+}
+
+export interface InteractionSummary {
+  id: number;
+  fromModuleId: number;
+  toModuleId: number;
+  fromModulePath: string;
+  toModulePath: string;
+  source: string;
+  semantic: string | null;
+  weight: number;
 }
 
 export interface LlmOptions {

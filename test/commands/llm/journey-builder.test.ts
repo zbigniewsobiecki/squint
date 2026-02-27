@@ -13,7 +13,6 @@ function makeFlow(overrides: Partial<FlowSuggestion> = {}): FlowSuggestion {
     description: 'Test description',
     interactionIds: [100],
     definitionSteps: [],
-    inferredSteps: [],
     actionType: 'view',
     targetEntity: null,
     tier: 1,

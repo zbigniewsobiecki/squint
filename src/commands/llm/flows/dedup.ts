@@ -26,6 +26,10 @@ export function deduplicateByInteractionOverlap(flows: FlowSuggestion[], thresho
 
       if (b.interactionIds.length === 0) continue;
 
+      // Don't compare flows of different tiers — journeys aggregate their
+      // constituent tier-1 flows and will naturally overlap with them.
+      if (a.tier !== b.tier) continue;
+
       // Don't dedup flows that represent different user journeys
       // (different specific actionType+targetEntity combos)
       if (a.actionType && a.targetEntity && b.actionType && b.targetEntity) {
@@ -67,7 +71,7 @@ export function deduplicateByInteractionSet(flows: FlowSuggestion[]): FlowSugges
     const flow = flows[i];
     if (flow.interactionIds.length === 0) continue;
 
-    const hash = [...flow.interactionIds].sort((a, b) => a - b).join(',');
+    const hash = `${flow.tier}:${flow.actionType ?? ''}:${flow.targetEntity ?? ''}:${[...flow.interactionIds].sort((a, b) => a - b).join(',')}`;
     const existingIdx = seen.get(hash);
 
     if (existingIdx === undefined) {

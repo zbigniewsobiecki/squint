@@ -10,6 +10,21 @@
 
 import type { FlowSuggestion } from './types.js';
 
+function toSlug(name: string): string {
+  const lower = name.toLowerCase();
+  let result = '';
+  for (const char of lower) {
+    if ((char >= 'a' && char <= 'z') || (char >= '0' && char <= '9')) {
+      result += char;
+    } else if (result.length > 0 && !result.endsWith('-')) {
+      result += '-';
+    }
+  }
+  while (result.startsWith('-')) result = result.slice(1);
+  while (result.endsWith('-')) result = result.slice(0, -1);
+  return result || 'unnamed-journey';
+}
+
 interface JourneyGroup {
   key: string;
   name: string;
@@ -52,7 +67,10 @@ export class JourneyBuilder {
   }
 
   private normalizeEntity(entity: string): string {
-    return entity.toLowerCase().replace(/-(list|detail)$/, '');
+    const lower = entity.toLowerCase();
+    if (lower.endsWith('-list')) return lower.slice(0, -5);
+    if (lower.endsWith('-detail')) return lower.slice(0, -7);
+    return lower;
   }
 
   private groupByEntity(flows: FlowSuggestion[]): JourneyGroup[] {
@@ -115,10 +133,7 @@ export class JourneyBuilder {
   }
 
   private buildJourneyFlow(group: JourneyGroup, usedSlugs: Set<string>): FlowSuggestion | null {
-    let slug = group.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
+    let slug = toSlug(group.name);
 
     if (usedSlugs.has(slug)) {
       let counter = 2;
@@ -170,7 +185,6 @@ export class JourneyBuilder {
       description: group.description,
       interactionIds: allInteractionIds,
       definitionSteps: allDefinitionSteps,
-      inferredSteps: uniqueFlows.flatMap((f) => f.inferredSteps),
       actionType: null, // Journeys encompass multiple action types
       targetEntity: primaryFlow.targetEntity ? this.normalizeEntity(primaryFlow.targetEntity) : null,
       tier: 2,
