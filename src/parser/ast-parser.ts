@@ -1,20 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import Parser from 'tree-sitter';
-import JavaScript from 'tree-sitter-javascript';
-import TypeScript from 'tree-sitter-typescript';
-import { getLanguageFromExtension } from '../utils/file-scanner.js';
-import { type Definition, extractDefinitions } from './definition-extractor.js';
-import {
-  type FileReference,
-  type InternalSymbolUsage,
-  extractInternalUsages,
-  extractReferences,
-} from './reference-extractor.js';
+import type { Definition } from './definition-extractor.js';
+import { LanguageRegistry } from './language-adapter.js';
+import type { FileReference, InternalSymbolUsage } from './reference-extractor.js';
 import type { WorkspaceMap } from './workspace-resolver.js';
+// Import the TypeScriptAdapter to ensure it's registered
+import './adapters/typescript-adapter.js';
 
 export interface ParsedFile {
-  language: 'typescript' | 'javascript';
+  language: string;
   references: FileReference[];
   definitions: Definition[];
   internalUsages: InternalSymbolUsage[];
@@ -23,28 +17,8 @@ export interface ParsedFile {
   modifiedAt: string;
 }
 
-export type { FileReference, Definition, InternalSymbolUsage };
-
-const typescriptParser = new Parser();
-typescriptParser.setLanguage(TypeScript.typescript);
-
-const tsxParser = new Parser();
-tsxParser.setLanguage(TypeScript.tsx);
-
-const javascriptParser = new Parser();
-javascriptParser.setLanguage(JavaScript);
-
-function getParser(filePath: string): Parser {
-  const ext = path.extname(filePath).toLowerCase();
-  switch (ext) {
-    case '.tsx':
-      return tsxParser;
-    case '.ts':
-      return typescriptParser;
-    default:
-      return javascriptParser;
-  }
-}
+// Re-export types for backward compatibility
+export type { FileReference, InternalSymbolUsage, Definition };
 
 /**
  * Pure function that parses already-loaded content into a ParsedFile.
@@ -57,14 +31,32 @@ export function parseContent(
   metadata: { sizeBytes: number; modifiedAt: string },
   workspaceMap?: WorkspaceMap | null
 ): ParsedFile {
-  const parser = getParser(filePath);
+  const registry = LanguageRegistry.getInstance();
+  const ext = path.extname(filePath).toLowerCase();
+  const adapter = registry.getAdapter(ext);
+
+  if (!adapter) {
+    throw new Error(`No language adapter registered for extension: ${ext}`);
+  }
+
+  const parser = adapter.getParser(filePath);
   // Buffer size: file size × 2 (for UTF-16) + 1MB overhead, minimum 1MB
   const bufferSize = Math.max(1024 * 1024, content.length * 2 + 1024 * 1024);
   const tree = parser.parse(content, undefined, { bufferSize });
-  const language = getLanguageFromExtension(filePath);
-  const references = extractReferences(tree.rootNode, filePath, knownFiles, workspaceMap);
-  const definitions = extractDefinitions(tree.rootNode);
-  const internalUsages = extractInternalUsages(tree.rootNode, definitions);
+
+  // Determine language string from file extension for backward compatibility.
+  // For the TypeScript adapter, we distinguish between 'typescript' (.ts, .tsx) and 'javascript' (.js, .jsx).
+  // Future adapters should use their languageId directly if they don't need this distinction.
+  let language: string;
+  if (adapter.languageId === 'typescript') {
+    language = ext === '.ts' || ext === '.tsx' ? 'typescript' : 'javascript';
+  } else {
+    language = adapter.languageId;
+  }
+
+  const references = adapter.extractReferences(tree.rootNode, filePath, knownFiles, workspaceMap);
+  const definitions = adapter.extractDefinitions(tree.rootNode);
+  const internalUsages = adapter.extractInternalUsages(tree.rootNode, definitions);
 
   return {
     language,
