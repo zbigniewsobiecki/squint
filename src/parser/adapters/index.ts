@@ -5,8 +5,11 @@
  * Each adapter encapsulates the parsing and extraction logic for a specific programming language.
  *
  * Currently available adapters:
- * - (TypeScript/JavaScript adapter coming in next story)
+ * - TypeScript/JavaScript: Handles .ts, .tsx, .js, .jsx files
  * - (Ruby adapter planned for future)
  */
 
-export {};
+// Import to trigger auto-registration
+import './typescript-adapter.js';
+
+export { TypeScriptAdapter } from './typescript-adapter.js';
