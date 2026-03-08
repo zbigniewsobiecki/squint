@@ -23,13 +23,13 @@ export class TypeScriptAdapter implements LanguageAdapter {
   readonly languageId = 'typescript';
   readonly fileExtensions = ['.ts', '.tsx', '.js', '.jsx'];
   readonly defaultIgnorePatterns = [
-    'node_modules/**',
-    'dist/**',
-    'build/**',
-    '.next/**',
-    '.nuxt/**',
-    'coverage/**',
-    '.turbo/**',
+    '**/node_modules/**',
+    '**/dist/**',
+    '**/build/**',
+    '**/.next/**',
+    '**/.nuxt/**',
+    '**/coverage/**',
+    '**/.turbo/**',
   ];
 
   private typescriptParser: Parser;

@@ -16,11 +16,11 @@ describe('TypeScriptAdapter', () => {
 
     it('has appropriate default ignore patterns', () => {
       const adapter = new TypeScriptAdapter();
-      expect(adapter.defaultIgnorePatterns).toContain('node_modules/**');
-      expect(adapter.defaultIgnorePatterns).toContain('dist/**');
-      expect(adapter.defaultIgnorePatterns).toContain('build/**');
-      expect(adapter.defaultIgnorePatterns).toContain('.next/**');
-      expect(adapter.defaultIgnorePatterns).toContain('.nuxt/**');
+      expect(adapter.defaultIgnorePatterns).toContain('**/node_modules/**');
+      expect(adapter.defaultIgnorePatterns).toContain('**/dist/**');
+      expect(adapter.defaultIgnorePatterns).toContain('**/build/**');
+      expect(adapter.defaultIgnorePatterns).toContain('**/.next/**');
+      expect(adapter.defaultIgnorePatterns).toContain('**/.nuxt/**');
     });
   });
 
