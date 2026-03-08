@@ -6,6 +6,7 @@ import type { LanguageAdapter } from '../language-adapter.js';
 import { LanguageRegistry } from '../language-adapter.js';
 import type { FileReference, InternalSymbolUsage } from '../reference-extractor.js';
 import type { WorkspaceMap } from '../workspace-resolver.js';
+import { extractRubyDefinitions } from './ruby/definition-extractor.js';
 
 /**
  * RubyAdapter implements language support for Ruby files (.rb, .rake, .gemspec).
@@ -32,10 +33,9 @@ export class RubyAdapter implements LanguageAdapter {
 
   /**
    * Extract all top-level definitions from the syntax tree.
-   * (Stub implementation for now)
    */
-  extractDefinitions(_rootNode: SyntaxNode): Definition[] {
-    return [];
+  extractDefinitions(rootNode: SyntaxNode): Definition[] {
+    return extractRubyDefinitions(rootNode);
   }
 
   /**
