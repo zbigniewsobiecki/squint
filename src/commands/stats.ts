@@ -146,7 +146,7 @@ export default class Stats extends Command {
           this.log(`  Files          ${fmt(fileCount).padStart(8)}`);
           this.log(`  Symbols        ${fmt(symbolCount).padStart(8)}`);
 
-          const kindOrder = ['function', 'class', 'variable', 'type', 'interface', 'enum'];
+          const kindOrder = ['function', 'class', 'method', 'variable', 'module', 'type', 'interface', 'enum'];
           const sortedKinds = Object.entries(kindCounts).sort((a, b) => {
             const ai = kindOrder.indexOf(a[0]);
             const bi = kindOrder.indexOf(b[0]);

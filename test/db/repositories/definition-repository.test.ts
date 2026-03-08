@@ -170,10 +170,20 @@ describe('DefinitionRepository', () => {
     it('filters by kind', () => {
       insertDefinition({ name: 'myFunc', kind: 'function' });
       insertDefinition({ name: 'MyClass', kind: 'class' });
+      insertDefinition({ name: 'myMethod', kind: 'method' });
+      insertDefinition({ name: 'MyModule', kind: 'module' });
 
       const funcs = repo.getAll({ kind: 'function' });
       expect(funcs).toHaveLength(1);
       expect(funcs[0].name).toBe('myFunc');
+
+      const methods = repo.getAll({ kind: 'method' });
+      expect(methods).toHaveLength(1);
+      expect(methods[0].name).toBe('myMethod');
+
+      const modules = repo.getAll({ kind: 'module' });
+      expect(modules).toHaveLength(1);
+      expect(modules[0].name).toBe('MyModule');
     });
 
     it('filters by exported status', () => {

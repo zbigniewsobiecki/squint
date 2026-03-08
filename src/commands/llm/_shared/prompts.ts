@@ -113,7 +113,7 @@ The description depends on the relationship type:
   - Functions returning closures with mutable state: false
   - Database/HTTP/file operations: false
   - Functions that create objects with internal state: false
-  - Type definitions, interfaces, enums: true
+    - Type definitions, interfaces, enums: true
   - Simple data transformations without mutation: true
   - Common pure:false patterns — DO NOT mark these as pure:
     - \`new Date()\` anywhere in the function body → non-deterministic

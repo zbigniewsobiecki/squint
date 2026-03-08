@@ -231,6 +231,37 @@ describe('gaps command', () => {
       expect(output).toContain('UserService');
       expect(output).not.toContain('getUser');
     });
+
+    it('filters by new kinds (method, module)', () => {
+      // Setup: add a method and a module
+      const setupDb = new IndexDatabase(dbPath);
+      const fileId = setupDb.files.getIdByPath('src/auth.ts')!;
+      setupDb.files.insertDefinition(fileId, {
+        name: 'myMethod',
+        kind: 'method',
+        isExported: true,
+        isDefault: false,
+        position: { row: 20, column: 0 },
+        endPosition: { row: 25, column: 1 },
+      });
+      setupDb.files.insertDefinition(fileId, {
+        name: 'MyModule',
+        kind: 'module',
+        isExported: true,
+        isDefault: false,
+        position: { row: 30, column: 0 },
+        endPosition: { row: 35, column: 1 },
+      });
+      setupDb.close();
+
+      const methodOutput = runCommand(`gaps -d ${dbPath} --type symbols --kind method`);
+      expect(methodOutput).toContain('Unannotated Symbols (1 / 7)');
+      expect(methodOutput).toContain('myMethod');
+
+      const moduleOutput = runCommand(`gaps -d ${dbPath} --type symbols --kind module`);
+      expect(moduleOutput).toContain('Unannotated Symbols (1 / 7)');
+      expect(moduleOutput).toContain('MyModule');
+    });
   });
 
   describe('--json', () => {

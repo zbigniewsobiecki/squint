@@ -18,7 +18,7 @@ export function checkFlowQuality(db: IndexDatabase): CoverageCheckResult {
   const moduleMap = new Map(allModulesWithMembers.map((m) => [m.id, m]));
 
   // Check 1 — orphan-entry-point: Flow references a module with no callable definitions
-  const callableKinds = new Set(['function', 'class', 'const', 'variable', 'method']);
+  const callableKinds = new Set(['function', 'class', 'const', 'variable', 'method', 'module']);
   for (const flow of allFlows) {
     if (!flow.entryPointModuleId) continue;
     const mod = moduleMap.get(flow.entryPointModuleId);

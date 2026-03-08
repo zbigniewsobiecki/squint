@@ -1,6 +1,15 @@
 import type { SyntaxNode } from 'tree-sitter';
 
-export type DefinitionKind = 'function' | 'class' | 'variable' | 'const' | 'type' | 'interface' | 'enum';
+export type DefinitionKind =
+  | 'function'
+  | 'class'
+  | 'variable'
+  | 'const'
+  | 'type'
+  | 'interface'
+  | 'enum'
+  | 'method'
+  | 'module';
 
 export interface Definition {
   name: string;

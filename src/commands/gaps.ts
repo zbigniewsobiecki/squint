@@ -33,7 +33,7 @@ export default class Gaps extends Command {
       default: 20,
     }),
     kind: Flags.string({
-      description: 'Filter symbols by kind (function, class, etc.)',
+      description: 'Filter symbols by kind (function, class, method, variable, module, etc.)',
     }),
   };
 
