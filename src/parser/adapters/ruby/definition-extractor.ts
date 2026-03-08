@@ -45,7 +45,7 @@ export function extractRubyDefinitions(rootNode: SyntaxNode): Definition[] {
         // Walk all children to find body_statement or other nodes
         for (let i = 0; i < node.childCount; i++) {
           const child = node.child(i);
-          if (child && child.type !== 'constant' && child.type !== 'superclass') {
+          if (child && child.type !== 'constant' && child.type !== 'superclass' && child.type !== 'name') {
             walk(child);
           }
         }
@@ -74,7 +74,7 @@ export function extractRubyDefinitions(rootNode: SyntaxNode): Definition[] {
         // Walk all children
         for (let i = 0; i < node.childCount; i++) {
           const child = node.child(i);
-          if (child && child.type !== 'constant') {
+          if (child && child.type !== 'constant' && child.type !== 'name') {
             walk(child);
           }
         }
@@ -86,16 +86,32 @@ export function extractRubyDefinitions(rootNode: SyntaxNode): Definition[] {
       case 'method':
       case 'singleton_method': {
         const nameNode = node.childForFieldName('name');
+        const objectNode = node.type === 'singleton_method' ? node.childForFieldName('object') : null;
+
         if (nameNode) {
           definitions.push({
             name: nameNode.text,
             kind: 'method',
-            isExported: currentVisibility === 'public',
+            isExported: node.type === 'singleton_method' ? true : currentVisibility === 'public',
             isDefault: false,
             position: { row: node.startPosition.row, column: node.startPosition.column },
             endPosition: { row: node.endPosition.row, column: node.endPosition.column },
             declarationEndPosition: { row: node.endPosition.row, column: node.endPosition.column },
           });
+        }
+
+        // Walk into children (body, etc.) for nested definitions
+        for (let i = 0; i < node.childCount; i++) {
+          const child = node.child(i);
+          if (
+            child &&
+            child !== nameNode &&
+            child !== objectNode &&
+            child.type !== 'method_parameters' &&
+            child.type !== 'parameters'
+          ) {
+            walk(child);
+          }
         }
         break;
       }
@@ -113,33 +129,37 @@ export function extractRubyDefinitions(rootNode: SyntaxNode): Definition[] {
             declarationEndPosition: { row: leftNode.endPosition.row, column: leftNode.endPosition.column },
           });
         }
-        break;
-      }
-
-      case 'identifier': {
-        const name = node.text;
-        if (name === 'private' || name === 'protected' || name === 'public') {
-          currentVisibility = name as 'public' | 'private' | 'protected';
+        // Walk into RHS for nested definitions
+        const rightNode = node.childForFieldName('right');
+        if (rightNode) {
+          walk(rightNode);
         }
         break;
       }
+
+
 
       case 'call': {
         const methodNode = node.childForFieldName('method');
         if (methodNode) {
           const methodName = methodNode.text;
+          const argumentsNode = node.childForFieldName('arguments');
 
           // Handle visibility declarations
           if (methodName === 'private' || methodName === 'protected' || methodName === 'public') {
-            const argumentsNode = node.childForFieldName('arguments');
             if (!argumentsNode) {
               currentVisibility = methodName as 'public' | 'private' | 'protected';
+            } else {
+              // Handle 'private def foo' style
+              const savedVisibility = currentVisibility;
+              currentVisibility = methodName as 'public' | 'private' | 'protected';
+              walk(argumentsNode);
+              currentVisibility = savedVisibility;
             }
           }
 
           // Handle attr_* macros
           if (methodName === 'attr_reader' || methodName === 'attr_writer' || methodName === 'attr_accessor') {
-            const argumentsNode = node.childForFieldName('arguments');
             if (argumentsNode) {
               for (let i = 0; i < argumentsNode.childCount; i++) {
                 const arg = argumentsNode.child(i);
@@ -172,6 +192,23 @@ export function extractRubyDefinitions(rootNode: SyntaxNode): Definition[] {
                   }
                 }
               }
+            }
+          }
+        }
+
+        // Walk into arguments and block for other calls to find nested definitions
+        // (If it was a visibility modifier with args, we already walked them)
+        const methodNode2 = node.childForFieldName('method');
+        const methodName2 = methodNode2?.text;
+        const argumentsNode2 = node.childForFieldName('arguments');
+        const isVisibilityWithArgs =
+          (methodName2 === 'private' || methodName2 === 'protected' || methodName2 === 'public') && argumentsNode2;
+
+        if (!isVisibilityWithArgs) {
+          for (let i = 0; i < node.childCount; i++) {
+            const child = node.child(i);
+            if (child && child !== methodNode2) {
+              walk(child);
             }
           }
         }
