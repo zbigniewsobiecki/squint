@@ -434,4 +434,76 @@ describe('LanguageRegistry', () => {
       expect(registry.hasAdapter('.mock')).toBe(true);
     });
   });
+
+  describe('getAllExtensions', () => {
+    it('returns extensions without leading dots', () => {
+      const registry = LanguageRegistry.getInstance();
+      const adapter = new MockLanguageAdapter();
+
+      registry.register(adapter);
+
+      const extensions = registry.getAllExtensions();
+      expect(extensions).toContain('mock');
+      expect(extensions).toContain('test');
+      expect(extensions.every((ext) => !ext.startsWith('.'))).toBe(true);
+    });
+
+    it('returns empty array when no adapters are registered', () => {
+      const registry = LanguageRegistry.getInstance();
+
+      const extensions = registry.getAllExtensions();
+      expect(extensions).toEqual([]);
+    });
+
+    it('deduplicates extensions from multiple adapters', () => {
+      const registry = LanguageRegistry.getInstance();
+      const adapter1 = new MockLanguageAdapter();
+      const adapter2 = new AnotherMockAdapter();
+
+      registry.register(adapter1);
+      registry.register(adapter2);
+
+      const extensions = registry.getAllExtensions();
+      const unique = [...new Set(extensions)];
+      expect(extensions.length).toBe(unique.length);
+    });
+  });
+
+  describe('getAllIgnorePatterns', () => {
+    it('returns all ignore patterns from all adapters', () => {
+      const registry = LanguageRegistry.getInstance();
+      const adapter1 = new MockLanguageAdapter();
+      const adapter2 = new AnotherMockAdapter();
+
+      registry.register(adapter1);
+      registry.register(adapter2);
+
+      const patterns = registry.getAllIgnorePatterns();
+      expect(patterns).toContain('node_modules/**');
+      expect(patterns).toContain('dist/**');
+      expect(patterns).toContain('build/**');
+    });
+
+    it('returns empty array when no adapters are registered', () => {
+      const registry = LanguageRegistry.getInstance();
+
+      const patterns = registry.getAllIgnorePatterns();
+      expect(patterns).toEqual([]);
+    });
+
+    it('deduplicates patterns from multiple adapters', () => {
+      const registry = LanguageRegistry.getInstance();
+      const adapter1 = new MockLanguageAdapter();
+      const adapter2 = new MockLanguageAdapter();
+
+      registry.register(adapter1);
+      // Register the second adapter with different extensions
+      Object.defineProperty(adapter2, 'fileExtensions', { value: ['.foo'] });
+      registry.register(adapter2);
+
+      const patterns = registry.getAllIgnorePatterns();
+      const unique = [...new Set(patterns)];
+      expect(patterns.length).toBe(unique.length);
+    });
+  });
 });

@@ -198,4 +198,27 @@ export class LanguageRegistry {
   clear(): void {
     this.adapters.clear();
   }
+
+  /**
+   * Get all unique file extensions from all registered adapters.
+   * Returns extensions without the leading dot (e.g., ['ts', 'tsx', 'js', 'jsx'])
+   */
+  getAllExtensions(): string[] {
+    const extensions = Array.from(this.adapters.keys()).map((ext) => ext.slice(1)); // Remove leading dot
+    return [...new Set(extensions)]; // Deduplicate
+  }
+
+  /**
+   * Get all unique ignore patterns from all registered adapters.
+   * Merges defaultIgnorePatterns from all adapters and deduplicates.
+   */
+  getAllIgnorePatterns(): string[] {
+    const allPatterns = new Set<string>();
+    for (const adapter of this.adapters.values()) {
+      for (const pattern of adapter.defaultIgnorePatterns) {
+        allPatterns.add(pattern);
+      }
+    }
+    return Array.from(allPatterns);
+  }
 }
