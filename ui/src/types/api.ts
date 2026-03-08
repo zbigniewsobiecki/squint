@@ -253,6 +253,7 @@ export const KIND_COLORS: Record<string, string> = {
   const: '#803d3d',
   enum: '#3d6880',
   method: '#4a6670',
+  module: '#6a803d',
 };
 
 // Flow colors palette

@@ -6,10 +6,12 @@
  *
  * Currently available adapters:
  * - TypeScript/JavaScript: Handles .ts, .tsx, .js, .jsx files
- * - (Ruby adapter planned for future)
+ * - Ruby: Handles .rb, .rake, .gemspec files
  */
 
 // Import to trigger auto-registration
 import './typescript-adapter.js';
+import './ruby-adapter.js';
 
 export { TypeScriptAdapter } from './typescript-adapter.js';
+export { RubyAdapter } from './ruby-adapter.js';
