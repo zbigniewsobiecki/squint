@@ -85,7 +85,7 @@ export default class Annotate extends BaseLlmCommand {
     }),
     kind: Flags.string({
       char: 'k',
-      description: 'Filter by symbol kind',
+      description: 'Filter by symbol kind (function, class, method, variable, module, etc.)',
     }),
     file: Flags.string({
       char: 'f',

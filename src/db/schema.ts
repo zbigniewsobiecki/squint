@@ -222,7 +222,7 @@ export interface InteractionWithPaths extends Interaction {
  */
 export interface CalledSymbolInfo {
   name: string;
-  kind: string; // 'function', 'class', 'method', 'variable'
+  kind: string; // 'function', 'class', 'method', 'variable', 'module'
   callCount: number;
 }
 

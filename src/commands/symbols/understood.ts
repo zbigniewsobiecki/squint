@@ -35,7 +35,7 @@ export default class Understood extends Command {
     database: SharedFlags.database,
     kind: Flags.string({
       char: 'k',
-      description: 'Filter to specific symbol kind',
+      description: 'Filter to specific symbol kind (function, class, method, variable, module, etc.)',
     }),
     file: Flags.string({
       char: 'f',

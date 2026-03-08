@@ -277,6 +277,37 @@ describe('symbols metadata commands', () => {
       expect(output).toContain('Found 1 symbol(s)');
     });
 
+    it('filters by new kinds (method, module)', () => {
+      // Setup: add a method and a module
+      const setupDb = new IndexDatabase(dbPath);
+      const fileId = setupDb.files.getAll()[0].id;
+      setupDb.files.insertDefinition(fileId, {
+        name: 'myMethod',
+        kind: 'method',
+        isExported: true,
+        isDefault: false,
+        position: { row: 20, column: 0 },
+        endPosition: { row: 25, column: 1 },
+      });
+      setupDb.files.insertDefinition(fileId, {
+        name: 'MyModule',
+        kind: 'module',
+        isExported: true,
+        isDefault: false,
+        position: { row: 30, column: 0 },
+        endPosition: { row: 35, column: 1 },
+      });
+      setupDb.close();
+
+      const methodOutput = runCommand(`symbols --kind method -d ${dbPath}`);
+      expect(methodOutput).toContain('myMethod');
+      expect(methodOutput).toContain('Found 1 symbol(s)');
+
+      const moduleOutput = runCommand(`symbols --kind module -d ${dbPath}`);
+      expect(moduleOutput).toContain('MyModule');
+      expect(moduleOutput).toContain('Found 1 symbol(s)');
+    });
+
     it('returns all symbols when none have the key', () => {
       const output = runCommand(`symbols --missing nonexistent -d ${dbPath}`);
       expect(output).toContain('add');
