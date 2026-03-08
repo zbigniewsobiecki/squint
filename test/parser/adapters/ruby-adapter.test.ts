@@ -75,13 +75,18 @@ describe('RubyAdapter', () => {
     });
   });
 
-  describe('Stub Implementations', () => {
-    it('returns empty array for extractDefinitions', () => {
+  describe('Implementations', () => {
+    it('extracts definitions using extractRubyDefinitions', () => {
       const adapter = new RubyAdapter();
       const parser = adapter.getParser('test.rb');
       const tree = parser.parse('class A; end');
       const definitions = adapter.extractDefinitions(tree.rootNode);
-      expect(definitions).toEqual([]);
+      expect(definitions).toContainEqual(
+        expect.objectContaining({
+          name: 'A',
+          kind: 'class',
+        })
+      );
     });
 
     it('returns empty array for extractReferences', () => {
