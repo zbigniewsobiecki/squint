@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
 import Parser from 'tree-sitter';
 import Ruby from 'tree-sitter-ruby';
-import { extractRubyDefinitions } from '../../../src/parser/adapters/ruby/definition-extractor.js';
+import { describe, expect, it } from 'vitest';
+import { extractRubyDefinitions } from '../../../../src/parser/adapters/ruby/definition-extractor.js';
 
 const parser = new Parser();
 parser.setLanguage(Ruby);
@@ -81,7 +81,7 @@ describe('extractRubyDefinitions', () => {
     const tree = parser.parse(code);
     const definitions = extractRubyDefinitions(tree.rootNode);
 
-    const def = definitions.find(d => d.name === 'my_singleton_method');
+    const def = definitions.find((d) => d.name === 'my_singleton_method');
     expect(def).toBeDefined();
     expect(def?.isExported).toBe(true);
   });
@@ -95,7 +95,7 @@ describe('extractRubyDefinitions', () => {
     const tree = parser.parse(code);
     const definitions = extractRubyDefinitions(tree.rootNode);
 
-    const def = definitions.find(d => d.name === 'my_private_method');
+    const def = definitions.find((d) => d.name === 'my_private_method');
     expect(def).toBeDefined();
     expect(def?.isExported).toBe(false);
   });

@@ -116,6 +116,14 @@ export function extractRubyDefinitions(rootNode: SyntaxNode): Definition[] {
         break;
       }
 
+      case 'identifier': {
+        const text = node.text;
+        if (text === 'public' || text === 'private' || text === 'protected') {
+          currentVisibility = text as 'public' | 'private' | 'protected';
+        }
+        break;
+      }
+
       case 'assignment': {
         const leftNode = node.childForFieldName('left');
         if (leftNode && (leftNode.type === 'constant' || leftNode.type === 'scope_resolution')) {
@@ -136,8 +144,6 @@ export function extractRubyDefinitions(rootNode: SyntaxNode): Definition[] {
         }
         break;
       }
-
-
 
       case 'call': {
         const methodNode = node.childForFieldName('method');
