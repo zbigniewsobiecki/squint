@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   type SymbolContextEnhanced,
+  buildRelationshipSystemPrompt,
+  buildRelationshipUserPrompt,
   buildSystemPrompt,
   buildUserPromptEnhanced,
 } from '../../../src/commands/llm/_shared/prompts.js';
-import type { CoverageInfo } from '../../../src/commands/llm/_shared/prompts.js';
+import type { CoverageInfo, RelationshipSourceGroup } from '../../../src/commands/llm/_shared/prompts.js';
 
 describe('prompts (annotation)', () => {
   // ============================================
@@ -144,6 +146,142 @@ describe('prompts (annotation)', () => {
       const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['purpose', 'domain'], []);
       expect(prompt).toContain('Annotate aspects: purpose, domain');
       expect(prompt).toContain('Include relationship annotations');
+    });
+
+    it('uses typescript code fence by default', () => {
+      const symbol = makeEnhancedSymbol({ sourceCode: 'const x = 1;' });
+      const prompt = buildUserPromptEnhanced([symbol], ['purpose'], []);
+      expect(prompt).toContain('```typescript');
+    });
+
+    it('uses ruby code fence when language is ruby', () => {
+      const symbol = makeEnhancedSymbol({ sourceCode: 'def hello; end' });
+      const prompt = buildUserPromptEnhanced([symbol], ['purpose'], [], 'ruby');
+      expect(prompt).toContain('```ruby');
+      expect(prompt).not.toContain('```typescript');
+    });
+  });
+
+  // ============================================
+  // Language-aware buildSystemPrompt
+  // ============================================
+  describe('buildSystemPrompt — language parameterization', () => {
+    it('defaults to TypeScript/JavaScript label', () => {
+      const prompt = buildSystemPrompt(['purpose']);
+      expect(prompt).toContain('TypeScript/JavaScript');
+    });
+
+    it('uses TypeScript/JavaScript label for typescript language', () => {
+      const prompt = buildSystemPrompt(['purpose'], 'typescript');
+      expect(prompt).toContain('TypeScript/JavaScript');
+    });
+
+    it('uses TypeScript/JavaScript label for javascript language', () => {
+      const prompt = buildSystemPrompt(['purpose'], 'javascript');
+      expect(prompt).toContain('TypeScript/JavaScript');
+    });
+
+    it('uses Ruby/Rails label for ruby language', () => {
+      const prompt = buildSystemPrompt(['purpose'], 'ruby');
+      expect(prompt).toContain('Ruby/Rails');
+      expect(prompt).not.toContain('TypeScript/JavaScript');
+    });
+
+    it('uses TypeScript/JavaScript pure guidelines by default', () => {
+      const prompt = buildSystemPrompt(['pure']);
+      expect(prompt).toContain('vi.fn()');
+      expect(prompt).toContain('process.env');
+      expect(prompt).toContain('useXxx()');
+    });
+
+    it('uses Ruby-specific pure guidelines for ruby language', () => {
+      const prompt = buildSystemPrompt(['pure'], 'ruby');
+      expect(prompt).toContain('@variable =');
+      expect(prompt).toContain('ActiveRecord');
+      expect(prompt).toContain('redirect_to');
+    });
+
+    it('does not include TypeScript-specific pure patterns for ruby', () => {
+      const prompt = buildSystemPrompt(['pure'], 'ruby');
+      expect(prompt).not.toContain('vi.fn()');
+      expect(prompt).not.toContain('useXxx()');
+    });
+
+    it('uses Rails-specific role description for ruby language', () => {
+      const prompt = buildSystemPrompt(['role'], 'ruby');
+      expect(prompt).toContain('serializer');
+      expect(prompt).toContain('mailer');
+      expect(prompt).toContain('job');
+      expect(prompt).toContain('concern');
+    });
+
+    it('does not mention Rails-specific roles for typescript', () => {
+      const prompt = buildSystemPrompt(['role'], 'typescript');
+      expect(prompt).not.toContain('serializer');
+      expect(prompt).not.toContain('mailer');
+    });
+
+    it('ruby pure aspect description mentions @ivar mutation', () => {
+      const prompt = buildSystemPrompt(['pure'], 'ruby');
+      expect(prompt).toContain('@ivar');
+    });
+
+    it('ruby pure aspect description mentions ActiveRecord finders', () => {
+      const prompt = buildSystemPrompt(['pure'], 'ruby');
+      expect(prompt).toContain('Model.find');
+    });
+  });
+
+  // ============================================
+  // Language-aware buildRelationshipSystemPrompt
+  // ============================================
+  describe('buildRelationshipSystemPrompt — language parameterization', () => {
+    it('defaults to TypeScript/JavaScript label', () => {
+      const prompt = buildRelationshipSystemPrompt();
+      expect(prompt).toContain('TypeScript/JavaScript');
+    });
+
+    it('uses Ruby/Rails label for ruby language', () => {
+      const prompt = buildRelationshipSystemPrompt('ruby');
+      expect(prompt).toContain('Ruby/Rails');
+      expect(prompt).not.toContain('TypeScript/JavaScript');
+    });
+
+    it('uses TypeScript/JavaScript label for typescript language', () => {
+      const prompt = buildRelationshipSystemPrompt('typescript');
+      expect(prompt).toContain('TypeScript/JavaScript');
+    });
+  });
+
+  // ============================================
+  // Language-aware buildRelationshipUserPrompt
+  // ============================================
+  describe('buildRelationshipUserPrompt — language parameterization', () => {
+    const makeGroup = (overrides?: Partial<RelationshipSourceGroup>): RelationshipSourceGroup => ({
+      id: 42,
+      name: 'UserService',
+      kind: 'class',
+      filePath: '/src/services/user.ts',
+      line: 1,
+      endLine: 20,
+      sourceCode: 'class UserService {}',
+      purpose: null,
+      domains: null,
+      role: null,
+      relationships: [],
+      ...overrides,
+    });
+
+    it('uses typescript code fence by default', () => {
+      const prompt = buildRelationshipUserPrompt([makeGroup()]);
+      expect(prompt).toContain('```typescript');
+    });
+
+    it('uses ruby code fence when language is ruby', () => {
+      const group = makeGroup({ sourceCode: 'class UserService; end' });
+      const prompt = buildRelationshipUserPrompt([group], 'ruby');
+      expect(prompt).toContain('```ruby');
+      expect(prompt).not.toContain('```typescript');
     });
   });
 });
