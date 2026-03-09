@@ -7,7 +7,7 @@ import { LanguageRegistry } from '../language-adapter.js';
 import type { FileReference, InternalSymbolUsage } from '../reference-extractor.js';
 import type { WorkspaceMap } from '../workspace-resolver.js';
 import { extractRubyDefinitions } from './ruby/definition-extractor.js';
-import { extractRubyReferences, resolveRubyImportPath } from './ruby/reference-extractor.js';
+import { extractRubyInternalUsages, extractRubyReferences, resolveRubyImportPath } from './ruby/reference-extractor.js';
 
 /**
  * RubyAdapter implements language support for Ruby files (.rb, .rake, .gemspec).
@@ -54,10 +54,11 @@ export class RubyAdapter implements LanguageAdapter {
 
   /**
    * Extract internal symbol usages within the same file.
-   * (Stub implementation for now)
+   * Detects method calls to locally-defined methods, handling implicit self
+   * receiver and super calls.
    */
-  extractInternalUsages(_rootNode: SyntaxNode, _definitions: Definition[]): InternalSymbolUsage[] {
-    return [];
+  extractInternalUsages(rootNode: SyntaxNode, definitions: Definition[]): InternalSymbolUsage[] {
+    return extractRubyInternalUsages(rootNode, definitions);
   }
 
   /**

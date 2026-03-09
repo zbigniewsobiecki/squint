@@ -103,12 +103,32 @@ describe('RubyAdapter', () => {
       });
     });
 
-    it('returns empty array for extractInternalUsages', () => {
+    it('returns empty array for extractInternalUsages when no definitions', () => {
       const adapter = new RubyAdapter();
       const parser = adapter.getParser('test.rb');
       const tree = parser.parse('a = 1; puts a');
       const usages = adapter.extractInternalUsages(tree.rootNode, []);
       expect(usages).toEqual([]);
+    });
+
+    it('extracts internal usages for locally-defined method calls', () => {
+      const adapter = new RubyAdapter();
+      const parser = adapter.getParser('test.rb');
+      const code = `
+class User
+  def run
+    validate
+  end
+
+  def validate; end
+end
+      `.trim();
+      const tree = parser.parse(code);
+      const definitions = adapter.extractDefinitions(tree.rootNode);
+      const usages = adapter.extractInternalUsages(tree.rootNode, definitions);
+      const validateUsage = usages.find((u) => u.definitionName === 'validate');
+      expect(validateUsage).toBeDefined();
+      expect(validateUsage!.usages.length).toBeGreaterThan(0);
     });
 
     it('returns null for resolveImportPath', () => {
