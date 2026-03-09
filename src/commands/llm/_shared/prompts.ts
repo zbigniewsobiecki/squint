@@ -10,7 +10,25 @@ export interface CoverageInfo {
 }
 
 /**
- * Aspect descriptions for the system prompt.
+ * Supported language identifiers for prompt parameterization.
+ */
+export type SupportedLanguage = 'typescript' | 'javascript' | 'ruby';
+
+/**
+ * Human-readable language label for use in prompts.
+ */
+function getLanguageLabel(language: SupportedLanguage): string {
+  switch (language) {
+    case 'typescript':
+    case 'javascript':
+      return 'TypeScript/JavaScript';
+    case 'ruby':
+      return 'Ruby/Rails';
+  }
+}
+
+/**
+ * Aspect descriptions for the system prompt — TypeScript/JavaScript defaults.
  */
 const ASPECT_DESCRIPTIONS: Record<string, string> = {
   purpose: 'A concise 1-2 sentence description of what the symbol does and why it exists.',
@@ -36,14 +54,77 @@ Return "null" if no external communication contracts.`,
 };
 
 /**
+ * Ruby/Rails-specific overrides for aspect descriptions.
+ */
+const RUBY_ASPECT_DESCRIPTIONS: Record<string, string> = {
+  role: 'The architectural role (e.g., "model", "controller", "serializer", "mailer", "job", "concern", "service", "utility", "factory", "adapter").',
+  pure: `"true" only if purely functional (deterministic, no side effects). "false" if it: mutates instance variables (@ivar), interacts with ActiveRecord or the database, performs I/O, or relies on external state. Most Ruby methods are NOT pure.
+  - Methods that set \`@ivar\` or call \`save\`/\`update\`/\`destroy\` → impure
+  - Methods with \`render\`, \`redirect_to\`, or HTTP concerns → impure
+  - Methods calling ActiveRecord finders (e.g., \`Model.find\`, \`Model.where\`) → impure
+  - Exception: pure data transformations on plain Ruby objects with no side effects can be pure`,
+};
+
+/**
+ * Get the aspect description for a given language, falling back to the TypeScript default.
+ */
+function getAspectDescription(aspect: string, language: SupportedLanguage): string {
+  if (language === 'ruby') {
+    return RUBY_ASPECT_DESCRIPTIONS[aspect] ?? ASPECT_DESCRIPTIONS[aspect] ?? 'A descriptive value for this aspect.';
+  }
+  return ASPECT_DESCRIPTIONS[aspect] ?? 'A descriptive value for this aspect.';
+}
+
+/**
+ * Build language-specific pure function guidelines for the system prompt.
+ */
+function buildPureGuidelines(language: SupportedLanguage): string {
+  if (language === 'ruby') {
+    return `- For pure: use "false" unless the method is fully deterministic with no side effects
+  - Methods that mutate instance variables (\`@ivar =\`, \`self.attr =\`): false
+  - Methods calling ActiveRecord (finders, \`save\`, \`update\`, \`destroy\`, \`create\`): false
+  - Methods with HTTP/IO concerns (\`render\`, \`redirect_to\`, file ops): false
+  - Methods that call \`Time.now\`, \`Date.today\`, or \`rand\`: false
+  - Simple data transformations on plain Ruby objects with no mutation: true
+  - Common pure:false patterns — DO NOT mark these as pure:
+    - \`@variable =\` anywhere in the method body → mutates instance state
+    - Any ActiveRecord finder or persistence call → database I/O
+    - \`render\` or \`redirect_to\` → HTTP side effect
+    - \`Time.now\` or \`Date.today\` → non-deterministic
+    - \`rand\` or \`SecureRandom.*\` → non-deterministic
+    - \`File.*\` or IO operations → filesystem I/O`;
+  }
+
+  return `- For pure: use "false" unless the function is fully deterministic with no side effects
+  - Factory functions that create instances (vi.fn(), mock factories, middleware factories): false
+  - Functions returning closures with mutable state: false
+  - Database/HTTP/file operations: false
+  - Functions that create objects with internal state: false
+    - Type definitions, interfaces, enums: true
+  - Simple data transformations without mutation: true
+  - Common pure:false patterns — DO NOT mark these as pure:
+    - \`new Date()\` anywhere in the function body → non-deterministic
+    - \`vi.fn()\` or \`jest.fn()\` → creates stateful mock
+    - \`process.env.*\` or \`import.meta.env.*\` → reads external state
+    - \`await anything\` → I/O side effect
+    - \`localStorage.*\` or \`sessionStorage.*\` → browser storage I/O
+    - \`useXxx()\` hooks → React stateful hooks
+    - \`Math.random()\` → non-deterministic
+    - Functions that return objects containing \`new Date()\` fields
+    - Functions returning \`new CustomClass(...)\` — creates mutable instance identity`;
+}
+
+/**
  * Build the system prompt for annotation.
  */
-export function buildSystemPrompt(aspects: string[]): string {
-  const aspectDescs = aspects
-    .map((a) => `- **${a}**: ${ASPECT_DESCRIPTIONS[a] || 'A descriptive value for this aspect.'}`)
-    .join('\n');
+export function buildSystemPrompt(aspects: string[], language: SupportedLanguage = 'typescript'): string {
+  const aspectDescs = aspects.map((a) => `- **${a}**: ${getAspectDescription(a, language)}`).join('\n');
 
-  return `You are a code analyst annotating TypeScript/JavaScript code.
+  const languageLabel = getLanguageLabel(language);
+
+  const pureGuidelines = buildPureGuidelines(language);
+
+  return `You are a code analyst annotating ${languageLabel} code.
 
 ## Your Task
 For each symbol, analyze its source code and provide:
@@ -108,23 +189,7 @@ The description depends on the relationship type:
 
 ## Guidelines
 - Use dependency annotations to understand what a symbol builds upon
-- For pure: use "false" unless the function is fully deterministic with no side effects
-  - Factory functions that create instances (vi.fn(), mock factories, middleware factories): false
-  - Functions returning closures with mutable state: false
-  - Database/HTTP/file operations: false
-  - Functions that create objects with internal state: false
-    - Type definitions, interfaces, enums: true
-  - Simple data transformations without mutation: true
-  - Common pure:false patterns — DO NOT mark these as pure:
-    - \`new Date()\` anywhere in the function body → non-deterministic
-    - \`vi.fn()\` or \`jest.fn()\` → creates stateful mock
-    - \`process.env.*\` or \`import.meta.env.*\` → reads external state
-    - \`await anything\` → I/O side effect
-    - \`localStorage.*\` or \`sessionStorage.*\` → browser storage I/O
-    - \`useXxx()\` hooks → React stateful hooks
-    - \`Math.random()\` → non-deterministic
-    - Functions that return objects containing \`new Date()\` fields
-    - Functions returning \`new CustomClass(...)\` — creates mutable instance identity
+${pureGuidelines}
 - For domain: pick 1-3 relevant domain tags that describe the problem area
 - For role: identify the architectural pattern the symbol represents
 - If unsure, make your best informed judgment based on the code`;
@@ -136,7 +201,8 @@ The description depends on the relationship type:
 export function buildUserPromptEnhanced(
   symbols: SymbolContextEnhanced[],
   aspects: string[],
-  coverage: CoverageInfo[]
+  coverage: CoverageInfo[],
+  language: SupportedLanguage = 'typescript'
 ): string {
   const parts: string[] = [];
 
@@ -197,8 +263,9 @@ export function buildUserPromptEnhanced(
     }
 
     // Source code
+    const codeFenceLang = language === 'ruby' ? 'ruby' : 'typescript';
     parts.push('Source Code:');
-    parts.push('```typescript');
+    parts.push(`\`\`\`${codeFenceLang}`);
     parts.push(symbol.sourceCode);
     parts.push('```');
     parts.push('');
@@ -311,8 +378,9 @@ export interface RelationshipSourceGroup {
 /**
  * Build the system prompt for relationship-only annotation.
  */
-export function buildRelationshipSystemPrompt(): string {
-  return `You are a code analyst annotating relationships between TypeScript/JavaScript symbols.
+export function buildRelationshipSystemPrompt(language: SupportedLanguage = 'typescript'): string {
+  const languageLabel = getLanguageLabel(language);
+  return `You are a code analyst annotating relationships between ${languageLabel} symbols.
 
 ## Your Task
 For each source symbol, describe WHY it uses each listed dependency.
@@ -360,7 +428,10 @@ relationship,88,42,"delegates token validation to dedicated utility"
 /**
  * Build the user prompt for relationship-only annotation.
  */
-export function buildRelationshipUserPrompt(groups: RelationshipSourceGroup[]): string {
+export function buildRelationshipUserPrompt(
+  groups: RelationshipSourceGroup[],
+  language: SupportedLanguage = 'typescript'
+): string {
   const parts: string[] = [];
 
   parts.push('## Relationships to Annotate');
@@ -396,8 +467,9 @@ export function buildRelationshipUserPrompt(groups: RelationshipSourceGroup[]): 
     }
     parts.push('');
 
+    const codeFenceLang = language === 'ruby' ? 'ruby' : 'typescript';
     parts.push('Source Code:');
-    parts.push('```typescript');
+    parts.push(`\`\`\`${codeFenceLang}`);
     parts.push(group.sourceCode);
     parts.push('```');
     parts.push('');
