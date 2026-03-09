@@ -7,6 +7,7 @@ import { LanguageRegistry } from '../language-adapter.js';
 import type { FileReference, InternalSymbolUsage } from '../reference-extractor.js';
 import type { WorkspaceMap } from '../workspace-resolver.js';
 import { extractRubyDefinitions } from './ruby/definition-extractor.js';
+import { extractRubyReferences, resolveRubyImportPath } from './ruby/reference-extractor.js';
 
 /**
  * RubyAdapter implements language support for Ruby files (.rb, .rake, .gemspec).
@@ -40,15 +41,15 @@ export class RubyAdapter implements LanguageAdapter {
 
   /**
    * Extract all import/export references from the syntax tree.
-   * (Stub implementation for now)
+   * Handles require, require_relative, include, extend, and prepend statements.
    */
   extractReferences(
-    _rootNode: SyntaxNode,
-    _filePath: string,
-    _knownFiles: Set<string>,
+    rootNode: SyntaxNode,
+    filePath: string,
+    knownFiles: Set<string>,
     _workspaceMap?: WorkspaceMap | null
   ): FileReference[] {
-    return [];
+    return extractRubyReferences(rootNode, filePath, knownFiles);
   }
 
   /**
@@ -61,15 +62,15 @@ export class RubyAdapter implements LanguageAdapter {
 
   /**
    * Resolve an import path to an absolute file path.
-   * (Stub implementation for now)
+   * Handles require_relative (relative paths) and require (bare paths).
    */
   resolveImportPath(
-    _source: string,
-    _fromFile: string,
-    _knownFiles: Set<string>,
+    source: string,
+    fromFile: string,
+    knownFiles: Set<string>,
     _workspaceMap?: WorkspaceMap | null
   ): string | null {
-    return null;
+    return resolveRubyImportPath(source, fromFile, knownFiles);
   }
 }
 
