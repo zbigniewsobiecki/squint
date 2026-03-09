@@ -5,16 +5,49 @@
 
 import type { SyntaxNode } from 'tree-sitter';
 import Parser from 'tree-sitter';
+import Ruby from 'tree-sitter-ruby';
 import TypeScript from 'tree-sitter-typescript';
 
-let parser: Parser | null = null;
+let tsParser: Parser | null = null;
 function getParser(): Parser {
-  if (!parser) {
-    parser = new Parser();
-    parser.setLanguage(TypeScript.tsx);
+  if (!tsParser) {
+    tsParser = new Parser();
+    tsParser.setLanguage(TypeScript.tsx);
   }
-  return parser;
+  return tsParser;
 }
+
+let rubyParser: Parser | null = null;
+function getRubyParser(): Parser {
+  if (!rubyParser) {
+    rubyParser = new Parser();
+    rubyParser.setLanguage(Ruby);
+  }
+  return rubyParser;
+}
+
+/** ActiveRecord mutation methods that indicate database side effects. */
+const ACTIVE_RECORD_MUTATION_METHODS = new Set([
+  'save',
+  'save!',
+  'update',
+  'update!',
+  'destroy',
+  'destroy!',
+  'delete',
+  'create',
+  'create!',
+  'update_all',
+  'delete_all',
+  'destroy_all',
+  'insert',
+  'insert!',
+  'upsert',
+  'touch',
+]);
+
+/** File/IO classes whose method calls indicate I/O side effects. */
+const RUBY_IO_CLASSES = new Set(['File', 'IO', 'Dir', 'FileUtils', 'Open3', 'Kernel']);
 
 const AMBIENT_GLOBALS = new Set([
   'console',
@@ -88,10 +121,28 @@ const PURE_GLOBAL_CONSTRUCTORS = new Set([
 /**
  * Detect impure patterns in source code using AST analysis.
  * Returns a list of reasons why the code is impure (empty = possibly pure).
+ *
+ * @param sourceCode - The source code to analyze
+ * @param language - Optional language hint ('ruby', 'typescript', 'javascript', etc.)
+ *                   Defaults to TypeScript/JavaScript analysis for backward compatibility.
+ *                   Unknown languages return 'needs manual review'.
  */
-export function detectImpurePatterns(sourceCode: string): string[] {
+export function detectImpurePatterns(sourceCode: string, language?: string): string[] {
   if (!sourceCode.trim()) return [];
 
+  // Normalize language to lowercase for comparison
+  const lang = language?.toLowerCase();
+
+  if (lang === 'ruby') {
+    return detectRubyImpurePatterns(sourceCode);
+  }
+
+  // Unknown languages (non-TS/JS, non-Ruby) → needs manual review
+  if (lang && lang !== 'typescript' && lang !== 'javascript') {
+    return ['needs manual review'];
+  }
+
+  // TypeScript/JavaScript (default path — backward compatible)
   let tree: Parser.Tree;
   try {
     tree = getParser().parse(sourceCode);
@@ -107,6 +158,83 @@ export function detectImpurePatterns(sourceCode: string): string[] {
   const reasons: string[] = [];
   walkForImpurity(root, localIds, reasons);
   return [...new Set(reasons)];
+}
+
+/**
+ * Detect impure patterns in Ruby source code using AST analysis.
+ * Checks for:
+ * - ActiveRecord mutation calls (save, update, destroy, create, etc.)
+ * - File/IO operations (File.read, IO.write, etc.)
+ * - Instance variable assignments (@ivar = value, @ivar += value)
+ */
+function detectRubyImpurePatterns(sourceCode: string): string[] {
+  let tree: Parser.Tree;
+  try {
+    tree = getRubyParser().parse(sourceCode);
+  } catch {
+    return [];
+  }
+
+  const root = tree.rootNode;
+  if (!root || root.childCount === 0) return [];
+
+  const reasons: string[] = [];
+  walkRubyForImpurity(root, reasons);
+  return [...new Set(reasons)];
+}
+
+/**
+ * Recursive walker for Ruby AST nodes to detect impurity.
+ */
+function walkRubyForImpurity(node: SyntaxNode, reasons: string[]): void {
+  switch (node.type) {
+    case 'call': {
+      const receiver = node.childForFieldName('receiver');
+      const method = node.childForFieldName('method');
+      const methodName = method?.text;
+
+      if (receiver && methodName) {
+        // Check for ActiveRecord mutation methods: user.save, user.update, User.create, etc.
+        if (ACTIVE_RECORD_MUTATION_METHODS.has(methodName)) {
+          reasons.push(`ActiveRecord mutation (${receiver.text}.${methodName})`);
+          break;
+        }
+
+        // Check for File/IO class operations: File.read, IO.write, etc.
+        if ((receiver.type === 'constant' || receiver.type === 'identifier') && RUBY_IO_CLASSES.has(receiver.text)) {
+          reasons.push(`File/IO operation (${receiver.text}.${methodName})`);
+          break;
+        }
+      }
+      break;
+    }
+
+    case 'assignment': {
+      // Instance variable assignment: @ivar = value
+      const left = node.childForFieldName('left');
+      if (left?.type === 'instance_variable') {
+        reasons.push(`instance variable mutation (${left.text})`);
+        break;
+      }
+      break;
+    }
+
+    case 'operator_assignment': {
+      // Instance variable operator assignment: @ivar += 1, @ivar ||= value
+      const left = node.childForFieldName('left');
+      if (left?.type === 'instance_variable') {
+        reasons.push(`instance variable mutation (${left.text})`);
+        break;
+      }
+      break;
+    }
+  }
+
+  // Recurse into children
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) walkRubyForImpurity(child, reasons);
+  }
 }
 
 /**
