@@ -89,12 +89,18 @@ describe('RubyAdapter', () => {
       );
     });
 
-    it('returns empty array for extractReferences', () => {
+    it('extracts require statements via extractReferences', () => {
       const adapter = new RubyAdapter();
       const parser = adapter.getParser('test.rb');
       const tree = parser.parse('require "other"');
       const references = adapter.extractReferences(tree.rootNode, 'test.rb', new Set());
-      expect(references).toEqual([]);
+      expect(references).toHaveLength(1);
+      expect(references[0]).toMatchObject({
+        type: 'require',
+        source: 'other',
+        isExternal: true,
+        isTypeOnly: false,
+      });
     });
 
     it('returns empty array for extractInternalUsages', () => {
