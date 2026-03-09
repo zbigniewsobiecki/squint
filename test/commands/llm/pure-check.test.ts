@@ -438,4 +438,227 @@ function pure(x: number) { return x * 2; }`;
       expect(detectImpurePatterns(source)).toEqual([]);
     });
   });
+
+  describe('language-aware dispatch', () => {
+    it('treats undefined language as TypeScript/JavaScript', () => {
+      const source = 'function add(a, b) { return a + b; }';
+      expect(detectImpurePatterns(source)).toEqual([]);
+    });
+
+    it('treats typescript language as TypeScript', () => {
+      const source = 'function add(a: number, b: number): number { return a + b; }';
+      expect(detectImpurePatterns(source, 'typescript')).toEqual([]);
+    });
+
+    it('treats javascript language as JavaScript', () => {
+      const source = 'function add(a, b) { return a + b; }';
+      expect(detectImpurePatterns(source, 'javascript')).toEqual([]);
+    });
+
+    it('returns needs manual review for unknown languages', () => {
+      const source = 'fn add(a: i32, b: i32) -> i32 { a + b }';
+      expect(detectImpurePatterns(source, 'rust')).toEqual(['needs manual review']);
+    });
+
+    it('returns needs manual review for go language', () => {
+      const source = 'func add(a, b int) int { return a + b }';
+      expect(detectImpurePatterns(source, 'go')).toEqual(['needs manual review']);
+    });
+
+    it('does NOT return needs manual review for empty source with unknown language', () => {
+      expect(detectImpurePatterns('', 'rust')).toEqual([]);
+    });
+  });
+
+  describe('Ruby: ActiveRecord mutation detection', () => {
+    it('detects instance.save', () => {
+      const source = `def save_record(record)
+  record.save
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('ActiveRecord mutation (record.save)');
+    });
+
+    it('detects instance.save!', () => {
+      const source = `def save_record(record)
+  record.save!
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('ActiveRecord mutation (record.save!)');
+    });
+
+    it('detects instance.update', () => {
+      const source = `def update_user(user)
+  user.update(name: 'Alice')
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('ActiveRecord mutation (user.update)');
+    });
+
+    it('detects instance.destroy', () => {
+      const source = `def remove(record)
+  record.destroy
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('ActiveRecord mutation (record.destroy)');
+    });
+
+    it('detects class-level create: User.create(...)', () => {
+      const source = `def make_user(attrs)
+  User.create(attrs)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('ActiveRecord mutation (User.create)');
+    });
+
+    it('detects instance.update! with bang', () => {
+      const source = `def update_record(record)
+  record.update!(status: :active)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('ActiveRecord mutation (record.update!)');
+    });
+
+    it('detects instance.destroy!', () => {
+      const source = `def destroy_record(record)
+  record.destroy!
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('ActiveRecord mutation (record.destroy!)');
+    });
+
+    it('detects Model.delete_all', () => {
+      const source = `def clear_users
+  User.delete_all
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('ActiveRecord mutation (User.delete_all)');
+    });
+  });
+
+  describe('Ruby: File/IO operation detection', () => {
+    it('detects File.read', () => {
+      const source = `def read_config
+  File.read('config.yml')
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('File/IO operation (File.read)');
+    });
+
+    it('detects File.write', () => {
+      const source = `def write_output(data)
+  File.write('output.txt', data)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('File/IO operation (File.write)');
+    });
+
+    it('detects IO.write', () => {
+      const source = `def write_data(data)
+  IO.write('out.txt', data)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('File/IO operation (IO.write)');
+    });
+
+    it('detects FileUtils operations', () => {
+      const source = `def move_file(src, dest)
+  FileUtils.mv(src, dest)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('File/IO operation (FileUtils.mv)');
+    });
+
+    it('detects Dir operations', () => {
+      const source = `def make_dir(path)
+  Dir.mkdir(path)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('File/IO operation (Dir.mkdir)');
+    });
+  });
+
+  describe('Ruby: instance variable mutation detection', () => {
+    it('detects @ivar = value assignment', () => {
+      const source = `def set_name(name)
+  @name = name
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('instance variable mutation (@name)');
+    });
+
+    it('detects @ivar += value operator assignment', () => {
+      const source = `def increment
+  @count += 1
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('instance variable mutation (@count)');
+    });
+
+    it('detects @ivar ||= value operator assignment', () => {
+      const source = `def memoize
+  @cache ||= {}
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('instance variable mutation (@cache)');
+    });
+
+    it('detects multiple @ivar mutations in same method', () => {
+      const source = `def initialize(name, age)
+  @name = name
+  @age = age
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('instance variable mutation (@name)');
+      expect(reasons).toContain('instance variable mutation (@age)');
+    });
+  });
+
+  describe('Ruby: pure code returns empty', () => {
+    it('simple arithmetic method returns empty', () => {
+      const source = `def add(a, b)
+  a + b
+end`;
+      expect(detectImpurePatterns(source, 'ruby')).toEqual([]);
+    });
+
+    it('string transformation returns empty', () => {
+      const source = `def upcase_name(name)
+  name.upcase
+end`;
+      expect(detectImpurePatterns(source, 'ruby')).toEqual([]);
+    });
+
+    it('method chaining on non-AR objects returns empty', () => {
+      const source = `def process(items)
+  items.map { |i| i.to_s }.select { |s| s.length > 3 }
+end`;
+      expect(detectImpurePatterns(source, 'ruby')).toEqual([]);
+    });
+
+    it('empty source returns empty', () => {
+      expect(detectImpurePatterns('', 'ruby')).toEqual([]);
+    });
+
+    it('whitespace-only source returns empty', () => {
+      expect(detectImpurePatterns('   ', 'ruby')).toEqual([]);
+    });
+  });
+
+  describe('Ruby: TypeScript checks unchanged', () => {
+    it('TypeScript async/await still detected without language param', () => {
+      const source = `async function fetchData() {
+        const result = await fetch('/api/data');
+        return result.json();
+      }`;
+      const reasons = detectImpurePatterns(source);
+      expect(reasons).toContain('async I/O (await)');
+    });
+
+    it('TypeScript console.log still detected with typescript language param', () => {
+      const source = 'function debug(msg: string) { console.log(msg); }';
+      const reasons = detectImpurePatterns(source, 'typescript');
+      expect(reasons).toContain('ambient global I/O (console.log)');
+    });
+  });
 });
