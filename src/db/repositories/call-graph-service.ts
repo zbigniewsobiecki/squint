@@ -105,7 +105,7 @@ export class CallGraphService {
       JOIN module_members to_mm ON to_mm.definition_id = to_d.id
       JOIN modules to_m ON to_mm.module_id = to_m.id
       JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression', 'jsx_self_closing_element', 'jsx_opening_element')
+      WHERE u.context IN ('call_expression', 'new_expression', 'call', 'super', 'jsx_self_closing_element', 'jsx_opening_element')
         AND from_d.line <= u.line AND u.line <= from_d.end_line
         AND s.definition_id != from_d.id
         AND from_mm.module_id != to_mm.module_id
@@ -132,7 +132,7 @@ export class CallGraphService {
       JOIN module_members to_mm ON to_mm.definition_id = to_d.id
       JOIN modules to_m ON to_mm.module_id = to_m.id
       JOIN usages u ON u.symbol_id = s.id
-      WHERE u.context IN ('call_expression', 'new_expression', 'jsx_self_closing_element', 'jsx_opening_element')
+      WHERE u.context IN ('call_expression', 'new_expression', 'call', 'super', 'jsx_self_closing_element', 'jsx_opening_element')
         AND from_d.line <= u.line AND u.line <= from_d.end_line
         AND s.definition_id != from_d.id
         AND from_mm.module_id != to_mm.module_id
