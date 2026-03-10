@@ -6,9 +6,11 @@ import type { CallGraphEdge } from '../../schema.js';
  * The only difference is whether JSX contexts are included.
  */
 export function queryCallGraphEdges(db: Database.Database, opts?: { includeJsx?: boolean }): CallGraphEdge[] {
+  // Include both TS/JS context names (call_expression, new_expression) and
+  // Ruby context names (call, super) for multi-language call graph support.
   const contexts = opts?.includeJsx
-    ? "'call_expression', 'new_expression', 'jsx_self_closing_element', 'jsx_opening_element'"
-    : "'call_expression', 'new_expression'";
+    ? "'call_expression', 'new_expression', 'call', 'super', 'jsx_self_closing_element', 'jsx_opening_element'"
+    : "'call_expression', 'new_expression', 'call', 'super'";
 
   const stmt = db.prepare(`
     SELECT

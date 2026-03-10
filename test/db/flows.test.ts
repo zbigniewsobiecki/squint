@@ -43,7 +43,7 @@ describe('Interactions and Flows', () => {
     });
   }
 
-  // Helper to create a call relationship between definitions
+  // Helper to create a call relationship between definitions (cross-file, via import)
   function createCallRelationship(
     callerFileId: number,
     calleeFileId: number,
@@ -71,6 +71,32 @@ describe('Interactions and Flows', () => {
     db.insertUsage(symbolId, {
       position: { row: callRow, column: 10 },
       context: 'call_expression',
+    });
+  }
+
+  // Helper to create an internal (same-file) call relationship — used for Ruby contexts
+  function createInternalCallRelationship(
+    fileId: number,
+    calleeDefId: number,
+    calleeName: string,
+    callRow: number,
+    context: string
+  ): void {
+    const symbolId = db.insertSymbol(
+      null,
+      calleeDefId,
+      {
+        name: calleeName,
+        localName: calleeName,
+        kind: 'named',
+        usages: [],
+      },
+      fileId
+    );
+
+    db.insertUsage(symbolId, {
+      position: { row: callRow, column: 10 },
+      context,
     });
   }
 
@@ -149,6 +175,66 @@ describe('Interactions and Flows', () => {
       expect(edges).toHaveLength(1);
       expect(edges[0].weight).toBe(2);
       expect(edges[0].minUsageLine).toBe(11); // row 10 + 1 = line 11 (minimum)
+    });
+  });
+
+  describe('getCallGraph with Ruby contexts', () => {
+    it('detects call graph edges from Ruby method calls (context: call)', () => {
+      const file = createFile('/project/app/models/user.rb');
+      const callerDef = createDefinition(file, 'validate_email', 'method', 5, 20);
+      const calleeDef = createDefinition(file, 'normalize_email', 'method', 25, 35);
+
+      createInternalCallRelationship(file, calleeDef, 'normalize_email', 10, 'call');
+
+      const edges = db.modules.getCallGraph();
+      expect(edges).toHaveLength(1);
+      expect(edges[0]).toEqual({
+        fromId: callerDef,
+        toId: calleeDef,
+        weight: 1,
+        minUsageLine: 11,
+      });
+    });
+
+    it('detects call graph edges from Ruby super calls (context: super)', () => {
+      const file = createFile('/project/app/models/admin.rb');
+      const callerDef = createDefinition(file, 'initialize', 'method', 5, 20);
+      const calleeDef = createDefinition(file, 'initialize_base', 'method', 25, 35);
+
+      createInternalCallRelationship(file, calleeDef, 'initialize_base', 8, 'super');
+
+      const edges = db.modules.getCallGraph();
+      expect(edges).toHaveLength(1);
+      expect(edges[0]).toEqual({
+        fromId: callerDef,
+        toId: calleeDef,
+        weight: 1,
+        minUsageLine: 9,
+      });
+    });
+
+    it('aggregates Ruby and TS call contexts across files', () => {
+      const rubyFile = createFile('/project/app/models/user.rb');
+      const tsFile = createFile('/project/src/handler.ts');
+
+      const rubyCallerDef = createDefinition(rubyFile, 'process', 'method', 0, 30);
+      const rubyCalleeDef = createDefinition(rubyFile, 'validate', 'method', 35, 50);
+      const tsCallerDef = createDefinition(tsFile, 'handler', 'function', 0, 30);
+      const tsCalleeDef = createDefinition(tsFile, 'validate', 'function', 35, 50);
+
+      // Ruby internal call
+      createInternalCallRelationship(rubyFile, rubyCalleeDef, 'validate', 10, 'call');
+      // TS cross-file call
+      createCallRelationship(tsFile, tsFile, tsCallerDef, tsCalleeDef, 'validate', 10);
+
+      const edges = db.modules.getCallGraph();
+      expect(edges).toHaveLength(2);
+      const rubyEdge = edges.find((e) => e.fromId === rubyCallerDef);
+      const tsEdge = edges.find((e) => e.fromId === tsCallerDef);
+      expect(rubyEdge).toBeDefined();
+      expect(tsEdge).toBeDefined();
+      expect(rubyEdge!.toId).toBe(rubyCalleeDef);
+      expect(tsEdge!.toId).toBe(tsCalleeDef);
     });
   });
 
