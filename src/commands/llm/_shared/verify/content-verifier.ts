@@ -9,6 +9,7 @@ import type { LlmContext } from '../base-llm-command.js';
 import { parseCsvWithMapper, safeParseInt } from '../csv-utils.js';
 import { completeWithLogging } from '../llm-utils.js';
 import { isTestFile } from '../module-prompts.js';
+import type { SupportedLanguage } from '../prompts.js';
 import {
   buildAnnotationVerifySystemPrompt,
   buildAnnotationVerifyUserPrompt,
@@ -83,12 +84,14 @@ export async function verifyAnnotationContent(
   ctx: LlmContext,
   command: Command,
   flags: VerifyFlags,
-  aspects: string[]
+  aspects: string[],
+  projectLanguage: SupportedLanguage = 'typescript',
+  fileLanguageMap?: Map<string, SupportedLanguage>
 ): Promise<ContentVerificationResult> {
   const issues: VerificationIssue[] = [];
   const batchSize = flags['batch-size'];
   const maxIterations = flags['max-iterations'];
-  const systemPrompt = buildAnnotationVerifySystemPrompt();
+  const systemPrompt = buildAnnotationVerifySystemPrompt(projectLanguage);
 
   // Get all definitions that have all aspects annotated
   const allDefIds = db.metadata.getDefinitionsWith(aspects[0]);
@@ -137,7 +140,9 @@ export async function verifyAnnotationContent(
 
     if (symbolsForPrompt.length === 0) continue;
 
-    const userPrompt = buildAnnotationVerifyUserPrompt(symbolsForPrompt, aspects);
+    // Determine language for this batch
+    const batchLang = fileLanguageMap?.get(symbolsForPrompt[0]?.filePath) ?? projectLanguage;
+    const userPrompt = buildAnnotationVerifyUserPrompt(symbolsForPrompt, aspects, batchLang);
 
     try {
       const response = await completeWithLogging({
@@ -198,12 +203,14 @@ export async function verifyRelationshipContent(
   db: IndexDatabase,
   ctx: LlmContext,
   command: Command,
-  flags: VerifyFlags
+  flags: VerifyFlags,
+  projectLanguage: SupportedLanguage = 'typescript',
+  fileLanguageMap?: Map<string, SupportedLanguage>
 ): Promise<ContentVerificationResult> {
   const issues: VerificationIssue[] = [];
   const batchSize = flags['batch-size'];
   const maxIterations = flags['max-iterations'];
-  const systemPrompt = buildRelationshipVerifySystemPrompt();
+  const systemPrompt = buildRelationshipVerifySystemPrompt(projectLanguage);
 
   // Get all annotated relationships (including PENDING — they'll be caught by Phase 1 deterministically
   // and also verified here if they somehow survive fixing)
@@ -265,7 +272,8 @@ export async function verifyRelationshipContent(
 
     if (groupsForPrompt.length === 0) continue;
 
-    const userPrompt = buildRelationshipVerifyUserPrompt(groupsForPrompt);
+    const relBatchLang = fileLanguageMap?.get(groupsForPrompt[0]?.filePath) ?? projectLanguage;
+    const userPrompt = buildRelationshipVerifyUserPrompt(groupsForPrompt, relBatchLang);
 
     try {
       const response = await completeWithLogging({
@@ -350,12 +358,13 @@ export async function verifyModuleAssignmentContent(
   db: IndexDatabase,
   ctx: LlmContext,
   command: Command,
-  flags: VerifyFlags
+  flags: VerifyFlags,
+  projectLanguage: SupportedLanguage = 'typescript'
 ): Promise<ContentVerificationResult> {
   const issues: VerificationIssue[] = [];
   const batchSize = flags['batch-size'];
   const maxIterations = flags['max-iterations'];
-  const systemPrompt = buildModuleAssignmentVerifySystemPrompt();
+  const systemPrompt = buildModuleAssignmentVerifySystemPrompt(projectLanguage);
 
   // Get all assigned definitions (with their module info)
   const allModulesWithMembers = db.modules.getAllWithMembers();
@@ -416,7 +425,7 @@ export async function verifyModuleAssignmentContent(
 
     // Get module tree for context
     const modules = db.modules.getAll();
-    const userPrompt = buildModuleAssignmentVerifyUserPrompt(itemsForPrompt, modules);
+    const userPrompt = buildModuleAssignmentVerifyUserPrompt(itemsForPrompt, modules, projectLanguage);
 
     try {
       const response = await completeWithLogging({

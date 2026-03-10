@@ -1,7 +1,13 @@
 import path from 'node:path';
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { LlmFlags, SharedFlags, enhanceSymbols } from '../_shared/index.js';
+import {
+  LlmFlags,
+  SharedFlags,
+  buildFileLanguageMap,
+  detectProjectLanguage,
+  enhanceSymbols,
+} from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
 import { filterCoverageForAspects } from '../llm/_shared/coverage.js';
 import { parseCombinedCsv } from '../llm/_shared/csv.js';
@@ -53,6 +59,10 @@ export default class Verify extends BaseLlmCommand {
     const maxIterations = (flags['max-iterations'] as number) || 0;
     const shouldFix = flags.fix as boolean;
 
+    // Detect project language for language-aware prompts and validation
+    const projectLanguage = detectProjectLanguage(db);
+    const fileLanguageMap = buildFileLanguageMap(db);
+
     if (!isJson) {
       this.log(chalk.bold('Annotation Verification'));
       this.log(chalk.gray(`Aspects: ${aspects.join(', ')}`));
@@ -64,7 +74,7 @@ export default class Verify extends BaseLlmCommand {
       this.log(chalk.bold('Phase 1: Coverage Check'));
     }
 
-    const phase1 = checkAnnotationCoverage(db, aspects);
+    const phase1 = checkAnnotationCoverage(db, aspects, fileLanguageMap);
     const report: VerifyReport = { phase1 };
 
     if (!isJson) {
@@ -274,7 +284,10 @@ export default class Verify extends BaseLlmCommand {
 
             try {
               const enhancedSymbols = await enhanceSymbols(db, symbolsToFix, domainAspects, 0);
-              const systemPrompt = buildSystemPrompt(domainAspects);
+              // Use first symbol's language for the batch. In mixed-language projects, batches
+              // may span languages; a future improvement could group symbols by language.
+              const fixLanguage = fileLanguageMap.get(symbolsToFix[0]?.filePath) ?? projectLanguage;
+              const systemPrompt = buildSystemPrompt(domainAspects, fixLanguage);
 
               const symbolContexts: SymbolContextEnhanced[] = enhancedSymbols.map((s) => ({
                 id: s.id,
@@ -295,7 +308,13 @@ export default class Verify extends BaseLlmCommand {
               const totalSymbols = db.metadata.getFilteredCount({});
               const coverage = filterCoverageForAspects(allCoverage, domainAspects, totalSymbols);
 
-              const userPrompt = buildUserPromptEnhanced(symbolContexts, domainAspects, coverage);
+              const userPrompt = buildUserPromptEnhanced(
+                symbolContexts,
+                domainAspects,
+                coverage,
+                fixLanguage,
+                db.metadata.getAllDomains()
+              );
 
               const response = await completeWithLogging({
                 model: ctx.model,
@@ -359,7 +378,9 @@ export default class Verify extends BaseLlmCommand {
         'batch-size': batchSize,
         'max-iterations': maxIterations,
       },
-      aspects
+      aspects,
+      projectLanguage,
+      fileLanguageMap
     );
     report.phase2 = phase2;
 
@@ -405,58 +426,75 @@ export default class Verify extends BaseLlmCommand {
           }));
 
         if (symbolsToFix.length > 0) {
-          const enhancedSymbols = await enhanceSymbols(db, symbolsToFix, aspects, 0);
-          const systemPrompt = buildSystemPrompt(aspects);
+          // Use first symbol's language for the batch. In mixed-language projects, batches
+          // may span languages; a future improvement could group symbols by language.
+          const reannotateLanguage = fileLanguageMap.get(symbolsToFix[0]?.filePath) ?? projectLanguage;
+          const systemPrompt = buildSystemPrompt(aspects, reannotateLanguage);
+          const validIds = new Set(uniqueDefIds);
+          let totalFixedCount = 0;
 
-          const symbolContexts: SymbolContextEnhanced[] = enhancedSymbols.map((s) => ({
-            id: s.id,
-            name: s.name,
-            kind: s.kind,
-            filePath: s.filePath,
-            line: s.line,
-            endLine: s.endLine,
-            sourceCode: s.sourceCode,
-            isExported: s.isExported,
-            dependencies: s.dependencies,
-            relationshipsToAnnotate: [],
-            incomingDependencies: s.incomingDependencies,
-            incomingDependencyCount: s.incomingDependencyCount,
-          }));
+          // Batch the symbols to avoid oversized LLM requests
+          const fixBatchSize = batchSize;
+          const totalBatches = Math.ceil(symbolsToFix.length / fixBatchSize);
 
-          const allCoverage = db.metadata.getAspectCoverage({});
-          const totalSymbols = db.metadata.getFilteredCount({});
-          const coverage = filterCoverageForAspects(allCoverage, aspects, totalSymbols);
+          for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+            const batchSymbols = symbolsToFix.slice(batchIdx * fixBatchSize, (batchIdx + 1) * fixBatchSize);
+            const enhancedSymbols = await enhanceSymbols(db, batchSymbols, aspects, 0);
 
-          const userPrompt = buildUserPromptEnhanced(symbolContexts, aspects, coverage);
+            const symbolContexts: SymbolContextEnhanced[] = enhancedSymbols.map((s) => ({
+              id: s.id,
+              name: s.name,
+              kind: s.kind,
+              filePath: s.filePath,
+              line: s.line,
+              endLine: s.endLine,
+              sourceCode: s.sourceCode,
+              isExported: s.isExported,
+              dependencies: s.dependencies,
+              relationshipsToAnnotate: [],
+              incomingDependencies: s.incomingDependencies,
+              incomingDependencyCount: s.incomingDependencyCount,
+            }));
 
-          try {
-            const response = await completeWithLogging({
-              model: ctx.model,
-              systemPrompt,
-              userPrompt,
-              temperature: 0,
-              command: this,
-              isJson: ctx.isJson,
-            });
+            const allCoverage = db.metadata.getAspectCoverage({});
+            const totalSymbols = db.metadata.getFilteredCount({});
+            const coverage = filterCoverageForAspects(allCoverage, aspects, totalSymbols);
 
-            const parseResult = parseCombinedCsv(response);
-            const validIds = new Set(uniqueDefIds);
-            let fixedCount = 0;
+            const userPrompt = buildUserPromptEnhanced(
+              symbolContexts,
+              aspects,
+              coverage,
+              reannotateLanguage,
+              db.metadata.getAllDomains()
+            );
 
-            for (const row of parseResult.symbols) {
-              if (!validIds.has(row.symbolId)) continue;
-              if (!aspects.includes(row.aspect)) continue;
-              if (!row.value || row.value.length < 2) continue;
+            try {
+              const response = await completeWithLogging({
+                model: ctx.model,
+                systemPrompt,
+                userPrompt,
+                temperature: 0,
+                command: this,
+                isJson: ctx.isJson,
+              });
 
-              db.metadata.set(row.symbolId, row.aspect, row.value);
-              fixedCount++;
+              const parseResult = parseCombinedCsv(response);
+
+              for (const row of parseResult.symbols) {
+                if (!validIds.has(row.symbolId)) continue;
+                if (!aspects.includes(row.aspect)) continue;
+                if (!row.value || row.value.length < 2) continue;
+
+                db.metadata.set(row.symbolId, row.aspect, row.value);
+                totalFixedCount++;
+              }
+            } catch {
+              // LLM error for this batch, continue with next
             }
+          }
 
-            if (fixedCount > 0 && !isJson) {
-              this.log(chalk.green(`  Fixed: re-annotated ${fixedCount} definition aspects via LLM`));
-            }
-          } catch {
-            // LLM error
+          if (totalFixedCount > 0 && !isJson) {
+            this.log(chalk.green(`  Fixed: re-annotated ${totalFixedCount} definition aspects via LLM`));
           }
         }
       }

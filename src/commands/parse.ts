@@ -84,7 +84,7 @@ export function indexParsedFiles(
 }
 
 export default class Parse extends Command {
-  static override description = 'Index TypeScript/JavaScript files into an SQLite database';
+  static override description = 'Index TypeScript/JavaScript/Ruby files into an SQLite database';
 
   static override examples = [
     '<%= config.bin %> ./src',
@@ -94,7 +94,7 @@ export default class Parse extends Command {
 
   static override args = {
     directory: Args.string({
-      description: 'Directory to scan for TypeScript/JavaScript files',
+      description: 'Directory to scan for source files',
       required: true,
     }),
   };
@@ -133,7 +133,7 @@ export default class Parse extends Command {
     }
 
     // Scan for files
-    this.log(chalk.blue('Scanning for TypeScript/JavaScript files...'));
+    this.log(chalk.blue('Scanning for source files...'));
     const ignorePatterns = [...DEFAULT_IGNORE_PATTERNS, ...flags.exclude];
     const files = await scanDirectory(directory, { ignorePatterns });
 

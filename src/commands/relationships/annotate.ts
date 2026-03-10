@@ -2,7 +2,14 @@ import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 
 import type { IndexDatabase } from '../../db/database.js';
-import { LlmFlags, SharedFlags, buildSourceGroups, readSourceAsString } from '../_shared/index.js';
+import {
+  LlmFlags,
+  SharedFlags,
+  buildFileLanguageMap,
+  buildSourceGroups,
+  detectProjectLanguage,
+  readSourceAsString,
+} from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
 import type { RelationshipCoverageInfo } from '../llm/_shared/coverage.js';
 import { parseCombinedCsv } from '../llm/_shared/csv.js';
@@ -74,8 +81,12 @@ export default class RelationshipsAnnotate extends BaseLlmCommand {
       isJson,
     };
 
-    // Build system prompt once
-    const systemPrompt = buildRelationshipSystemPrompt();
+    // Detect project language for language-aware prompts
+    const projectLanguage = detectProjectLanguage(db);
+    const fileLanguageMap = buildFileLanguageMap(db);
+
+    // Build system prompt once (language-aware)
+    const systemPrompt = buildRelationshipSystemPrompt(projectLanguage);
 
     // Tracking
     let iteration = 0;
@@ -161,8 +172,10 @@ export default class RelationshipsAnnotate extends BaseLlmCommand {
         );
       }
 
-      // Build user prompt
-      const userPrompt = buildRelationshipUserPrompt(groups);
+      // Use first symbol's language for the batch. In mixed-language projects, batches
+      // may span languages; a future improvement could group symbols by language.
+      const batchLang = fileLanguageMap.get(groups[0]?.filePath) ?? projectLanguage;
+      const userPrompt = buildRelationshipUserPrompt(groups, batchLang);
 
       logLlmRequest(this, `relationships-iter${iteration}`, systemPrompt, userPrompt, llmLogOptions);
 
@@ -307,7 +320,10 @@ export default class RelationshipsAnnotate extends BaseLlmCommand {
           );
         }
 
-        const userPrompt = buildRelationshipUserPrompt(inheritGroups);
+        // Use first symbol's language for the batch. In mixed-language projects, batches
+        // may span languages; a future improvement could group symbols by language.
+        const inheritBatchLang = fileLanguageMap.get(inheritGroups[0]?.filePath) ?? projectLanguage;
+        const userPrompt = buildRelationshipUserPrompt(inheritGroups, inheritBatchLang);
         logLlmRequest(this, `relationships-inherit-${offset}`, systemPrompt, userPrompt, llmLogOptions);
 
         let response: string;

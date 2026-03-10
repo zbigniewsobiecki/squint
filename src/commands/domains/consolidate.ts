@@ -33,7 +33,7 @@ function pickCanonical(variants: string[], counts: Map<string, number>): string 
   return best;
 }
 
-const ALLOWED_RELATIONSHIP_TYPES = new Set(['abbreviation', 'plural', 'separator', 'spelling']);
+const ALLOWED_RELATIONSHIP_TYPES = new Set(['abbreviation', 'plural', 'separator', 'spelling', 'semantic']);
 
 /**
  * Deterministic guard: reject pairs where one name is a prefix of the other
@@ -210,32 +210,40 @@ export default class Consolidate extends BaseLlmCommand {
     isJson: boolean,
     minGroupSize: number
   ): Promise<MergeGroup[]> {
-    const systemPrompt = `You identify TRUE SYNONYM pairs among domain labels.
+    const targetDomainCount = '20-40';
+    const systemPrompt = `You identify domain pairs that should be merged to reduce taxonomy explosion.
 
-A synonym is ONLY one of these 4 relationship types:
+A merge is one of these 5 relationship types:
 1. abbreviation — one name is a shortened form of the other (auth/authentication, config/configuration, env/environment)
 2. plural — singular vs plural of the same word (error/errors, module/modules, test/tests)
 3. separator — identical words with different separators (user-management/user_management/user management)
 4. spelling — alternate spellings of the same word (color/colour, canceled/cancelled)
+5. semantic — domains that describe the same concept with different words, or where the more specific domain should collapse into the broader one
+   - "email-notification" + "email-dispatch" + "email-delivery" → "email"
+   - "user-authentication" + "authentication" → "authentication" (prefer the broader term)
+   - "http-request" + "http-response" → "http"
+   - "database-query" + "database-persistence" → "database"
+
+TARGET: A well-scoped project should have ${targetDomainCount} total domains. Be aggressive about merging to reach this target.
 
 CRITICAL RULES:
-- If name A is a prefix of name B followed by a separator (-, _, space), they are NOT synonyms.
-  WRONG: api + api-client, ui + ui-components, auth + auth-middleware, payment + payment-processing
-- Parent/child or broader/narrower concepts are NOT synonyms.
-  WRONG: api + api-routes, database + database-migrations, user + user-profile
-- Related but distinct concepts are NOT synonyms.
-  WRONG: api + api-client, http + fetch, state + store, ui + components
-- When in doubt, do NOT group.
+- For types 1-4: If name A is a prefix of name B followed by a separator (-, _, space), they are NOT synonyms.
+  WRONG: api + api-client, ui + ui-components
+- For type 5 (semantic): hierarchical collapsing IS allowed — merge the more specific into the broader term.
+  RIGHT: user-authentication → authentication, database-query → database
+- Related but independently useful concepts should NOT merge.
+  WRONG: api + database, http + authentication
+- When in doubt about types 1-4, do NOT group. For type 5, prefer merging if the domains overlap significantly.
 
 Output CSV with header row:
 canonical,variant,relationship_type,reason
 
-- canonical: the most descriptive name for the pair
-- variant: the other name in the pair
-- relationship_type: one of abbreviation, plural, separator, spelling
+- canonical: the broader/preferred domain name
+- variant: the domain to merge into the canonical
+- relationship_type: one of abbreviation, plural, separator, spelling, semantic
 - reason: brief explanation
 
-One row per synonym pair. Skip domains that have no true synonyms.
+One row per merge pair. Skip domains that have no merges.
 Do NOT invent domains — only use exact names from the input list.`;
 
     const domainLines = [...inUseDomains.entries()]
@@ -243,7 +251,11 @@ Do NOT invent domains — only use exact names from the input list.`;
       .map(([name, count]) => `${name} (${count} symbols)`)
       .join('\n');
 
-    const userPrompt = `Only output pairs that are TRUE SYNONYMS (abbreviation, plural, separator variant, or spelling variant). Do NOT group parent/child or related-but-distinct concepts.\n\n${domainLines}`;
+    const userPrompt = `Current domain count: ${inUseDomains.size}. Target: ${targetDomainCount} domains.
+
+Identify all pairs that should be merged (synonyms AND semantic overlaps). Be thorough — the goal is to significantly reduce the domain count.
+
+${domainLines}`;
 
     if (!isJson) {
       this.log(chalk.gray(`Classifying ${inUseDomains.size} domains with LLM...`));
@@ -290,8 +302,8 @@ Do NOT invent domains — only use exact names from the input list.`;
       // Require BOTH canonical and variant to exist in the input domain list
       if (!inUseDomains.has(canonical) || !inUseDomains.has(variant)) continue;
 
-      // Deterministic prefix guard: reject parent/child pairs
-      if (isPrefixRelationship(canonical, variant)) continue;
+      // Deterministic prefix guard: reject parent/child pairs (except for semantic merges)
+      if (relationshipType !== 'semantic' && isPrefixRelationship(canonical, variant)) continue;
 
       if (!groupMap.has(canonical)) {
         groupMap.set(canonical, { variants: new Set([canonical]), reasons: new Map() });

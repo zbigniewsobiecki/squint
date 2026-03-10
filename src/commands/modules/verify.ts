@@ -1,7 +1,7 @@
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 
-import { LlmFlags, SharedFlags } from '../_shared/index.js';
+import { LlmFlags, SharedFlags, detectProjectLanguage } from '../_shared/index.js';
 import FlowsGenerate from '../flows/generate.js';
 import InteractionsGenerate from '../interactions/generate.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
@@ -141,10 +141,17 @@ export default class ModulesVerify extends BaseLlmCommand {
         this.log(chalk.bold('Phase 2: Assignment Verification (LLM)'));
       }
 
-      const phase2 = await verifyModuleAssignmentContent(db, ctx, this, {
-        'batch-size': flags['batch-size'] as number,
-        'max-iterations': flags['max-iterations'] as number,
-      });
+      const projectLanguage = detectProjectLanguage(db);
+      const phase2 = await verifyModuleAssignmentContent(
+        db,
+        ctx,
+        this,
+        {
+          'batch-size': flags['batch-size'] as number,
+          'max-iterations': flags['max-iterations'] as number,
+        },
+        projectLanguage
+      );
 
       if (!isJson) {
         this.log(`  Checked: ${phase2.stats.checked} assignments in ${phase2.stats.batchesProcessed} batches`);
