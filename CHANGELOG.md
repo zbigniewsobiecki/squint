@@ -1,3 +1,24 @@
+## [1.16.0](https://github.com/zbigniewsobiecki/squint/compare/v1.15.1...v1.16.0) (2026-03-10)
+
+### Features
+
+* add language-aware LLM pipeline with Ruby/Rails support and semantic domain consolidation ([#68](https://github.com/zbigniewsobiecki/squint/issues/68)) ([b9a6ec0](https://github.com/zbigniewsobiecki/squint/commit/b9a6ec03e954006c64b2a9ed1ff6f747b64adf33))
+* Add LanguageAdapter abstraction for multi-language support ([c278b55](https://github.com/zbigniewsobiecki/squint/commit/c278b55db9825bd1c16bc6da5f69ce8301062c77))
+* add Ruby test fixtures ([#59](https://github.com/zbigniewsobiecki/squint/issues/59)) ([a2fd2d6](https://github.com/zbigniewsobiecki/squint/commit/a2fd2d65e92f0da6e425291b8ae2b6c6b4645530))
+* expand DefinitionKind with 'method' and 'module' for Ruby support ([#60](https://github.com/zbigniewsobiecki/squint/issues/60)) ([e386e7e](https://github.com/zbigniewsobiecki/squint/commit/e386e7e089e7931b921725790c34e48c66164037))
+* **llm:** add language-aware LLM prompts with Ruby/Rails-specific guidance ([#65](https://github.com/zbigniewsobiecki/squint/issues/65)) ([5ae9d38](https://github.com/zbigniewsobiecki/squint/commit/5ae9d380e37929df3eb3f66c3d7d8b0b068b3e4f))
+* make file-scanner use LanguageRegistry for multi-language support ([7fa0157](https://github.com/zbigniewsobiecki/squint/commit/7fa0157939356027d7f96d6f86620d8f8cc52bb7))
+* **parser:** add RubyAdapter skeleton and tree-sitter-ruby dependency ([#61](https://github.com/zbigniewsobiecki/squint/issues/61)) ([471d87a](https://github.com/zbigniewsobiecki/squint/commit/471d87ad3f3ab98e3ad1dadcf64c3e4eb7a21ae5))
+* **parser:** add TypeScriptAdapter implementing LanguageAdapter pattern ([37d4d79](https://github.com/zbigniewsobiecki/squint/commit/37d4d7947545a086be766d674f7b078e07322fc1))
+* **pure-check:** add Ruby language support with ActiveRecord, IO, and ivar detection ([#66](https://github.com/zbigniewsobiecki/squint/issues/66)) ([034d022](https://github.com/zbigniewsobiecki/squint/commit/034d02202875effe5bb103e655aeec2b1703fad0))
+* **ruby:** implement internal usage tracking for method calls ([#64](https://github.com/zbigniewsobiecki/squint/issues/64)) ([5e44814](https://github.com/zbigniewsobiecki/squint/commit/5e4481417b8a7add143ed9b2fc4ed92333090974))
+* **ruby:** implement reference extraction for require and Rails autoloading ([#63](https://github.com/zbigniewsobiecki/squint/issues/63)) ([b3f697a](https://github.com/zbigniewsobiecki/squint/commit/b3f697a0f30c3136c8749ef08afa923aabf8526f))
+* **ruby:** implement Ruby definition extraction ([#62](https://github.com/zbigniewsobiecki/squint/issues/62)) ([94e5c79](https://github.com/zbigniewsobiecki/squint/commit/94e5c79b7deacaf9be161bfd1e44328b12c9bdd1))
+
+### Bug Fixes
+
+* standardize glob patterns to use absolute syntax ([33cd923](https://github.com/zbigniewsobiecki/squint/commit/33cd92302e0ff692b703f9a1555375c850a351d0))
+
 ## [1.15.1](https://github.com/zbigniewsobiecki/squint/compare/v1.15.0...v1.15.1) (2026-02-26)
 
 ### Bug Fixes
