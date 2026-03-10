@@ -1,3 +1,9 @@
+## [1.17.1](https://github.com/zbigniewsobiecki/squint/compare/v1.17.0...v1.17.1) (2026-03-10)
+
+### Bug Fixes
+
+* address code review issues in flow coverage implementation ([841db67](https://github.com/zbigniewsobiecki/squint/commit/841db674d879e965a6f26a5c86c96f1f5c738a34))
+
 ## [1.17.0](https://github.com/zbigniewsobiecki/squint/compare/v1.16.0...v1.17.0) (2026-03-10)
 
 ### Features
