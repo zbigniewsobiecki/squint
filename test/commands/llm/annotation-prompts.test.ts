@@ -233,6 +233,76 @@ describe('prompts (annotation)', () => {
   });
 
   // ============================================
+  // buildUserPromptEnhanced — existingDomains
+  // ============================================
+  describe('buildUserPromptEnhanced — existingDomains', () => {
+    const makeEnhancedSymbol = (overrides?: Partial<SymbolContextEnhanced>): SymbolContextEnhanced => ({
+      id: 42,
+      name: 'UserService',
+      kind: 'class',
+      filePath: '/src/services/user.ts',
+      line: 10,
+      endLine: 50,
+      sourceCode: 'class UserService {}',
+      isExported: true,
+      dependencies: [],
+      relationshipsToAnnotate: [],
+      incomingDependencies: [],
+      incomingDependencyCount: 0,
+      ...overrides,
+    });
+
+    it('includes existing domains section when domains provided and domain in aspects', () => {
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['domain'], [], 'typescript', [
+        'authentication',
+        'billing',
+        'user-management',
+      ]);
+      expect(prompt).toContain('## Existing Domain Tags');
+      expect(prompt).toContain('authentication, billing, user-management');
+      expect(prompt).toContain('Prefer reusing');
+    });
+
+    it('omits existing domains section when no domains provided', () => {
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['domain'], [], 'typescript');
+      expect(prompt).not.toContain('## Existing Domain Tags');
+    });
+
+    it('omits existing domains section when empty array provided', () => {
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['domain'], [], 'typescript', []);
+      expect(prompt).not.toContain('## Existing Domain Tags');
+    });
+
+    it('omits existing domains section when domain is not in aspects', () => {
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['purpose', 'pure'], [], 'typescript', [
+        'authentication',
+      ]);
+      expect(prompt).not.toContain('## Existing Domain Tags');
+    });
+
+    it('truncates large domain list (100+ entries) with ellipsis', () => {
+      const domains = Array.from({ length: 120 }, (_, i) => `domain-${i}`);
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['domain'], [], 'typescript', domains);
+      expect(prompt).toContain('## Existing Domain Tags');
+      // Should contain the first 80 domains
+      expect(prompt).toContain('domain-0');
+      expect(prompt).toContain('domain-79');
+      // Should NOT contain domains beyond 80
+      expect(prompt).not.toContain('domain-80,');
+      expect(prompt).not.toContain('domain-119,');
+      // Should show the truncation message
+      expect(prompt).toContain('... and 40 more');
+    });
+
+    it('does not truncate domain list with 80 or fewer entries', () => {
+      const domains = Array.from({ length: 80 }, (_, i) => `domain-${i}`);
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['domain'], [], 'typescript', domains);
+      expect(prompt).toContain('domain-79');
+      expect(prompt).not.toContain('... and');
+    });
+  });
+
+  // ============================================
   // Language-aware buildRelationshipSystemPrompt
   // ============================================
   describe('buildRelationshipSystemPrompt — language parameterization', () => {

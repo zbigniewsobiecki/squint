@@ -36,7 +36,8 @@ const ASPECT_DESCRIPTIONS: Record<string, string> = {
   - Derive domains from the symbol's actual functionality AND its file location/package
   - Use consistent naming: always plural OR singular (not both), no abbreviations (use "authentication" not "auth")
   - Avoid overly generic tags like "utility", "types", "configuration" unless the symbol is truly generic
-  - Each symbol's domains should reflect ITS OWN context — do not copy domains from other symbols in this batch`,
+  - Each symbol's domains should reflect ITS OWN context — do not copy domains from other symbols in this batch
+  - A well-scoped project typically has 15-40 total domains. Prefer broad, reusable domain names over narrow, symbol-specific ones`,
   role: 'The architectural role (e.g., "controller", "utility", "model", "service", "factory", "adapter").',
   pure: `"true" only if purely functional (deterministic, no side effects). "false" if it: creates objects with mutable state, returns closures with internal state, uses vi.fn()/mock factories, or performs I/O. Most factory functions are NOT pure.
   - Functions returning \`new CustomClass(...)\` create new mutable instance identities each call → impure
@@ -202,7 +203,8 @@ export function buildUserPromptEnhanced(
   symbols: SymbolContextEnhanced[],
   aspects: string[],
   coverage: CoverageInfo[],
-  language: SupportedLanguage = 'typescript'
+  language: SupportedLanguage = 'typescript',
+  existingDomains?: string[]
 ): string {
   const parts: string[] = [];
 
@@ -212,6 +214,21 @@ export function buildUserPromptEnhanced(
     for (const c of coverage) {
       parts.push(`${c.aspect}: ${c.covered}/${c.total} (${c.percentage.toFixed(1)}%)`);
     }
+    parts.push('');
+  }
+
+  // Existing domains guidance (for domain taxonomy consistency)
+  if (existingDomains && existingDomains.length > 0 && aspects.includes('domain')) {
+    parts.push('## Existing Domain Tags');
+    parts.push(
+      'Prefer reusing these existing domain tags when applicable. Only introduce a new domain if none of these fit.'
+    );
+    const MAX_DOMAIN_HINTS = 80;
+    const domainList =
+      existingDomains.length <= MAX_DOMAIN_HINTS
+        ? existingDomains.join(', ')
+        : `${existingDomains.slice(0, MAX_DOMAIN_HINTS).join(', ')} ... and ${existingDomains.length - MAX_DOMAIN_HINTS} more`;
+    parts.push(`Domains in use: ${domainList}`);
     parts.push('');
   }
 

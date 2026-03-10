@@ -645,6 +645,289 @@ end`;
     });
   });
 
+  describe('Ruby: expanded impure pattern detection', () => {
+    it('detects Time.now', () => {
+      const source = `def current_time
+  Time.now
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('non-deterministic (Time.now)');
+    });
+
+    it('detects Date.today', () => {
+      const source = `def today
+  Date.today
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('non-deterministic (Date.today)');
+    });
+
+    it('detects Time.current (Rails)', () => {
+      const source = `def timestamp
+  Time.current
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('non-deterministic (Time.current)');
+    });
+
+    it('detects SecureRandom calls', () => {
+      const source = `def generate_token
+  SecureRandom.hex(16)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('non-deterministic random'))).toBe(true);
+    });
+
+    it('detects rand()', () => {
+      const source = `def roll_dice
+  rand(6)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('non-deterministic (rand)');
+    });
+
+    it('detects render', () => {
+      const source = `def show
+  render json: @user
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('HTTP response (render)');
+    });
+
+    it('detects redirect_to', () => {
+      const source = `def create
+  redirect_to root_path
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('HTTP redirect (redirect_to)');
+    });
+
+    it('detects perform_later on constant receiver', () => {
+      const source = `def enqueue
+  SendEmailJob.perform_later(user)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('background job'))).toBe(true);
+    });
+
+    it('detects MyJob.perform_later (constant receiver)', () => {
+      const source = `def enqueue_job(data)
+  MyJob.perform_later(data)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('background job'))).toBe(true);
+    });
+
+    it('detects deliver_now', () => {
+      const source = `def send_welcome
+  UserMailer.welcome(user).deliver_now
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('sends email'))).toBe(true);
+    });
+
+    it('detects puts', () => {
+      const source = `def debug(msg)
+  puts msg
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('console output (puts)');
+    });
+
+    it('detects Rails.logger calls', () => {
+      const source = `def process
+  Rails.logger.info("processing")
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('Rails.logger'))).toBe(true);
+    });
+
+    it('detects logger.info calls', () => {
+      const source = `def process
+  logger.info("processing")
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('logging'))).toBe(true);
+    });
+
+    it('detects session mutation', () => {
+      const source = `def login
+  session[:user_id] = user.id
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('session mutation (session[]=)');
+    });
+
+    it('detects cookies mutation', () => {
+      const source = `def remember
+  cookies[:token] = token
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('cookie mutation (cookies[]=)');
+    });
+
+    it('detects flash mutation', () => {
+      const source = `def success
+  flash[:notice] = "Done!"
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toContain('flash mutation (flash[]=)');
+    });
+
+    it('detects where (ActiveRecord read)', () => {
+      const source = `def active_users
+  User.where(active: true)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('database read'))).toBe(true);
+    });
+
+    it('detects find (ActiveRecord read)', () => {
+      const source = `def find_user(id)
+  User.find(id)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('database read'))).toBe(true);
+    });
+
+    it('detects transaction', () => {
+      const source = `def transfer
+  ActiveRecord::Base.transaction do
+    account.debit(100)
+  end
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('database read') || r.includes('transaction'))).toBe(true);
+    });
+
+    it('detects HTTParty calls', () => {
+      const source = `def fetch_data
+  HTTParty.get("https://api.example.com")
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('external HTTP call'))).toBe(true);
+    });
+
+    it('detects Redis calls', () => {
+      const source = `def cache_value
+  Redis.current.set("key", "value")
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('Redis'))).toBe(true);
+    });
+
+    it('detects head (HTTP response)', () => {
+      const source = `def health
+  head :ok
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('HTTP response'))).toBe(true);
+    });
+
+    it('detects perform_async (Sidekiq)', () => {
+      const source = `def enqueue
+  MyWorker.perform_async(data)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('Sidekiq'))).toBe(true);
+    });
+  });
+
+  describe('Ruby: false positive prevention', () => {
+    it('array.find should NOT be flagged (Enumerable, not ActiveRecord)', () => {
+      const source = `def find_match(items)
+  items.find { |i| i.name == "test" }
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toEqual([]);
+    });
+
+    it('array.select should NOT be flagged (Enumerable, not ActiveRecord)', () => {
+      const source = `def filter_items(items)
+  items.select { |i| i.active? }
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toEqual([]);
+    });
+
+    it('array.includes should NOT be flagged (Enumerable, not ActiveRecord)', () => {
+      const source = `def has_item?(list, item)
+  list.includes(item)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toEqual([]);
+    });
+
+    it('foo.render should NOT be flagged (receiver-dependent render is not a controller action)', () => {
+      const source = `def draw(canvas)
+  canvas.render
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toEqual([]);
+    });
+
+    it('obj.puts should NOT be flagged (receiver-dependent puts is not bare console output)', () => {
+      const source = `def write(stream, msg)
+  stream.puts(msg)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons).toEqual([]);
+    });
+  });
+
+  describe('Ruby: scope_resolution receiver detection', () => {
+    it('detects Net::HTTP.get as external HTTP call', () => {
+      const source = `def fetch(url)
+  Net::HTTP.get(url)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('external HTTP call'))).toBe(true);
+      expect(reasons.some((r) => r.includes('Net::HTTP'))).toBe(true);
+    });
+
+    it('detects Net::HTTP.post as external HTTP call', () => {
+      const source = `def post_data(uri, data)
+  Net::HTTP.post(uri, data)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('external HTTP call'))).toBe(true);
+    });
+  });
+
+  describe('Ruby: constant-only ActiveRecord read methods', () => {
+    it('detects User.first as database read', () => {
+      const source = `def first_user
+  User.first
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('database read'))).toBe(true);
+    });
+
+    it('detects User.count as database read', () => {
+      const source = `def total_users
+  User.count
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('database read'))).toBe(true);
+    });
+
+    it('detects User.all as database read', () => {
+      const source = `def all_users
+  User.all
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('database read'))).toBe(true);
+    });
+
+    it('detects User.select as database read', () => {
+      const source = `def user_names
+  User.select(:name)
+end`;
+      const reasons = detectImpurePatterns(source, 'ruby');
+      expect(reasons.some((r) => r.includes('database read'))).toBe(true);
+    });
+  });
+
   describe('Ruby: TypeScript checks unchanged', () => {
     it('TypeScript async/await still detected without language param', () => {
       const source = `async function fetchData() {

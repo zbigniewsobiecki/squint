@@ -46,8 +46,109 @@ const ACTIVE_RECORD_MUTATION_METHODS = new Set([
   'touch',
 ]);
 
+/** ActiveRecord/DB read methods that indicate database dependency.
+ * Safe to include `select`, `first`, `last`, `count`, `all` because these are
+ * only matched on constant receivers (e.g., User.first, not array.first). */
+const ACTIVE_RECORD_READ_METHODS = new Set([
+  'where',
+  'find',
+  'find_by',
+  'find_by!',
+  'find_by_sql',
+  'pluck',
+  'exists?',
+  'transaction',
+  'execute',
+  'joins',
+  'includes',
+  'eager_load',
+  'preload',
+  'select',
+  'first',
+  'last',
+  'count',
+  'all',
+]);
+
 /** File/IO classes whose method calls indicate I/O side effects. */
-const RUBY_IO_CLASSES = new Set(['File', 'IO', 'Dir', 'FileUtils', 'Open3', 'Kernel']);
+const RUBY_IO_CLASSES = new Set(['File', 'IO', 'Dir', 'FileUtils', 'Open3', 'Kernel', 'Tempfile']);
+
+/**
+ * Ruby methods that are impure regardless of receiver.
+ * Map from method name to impurity reason.
+ */
+const RUBY_IMPURE_METHODS = new Map<string, string>([
+  // HTTP/rendering
+  ['render', 'HTTP response (render)'],
+  ['redirect_to', 'HTTP redirect (redirect_to)'],
+  ['head', 'HTTP response (head)'],
+  ['send_data', 'HTTP response (send_data)'],
+  ['send_file', 'HTTP response (send_file)'],
+  ['respond_to', 'HTTP response (respond_to)'],
+  ['respond_with', 'HTTP response (respond_with)'],
+  // Background jobs
+  ['perform_later', 'enqueues background job (perform_later)'],
+  ['perform_now', 'executes background job (perform_now)'],
+  ['deliver_later', 'enqueues email delivery (deliver_later)'],
+  ['deliver_now', 'sends email (deliver_now)'],
+  ['perform_async', 'enqueues Sidekiq job (perform_async)'],
+  ['perform_in', 'enqueues delayed Sidekiq job (perform_in)'],
+  // Randomness
+  ['rand', 'non-deterministic (rand)'],
+  // Logging/output
+  ['puts', 'console output (puts)'],
+  ['print', 'console output (print)'],
+  ['p', 'console output (p)'],
+  ['pp', 'console output (pp)'],
+  ['warn', 'console output (warn)'],
+]);
+
+/**
+ * Rails delivery/job methods that are impure regardless of receiver type.
+ * These are sufficiently Rails-specific to avoid false positives on chained calls
+ * like UserMailer.welcome(user).deliver_now.
+ */
+const RUBY_DELIVERY_METHODS = new Set([
+  'deliver_later',
+  'deliver_now',
+  'perform_later',
+  'perform_now',
+  'perform_async',
+  'perform_in',
+]);
+
+/**
+ * Ruby receiver classes/modules whose method calls indicate non-determinism or side effects.
+ * Map from receiver name to impurity reason.
+ */
+const RUBY_IMPURE_RECEIVERS = new Map<string, string>([
+  // Time/randomness (non-deterministic)
+  ['Time', 'non-deterministic time'],
+  ['Date', 'non-deterministic date'],
+  ['DateTime', 'non-deterministic datetime'],
+  ['SecureRandom', 'non-deterministic random'],
+  ['Random', 'non-deterministic random'],
+  // External HTTP clients
+  ['Net::HTTP', 'external HTTP call'],
+  ['HTTParty', 'external HTTP call'],
+  ['Faraday', 'external HTTP call'],
+  ['RestClient', 'external HTTP call'],
+  // External services
+  ['Redis', 'external service (Redis)'],
+  ['Elasticsearch', 'external service (Elasticsearch)'],
+]);
+
+/**
+ * Specific receiver.method combos that indicate non-deterministic calls.
+ * Map from "Receiver.method" to impurity reason.
+ */
+const RUBY_IMPURE_RECEIVER_METHODS = new Map<string, string>([
+  ['Time.now', 'non-deterministic (Time.now)'],
+  ['Time.current', 'non-deterministic (Time.current)'],
+  ['Date.today', 'non-deterministic (Date.today)'],
+  ['Date.current', 'non-deterministic (Date.current)'],
+  ['DateTime.now', 'non-deterministic (DateTime.now)'],
+]);
 
 const AMBIENT_GLOBALS = new Set([
   'console',
@@ -194,15 +295,107 @@ function walkRubyForImpurity(node: SyntaxNode, reasons: string[]): void {
       const methodName = method?.text;
 
       if (receiver && methodName) {
+        // Check specific receiver.method combos first (e.g., Time.now, Date.today)
+        const receiverText = receiver.text;
+        const combo = `${receiverText}.${methodName}`;
+        const comboReason = RUBY_IMPURE_RECEIVER_METHODS.get(combo);
+        if (comboReason) {
+          reasons.push(comboReason);
+          break;
+        }
+
         // Check for ActiveRecord mutation methods: user.save, user.update, User.create, etc.
         if (ACTIVE_RECORD_MUTATION_METHODS.has(methodName)) {
-          reasons.push(`ActiveRecord mutation (${receiver.text}.${methodName})`);
+          reasons.push(`ActiveRecord mutation (${receiverText}.${methodName})`);
+          break;
+        }
+
+        // Check for ActiveRecord/DB read methods: Model.where, Model.find, etc.
+        // Only match on constant receivers (e.g., User.where) to avoid false positives
+        // on Enumerable methods like array.find, array.select, etc.
+        if (receiver.type === 'constant' && ACTIVE_RECORD_READ_METHODS.has(methodName)) {
+          reasons.push(`database read (${receiverText}.${methodName})`);
           break;
         }
 
         // Check for File/IO class operations: File.read, IO.write, etc.
-        if ((receiver.type === 'constant' || receiver.type === 'identifier') && RUBY_IO_CLASSES.has(receiver.text)) {
-          reasons.push(`File/IO operation (${receiver.text}.${methodName})`);
+        if ((receiver.type === 'constant' || receiver.type === 'identifier') && RUBY_IO_CLASSES.has(receiverText)) {
+          reasons.push(`File/IO operation (${receiverText}.${methodName})`);
+          break;
+        }
+
+        // Check for impure receiver classes (Time, SecureRandom, Redis, etc.)
+        if (receiver.type === 'constant' || receiver.type === 'identifier') {
+          const receiverReason = RUBY_IMPURE_RECEIVERS.get(receiverText);
+          if (receiverReason) {
+            reasons.push(`${receiverReason} (${receiverText}.${methodName})`);
+            break;
+          }
+        }
+
+        // Check for scope_resolution receivers (e.g., Net::HTTP.get, ActiveRecord::Base.transaction)
+        if (receiver.type === 'scope_resolution') {
+          const scopeText = receiver.text;
+          if (RUBY_IO_CLASSES.has(scopeText)) {
+            reasons.push(`File/IO operation (${scopeText}.${methodName})`);
+            break;
+          }
+          if (ACTIVE_RECORD_READ_METHODS.has(methodName)) {
+            reasons.push(`database read (${scopeText}.${methodName})`);
+            break;
+          }
+          const scopeReason = RUBY_IMPURE_RECEIVERS.get(scopeText);
+          if (scopeReason) {
+            reasons.push(`${scopeReason} (${scopeText}.${methodName})`);
+            break;
+          }
+        }
+
+        // Check for job/mailer methods on constant receivers (e.g., MyJob.perform_later)
+        if (receiver.type === 'constant' && methodName) {
+          const methodReason = RUBY_IMPURE_METHODS.get(methodName);
+          if (methodReason) {
+            reasons.push(methodReason);
+            break;
+          }
+        }
+
+        // Check for receiver-independent delivery methods (e.g., UserMailer.welcome(user).deliver_now)
+        // These are Rails-specific enough to not cause false positives on any receiver type.
+        if (methodName && RUBY_DELIVERY_METHODS.has(methodName)) {
+          const deliveryReason = RUBY_IMPURE_METHODS.get(methodName);
+          if (deliveryReason) {
+            reasons.push(deliveryReason);
+            break;
+          }
+        }
+
+        // Check for chained receiver patterns: Rails.logger.*, Rails.cache.*, Net::HTTP.*
+        if (receiver.type === 'call') {
+          const innerReceiver = receiver.childForFieldName('receiver');
+          const innerMethod = receiver.childForFieldName('method');
+          if (innerReceiver && innerMethod) {
+            const chainedName = `${innerReceiver.text}.${innerMethod.text}`;
+            if (chainedName === 'Rails.logger' || chainedName === 'Rails.cache') {
+              reasons.push(`${chainedName} side effect (${chainedName}.${methodName})`);
+              break;
+            }
+          }
+        }
+
+        // Check for logger.* calls (common pattern: logger = Rails.logger)
+        if (receiver.type === 'identifier' && receiverText === 'logger') {
+          reasons.push(`logging side effect (logger.${methodName})`);
+          break;
+        }
+      }
+
+      // No receiver — bare method call
+      if (!receiver && methodName) {
+        // Check bare impure methods (render, redirect_to, puts, rand, etc.)
+        const bareReason = RUBY_IMPURE_METHODS.get(methodName);
+        if (bareReason) {
+          reasons.push(bareReason);
           break;
         }
       }
@@ -215,6 +408,25 @@ function walkRubyForImpurity(node: SyntaxNode, reasons: string[]): void {
       if (left?.type === 'instance_variable') {
         reasons.push(`instance variable mutation (${left.text})`);
         break;
+      }
+      // session[:key] = value, cookies[:key] = value, flash[:key] = value
+      if (left?.type === 'element_reference') {
+        const obj = left.childForFieldName('object');
+        if (obj?.type === 'identifier') {
+          const objName = obj.text;
+          if (objName === 'session') {
+            reasons.push('session mutation (session[]=)');
+            break;
+          }
+          if (objName === 'cookies') {
+            reasons.push('cookie mutation (cookies[]=)');
+            break;
+          }
+          if (objName === 'flash') {
+            reasons.push('flash mutation (flash[]=)');
+            break;
+          }
+        }
       }
       break;
     }

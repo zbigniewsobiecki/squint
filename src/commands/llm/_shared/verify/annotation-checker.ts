@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IndexDatabase } from '../../../../db/database.js';
+import type { SupportedLanguage } from '../prompts.js';
 import { detectImpurePatterns } from '../pure-check.js';
 import type { CoverageCheckResult, VerificationIssue } from './verify-types.js';
 
@@ -26,7 +27,11 @@ function readSourceSync(filePath: string, startLine: number, endLine: number): s
  * Check annotation coverage for the given aspects.
  * Reports missing annotations as issues.
  */
-export function checkAnnotationCoverage(db: IndexDatabase, aspects: string[]): CoverageCheckResult {
+export function checkAnnotationCoverage(
+  db: IndexDatabase,
+  aspects: string[],
+  fileLanguageMap?: Map<string, SupportedLanguage>
+): CoverageCheckResult {
   const issues: VerificationIssue[] = [];
   let missingCount = 0;
 
@@ -65,7 +70,7 @@ export function checkAnnotationCoverage(db: IndexDatabase, aspects: string[]): C
 
   // Check for suspicious pure:true annotations
   if (aspects.includes('pure')) {
-    const pureIssues = checkPureAnnotations(db);
+    const pureIssues = checkPureAnnotations(db, fileLanguageMap);
     issues.push(...pureIssues);
   }
 
@@ -250,7 +255,10 @@ function checkDomainConsistency(db: IndexDatabase): VerificationIssue[] {
 /**
  * Check for suspicious pure:true annotations using deterministic pattern detection.
  */
-function checkPureAnnotations(db: IndexDatabase): VerificationIssue[] {
+function checkPureAnnotations(
+  db: IndexDatabase,
+  fileLanguageMap?: Map<string, SupportedLanguage>
+): VerificationIssue[] {
   const issues: VerificationIssue[] = [];
 
   // Get all definitions that have pure annotation
@@ -306,7 +314,8 @@ function checkPureAnnotations(db: IndexDatabase): VerificationIssue[] {
     try {
       const source = readSourceSync(db.resolveFilePath(def.filePath), def.line, def.endLine);
       if (!source) continue;
-      const impureReasons = detectImpurePatterns(source);
+      const language = fileLanguageMap?.get(def.filePath);
+      const impureReasons = detectImpurePatterns(source, language);
       if (impureReasons.length > 0) {
         issues.push({
           definitionId: def.id,

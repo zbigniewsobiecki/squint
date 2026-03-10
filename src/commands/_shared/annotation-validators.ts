@@ -15,7 +15,8 @@ export function validateAnnotationValue(
   value: string,
   sourceCode?: string,
   deps?: DependencyContextEnhanced[],
-  kind?: string
+  kind?: string,
+  language?: string
 ): string | null {
   switch (aspect) {
     case 'domain':
@@ -46,7 +47,7 @@ export function validateAnnotationValue(
       }
       // Gate 1: override LLM's "true" if source code contains impure patterns
       if (value === 'true' && sourceCode) {
-        const impureReasons = detectImpurePatterns(sourceCode);
+        const impureReasons = detectImpurePatterns(sourceCode, language);
         if (impureReasons.length > 0) {
           return `overridden to false: ${impureReasons[0]}`;
         }

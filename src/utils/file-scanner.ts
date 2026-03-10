@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { glob } from 'glob';
 import { LanguageRegistry } from '../parser/language-adapter.js';
-// Import the TypeScriptAdapter to ensure it's registered
-import '../parser/adapters/typescript-adapter.js';
+// Import all adapters to ensure they're registered
+import '../parser/adapters/index.js';
 
 export const DEFAULT_IGNORE_PATTERNS = [
   '**/node_modules/**',
