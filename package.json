@@ -40,7 +40,8 @@
         "**/*.js",
         "!**/_shared/**",
         "!**/llm/flows/**",
-        "!**/llm/features/**"
+        "!**/llm/features/**",
+        "!**/phases/**"
       ]
     },
     "default": "parse",
