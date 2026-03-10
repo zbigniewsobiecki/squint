@@ -1,3 +1,9 @@
+## [1.17.0](https://github.com/zbigniewsobiecki/squint/compare/v1.16.0...v1.17.0) (2026-03-10)
+
+### Features
+
+* add Ruby call graph support and AI agent guide ([8b9f420](https://github.com/zbigniewsobiecki/squint/commit/8b9f420e952c0a6cba3ed116f9a1d99d76e01de8))
+
 ## [1.16.0](https://github.com/zbigniewsobiecki/squint/compare/v1.15.1...v1.16.0) (2026-03-10)
 
 ### Features
