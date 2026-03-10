@@ -11,8 +11,13 @@ import type { FlowSuggestion } from './types.js';
  *
  * Overlap ratio = |intersection| / min(|A|, |B|)
  */
-export function deduplicateByInteractionOverlap(flows: FlowSuggestion[], threshold = 0.5): FlowSuggestion[] {
+export function deduplicateByInteractionOverlap(
+  flows: FlowSuggestion[],
+  threshold = 0.5,
+  protectCoverage = false
+): FlowSuggestion[] {
   const dropped = new Set<number>(); // indices into `flows`
+  const interactionSets = protectCoverage ? flows.map((f) => new Set(f.interactionIds)) : [];
 
   for (let i = 0; i < flows.length; i++) {
     if (dropped.has(i)) continue;
@@ -48,6 +53,21 @@ export function deduplicateByInteractionOverlap(flows: FlowSuggestion[], thresho
 
       if (overlapRatio > threshold) {
         const dropIndex = pickFlowToDrop(a, b, i, j);
+
+        if (protectCoverage) {
+          // Check if dropping would leave any interaction uncovered
+          const candidateFlow = flows[dropIndex];
+          const wouldOrphan = candidateFlow.interactionIds.some((id) => {
+            // Check if any non-dropped flow (other than candidate) covers this interaction
+            for (let k = 0; k < flows.length; k++) {
+              if (k === dropIndex || dropped.has(k)) continue;
+              if (interactionSets[k].has(id)) return false;
+            }
+            return true;
+          });
+          if (wouldOrphan) continue; // Skip this drop to protect coverage
+        }
+
         dropped.add(dropIndex);
       }
     }
