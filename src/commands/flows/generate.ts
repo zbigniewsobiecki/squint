@@ -62,7 +62,7 @@ export default class FlowsGenerate extends BaseLlmCommand {
     }),
     'max-gap-flow-ratio': Flags.integer({
       description: 'Maximum % of flows that can be internal/gap flows',
-      default: 20,
+      default: 40,
     }),
     'min-entry-point-yield': Flags.integer({
       description: 'Minimum % of entry point modules that must produce meaningful flows',
@@ -237,11 +237,7 @@ export default class FlowsGenerate extends BaseLlmCommand {
 
     let coveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
     const gapFlowGenerator = new GapFlowGenerator();
-    let gapFlows = this.filterGapFlows(
-      gapFlowGenerator.createGapFlows(coveredIds, interactions, moduleEntityMap),
-      verbose,
-      isJson
-    );
+    let gapFlows = gapFlowGenerator.createGapFlows(coveredIds, interactions, moduleEntityMap);
     enhancedFlows.push(...gapFlows);
 
     logVerbose(this, `Created ${gapFlows.length} gap flows for uncovered interactions`, verbose, isJson);
@@ -365,11 +361,7 @@ export default class FlowsGenerate extends BaseLlmCommand {
           const oldGapCount = gapFlows.length;
           // Remove old gap flows
           enhancedFlows = enhancedFlows.filter((f) => f.entryPointModuleId !== null);
-          gapFlows = this.filterGapFlows(
-            gapFlowGenerator.createGapFlows(coveredIds, interactions, moduleEntityMap),
-            verbose,
-            isJson
-          );
+          gapFlows = gapFlowGenerator.createGapFlows(coveredIds, interactions, moduleEntityMap);
           enhancedFlows.push(...gapFlows);
           if (gapFlows.length < oldGapCount) {
             logVerbose(this, `  Gap flows reduced: ${oldGapCount} → ${gapFlows.length}`, verbose, isJson);
@@ -404,9 +396,9 @@ export default class FlowsGenerate extends BaseLlmCommand {
       }
     }
 
-    // Interaction-overlap dedup across all tiers
+    // Interaction-overlap dedup across all tiers (coverage-aware: won't orphan interactions)
     const preDedup = enhancedFlows.length;
-    enhancedFlows = deduplicateByInteractionOverlap(enhancedFlows);
+    enhancedFlows = deduplicateByInteractionOverlap(enhancedFlows, 0.5, true);
     const afterOverlap = enhancedFlows.length;
     enhancedFlows = deduplicateByInteractionSet(enhancedFlows);
     const afterSet = enhancedFlows.length;
@@ -421,11 +413,7 @@ export default class FlowsGenerate extends BaseLlmCommand {
 
     // Post-dedup gap flow pass to restore coverage for any interactions lost during dedup
     const finalCoveredIds = new Set(enhancedFlows.flatMap((f) => f.interactionIds));
-    const finalGapFlows = this.filterGapFlows(
-      gapFlowGenerator.createGapFlows(finalCoveredIds, interactions, moduleEntityMap),
-      verbose,
-      isJson
-    );
+    const finalGapFlows = gapFlowGenerator.createGapFlows(finalCoveredIds, interactions, moduleEntityMap);
     if (finalGapFlows.length > 0) {
       enhancedFlows.push(...finalGapFlows);
       logVerbose(this, `Post-dedup gap pass added ${finalGapFlows.length} flows to restore coverage`, verbose, isJson);
@@ -437,6 +425,20 @@ export default class FlowsGenerate extends BaseLlmCommand {
     if (journeyFlows.length > 0) {
       enhancedFlows.push(...journeyFlows);
       logVerbose(this, `Built ${journeyFlows.length} tier 2 journey flows`, verbose, isJson);
+    }
+
+    // Post-dedup gate check: report actual coverage after dedup and journey flows
+    const postDedupGates = this.checkCoverageGates(enhancedFlows, interactions, entryPointModules, thresholds);
+    if (!postDedupGates.passed) {
+      for (const failure of postDedupGates.failures) {
+        logWarning(
+          this,
+          `Post-dedup coverage: ${failure.gate} (${failure.actual.toFixed(1)}% vs ${failure.threshold}%) - ${failure.details}`,
+          isJson
+        );
+      }
+    } else {
+      logVerbose(this, 'Post-dedup coverage gates passed', verbose, isJson);
     }
 
     // Step 7: Persist all tiers (atomics first, then composites with subflow refs)
@@ -469,11 +471,24 @@ export default class FlowsGenerate extends BaseLlmCommand {
       }
     }
 
-    // Filter: keep tier-1+, and only tier-0 flows that are referenced as subflows
-    const toPersist = flows.filter((f) => f.tier > 0 || referencedSlugs.has(f.slug));
+    // Compute interaction IDs already covered by tier-1+ flows
+    const tier1PlusCoverage = new Set<number>();
+    for (const f of flows) {
+      if (f.tier > 0) {
+        for (const id of f.interactionIds) tier1PlusCoverage.add(id);
+      }
+    }
+
+    // Filter: keep tier-1+, referenced tier-0s, and tier-0s with unique coverage
+    const toPersist = flows.filter((f) => {
+      if (f.tier > 0) return true;
+      if (referencedSlugs.has(f.slug)) return true;
+      // Keep tier-0 if it covers interactions not reached by any tier-1+ flow
+      return f.interactionIds.some((id) => !tier1PlusCoverage.has(id));
+    });
     const suppressedCount = flows.length - toPersist.length;
     if (suppressedCount > 0) {
-      logVerbose(this, `Suppressed ${suppressedCount} unreferenced tier-0 flows at persistence`, verbose, isJson);
+      logVerbose(this, `Suppressed ${suppressedCount} redundant tier-0 flows at persistence`, verbose, isJson);
     }
 
     // Sort: tier-0 first, then tier-1, then tier-2
@@ -669,24 +684,6 @@ export default class FlowsGenerate extends BaseLlmCommand {
     }
 
     return { passed: failures.length === 0, failures };
-  }
-
-  /**
-   * Filter out single-interaction gap flows with no entity (internal plumbing noise).
-   * Logs suppressed count so operators can diagnose coverage dips.
-   */
-  private filterGapFlows(gapFlows: FlowSuggestion[], verbose: boolean, isJson: boolean): FlowSuggestion[] {
-    const meaningful = gapFlows.filter((f) => f.interactionIds.length > 1 || f.targetEntity !== null);
-    const suppressedCount = gapFlows.length - meaningful.length;
-    if (suppressedCount > 0) {
-      logVerbose(
-        this,
-        `  Suppressed ${suppressedCount} single-interaction gap flow(s) with no entity`,
-        verbose,
-        isJson
-      );
-    }
-    return meaningful;
   }
 
   /**

@@ -214,6 +214,34 @@ export class InteractionAnalysis {
     `);
 
     const result = stmt.run();
+
+    // Backfill semantic and symbols from relationship_annotations for inheritance interactions
+    this.db
+      .prepare(`
+      UPDATE interactions SET
+        semantic = (
+          SELECT ra.semantic FROM relationship_annotations ra
+          JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
+          JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
+          WHERE mm1.module_id = interactions.from_module_id
+            AND mm2.module_id = interactions.to_module_id
+            AND ra.relationship_type IN ('extends', 'implements')
+          LIMIT 1
+        ),
+        symbols = (
+          SELECT GROUP_CONCAT(DISTINCT d.name)
+          FROM relationship_annotations ra
+          JOIN module_members mm1 ON ra.from_definition_id = mm1.definition_id
+          JOIN module_members mm2 ON ra.to_definition_id = mm2.definition_id
+          JOIN definitions d ON ra.to_definition_id = d.id
+          WHERE mm1.module_id = interactions.from_module_id
+            AND mm2.module_id = interactions.to_module_id
+            AND ra.relationship_type IN ('extends', 'implements')
+        )
+      WHERE pattern = 'inheritance' AND semantic IS NULL
+    `)
+      .run();
+
     return { created: result.changes };
   }
 

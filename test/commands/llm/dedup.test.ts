@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { deduplicateByInteractionOverlap, pickFlowToDrop } from '../../../src/commands/llm/flows/dedup.js';
+import {
+  deduplicateByInteractionOverlap,
+  deduplicateByInteractionSet,
+  pickFlowToDrop,
+} from '../../../src/commands/llm/flows/dedup.js';
 import type { FlowSuggestion } from '../../../src/commands/llm/flows/types.js';
 import type { TracedDefinitionStep } from '../../../src/commands/llm/flows/types.js';
 
@@ -140,6 +144,63 @@ describe('deduplicateByInteractionOverlap', () => {
     const result = deduplicateByInteractionOverlap([broad, focused]);
     expect(result).toHaveLength(1);
     expect(result[0]).toBe(focused);
+  });
+
+  it('protects coverage when protectCoverage=true', () => {
+    // Flow A covers [1,2,3], Flow B covers [2,3,4]
+    // Without protection: overlap 2/2=1.0 > 0.5, one gets dropped
+    // With protection: dropping either would orphan interaction 1 or 4
+    const a = makeFlow({ interactionIds: [1, 2, 3] });
+    const b = makeFlow({ interactionIds: [2, 3, 4] });
+
+    const withoutProtection = deduplicateByInteractionOverlap([a, b], 0.5, false);
+    expect(withoutProtection).toHaveLength(1);
+
+    const withProtection = deduplicateByInteractionOverlap([a, b], 0.5, true);
+    expect(withProtection).toHaveLength(2);
+  });
+
+  it('preserves coverage in three-way cascade with protectCoverage=true', () => {
+    // A=[1,2,3], B=[2,3,4], C=[3,4,5] — pairwise overlaps are high but dropping
+    // any flow would orphan interactions (1 from A, or 5 from C)
+    const a = makeFlow({ interactionIds: [1, 2, 3] });
+    const b = makeFlow({ interactionIds: [2, 3, 4] });
+    const c = makeFlow({ interactionIds: [3, 4, 5] });
+
+    const withProtection = deduplicateByInteractionOverlap([a, b, c], 0.5, true);
+    // All interactions [1,2,3,4,5] must remain covered
+    const coveredIds = new Set(withProtection.flatMap((f) => f.interactionIds));
+    expect(coveredIds).toEqual(new Set([1, 2, 3, 4, 5]));
+  });
+
+  it('still drops redundant flows even with protectCoverage=true', () => {
+    // Flow A covers [1,2,3], Flow B covers [1,2,3,4,5] — A is fully subsumed
+    // Dropping A won't orphan anything since B covers all of A's interactions
+    const a = makeFlow({ interactionIds: [1, 2, 3], tier: 0 });
+    const b = makeFlow({ interactionIds: [1, 2, 3, 4, 5], tier: 1 });
+
+    const result = deduplicateByInteractionOverlap([a, b], 0.5, true);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBe(b);
+  });
+});
+
+describe('deduplicateByInteractionSet', () => {
+  it('removes exact-duplicate interaction sets keeping higher quality', () => {
+    const a = makeFlow({ interactionIds: [1, 2, 3], tier: 0 });
+    const b = makeFlow({ interactionIds: [1, 2, 3], tier: 1 });
+
+    const result = deduplicateByInteractionSet([a, b]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBe(b);
+  });
+
+  it('keeps flows with different interaction sets', () => {
+    const a = makeFlow({ interactionIds: [1, 2, 3] });
+    const b = makeFlow({ interactionIds: [4, 5, 6] });
+
+    const result = deduplicateByInteractionSet([a, b]);
+    expect(result).toHaveLength(2);
   });
 });
 
