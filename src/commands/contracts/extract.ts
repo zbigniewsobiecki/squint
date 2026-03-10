@@ -279,7 +279,7 @@ export default class ContractsExtract extends BaseLlmCommand {
       LEFT JOIN module_members mm ON mm.definition_id = d.id
       LEFT JOIN modules m ON mm.module_id = m.id
       LEFT JOIN definition_metadata dm_role ON dm_role.definition_id = d.id AND dm_role.key = 'role'
-      WHERE d.kind IN ('function', 'class', 'variable', 'method', 'const')
+      WHERE d.kind IN ('function', 'class', 'variable', 'method', 'const', 'module')
         AND (m.is_test IS NULL OR m.is_test = 0)
     `)
       .all() as CandidateDefinition[];

@@ -1,7 +1,13 @@
 import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 
-import { LlmFlags, SharedFlags, buildSourceGroups } from '../_shared/index.js';
+import {
+  LlmFlags,
+  SharedFlags,
+  buildFileLanguageMap,
+  buildSourceGroups,
+  detectProjectLanguage,
+} from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
 import { parseCombinedCsv } from '../llm/_shared/csv.js';
 import { completeWithLogging } from '../llm/_shared/llm-utils.js';
@@ -46,6 +52,8 @@ export default class RelationshipsVerify extends BaseLlmCommand {
     const batchSize = (flags['batch-size'] as number) || 10;
     const maxIterations = (flags['max-iterations'] as number) || 0;
     const shouldFix = flags.fix as boolean;
+    const projectLanguage = detectProjectLanguage(db);
+    const fileLanguageMap = buildFileLanguageMap(db);
 
     if (!isJson) {
       this.log(chalk.bold('Relationship Verification'));
@@ -173,10 +181,17 @@ export default class RelationshipsVerify extends BaseLlmCommand {
       this.log(chalk.bold('Phase 2: Content Verification (LLM)'));
     }
 
-    const phase2 = await verifyRelationshipContent(db, ctx, this, {
-      'batch-size': batchSize,
-      'max-iterations': maxIterations,
-    });
+    const phase2 = await verifyRelationshipContent(
+      db,
+      ctx,
+      this,
+      {
+        'batch-size': batchSize,
+        'max-iterations': maxIterations,
+      },
+      projectLanguage,
+      fileLanguageMap
+    );
     report.phase2 = phase2;
 
     if (!isJson) {
@@ -293,8 +308,11 @@ export default class RelationshipsVerify extends BaseLlmCommand {
           const fixGroups = await buildSourceGroups(db, [...fixGrouped.keys()], fixGrouped);
           if (fixGroups.length === 0) continue;
 
-          const systemPrompt = buildRelationshipSystemPrompt();
-          const userPrompt = buildRelationshipUserPrompt(fixGroups);
+          // Use first symbol's language for the batch. In mixed-language projects, batches
+          // may span languages; a future improvement could group symbols by language.
+          const fixLang = fileLanguageMap.get(fixGroups[0]?.filePath) ?? projectLanguage;
+          const systemPrompt = buildRelationshipSystemPrompt(fixLang);
+          const userPrompt = buildRelationshipUserPrompt(fixGroups, fixLang);
 
           try {
             const response = await completeWithLogging({

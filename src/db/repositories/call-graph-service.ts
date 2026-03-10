@@ -221,8 +221,10 @@ export class CallGraphService {
       if (testModuleIds.has(edge.fromModuleId) && testModuleIds.has(edge.toModuleId)) {
         edgePattern = 'test-internal';
       } else {
-        const hasClassCall = calledSymbols.some((s) => s.kind === 'class');
-        const isLikelyUtility = isHighFrequency && distinctCallers >= 3 && avgCallsPerSymbol > 3 && !hasClassCall;
+        const hasBehavioralCall = calledSymbols.some(
+          (s) => s.kind === 'class' || s.kind === 'method' || s.kind === 'module'
+        );
+        const isLikelyUtility = isHighFrequency && distinctCallers >= 3 && avgCallsPerSymbol > 3 && !hasBehavioralCall;
         edgePattern = isLikelyUtility ? 'utility' : 'business';
       }
 

@@ -2,19 +2,6 @@
  * Prompt templates for LLM annotation.
  */
 
-import type { DependencyWithMetadata } from '../../../db/database.js';
-
-export interface SymbolContext {
-  id: number;
-  name: string;
-  kind: string;
-  filePath: string;
-  line: number;
-  endLine: number;
-  sourceCode: string;
-  dependencies: DependencyWithMetadata[];
-}
-
 export interface CoverageInfo {
   aspect: string;
   covered: number;
@@ -23,7 +10,25 @@ export interface CoverageInfo {
 }
 
 /**
- * Aspect descriptions for the system prompt.
+ * Supported language identifiers for prompt parameterization.
+ */
+export type SupportedLanguage = 'typescript' | 'javascript' | 'ruby';
+
+/**
+ * Human-readable language label for use in prompts.
+ */
+function getLanguageLabel(language: SupportedLanguage): string {
+  switch (language) {
+    case 'typescript':
+    case 'javascript':
+      return 'TypeScript/JavaScript';
+    case 'ruby':
+      return 'Ruby/Rails';
+  }
+}
+
+/**
+ * Aspect descriptions for the system prompt — TypeScript/JavaScript defaults.
  */
 const ASPECT_DESCRIPTIONS: Record<string, string> = {
   purpose: 'A concise 1-2 sentence description of what the symbol does and why it exists.',
@@ -31,7 +36,8 @@ const ASPECT_DESCRIPTIONS: Record<string, string> = {
   - Derive domains from the symbol's actual functionality AND its file location/package
   - Use consistent naming: always plural OR singular (not both), no abbreviations (use "authentication" not "auth")
   - Avoid overly generic tags like "utility", "types", "configuration" unless the symbol is truly generic
-  - Each symbol's domains should reflect ITS OWN context — do not copy domains from other symbols in this batch`,
+  - Each symbol's domains should reflect ITS OWN context — do not copy domains from other symbols in this batch
+  - A well-scoped project typically has 15-40 total domains. Prefer broad, reusable domain names over narrow, symbol-specific ones`,
   role: 'The architectural role (e.g., "controller", "utility", "model", "service", "factory", "adapter").',
   pure: `"true" only if purely functional (deterministic, no side effects). "false" if it: creates objects with mutable state, returns closures with internal state, uses vi.fn()/mock factories, or performs I/O. Most factory functions are NOT pure.
   - Functions returning \`new CustomClass(...)\` create new mutable instance identities each call → impure
@@ -49,14 +55,77 @@ Return "null" if no external communication contracts.`,
 };
 
 /**
+ * Ruby/Rails-specific overrides for aspect descriptions.
+ */
+const RUBY_ASPECT_DESCRIPTIONS: Record<string, string> = {
+  role: 'The architectural role (e.g., "model", "controller", "serializer", "mailer", "job", "concern", "service", "utility", "factory", "adapter").',
+  pure: `"true" only if purely functional (deterministic, no side effects). "false" if it: mutates instance variables (@ivar), interacts with ActiveRecord or the database, performs I/O, or relies on external state. Most Ruby methods are NOT pure.
+  - Methods that set \`@ivar\` or call \`save\`/\`update\`/\`destroy\` → impure
+  - Methods with \`render\`, \`redirect_to\`, or HTTP concerns → impure
+  - Methods calling ActiveRecord finders (e.g., \`Model.find\`, \`Model.where\`) → impure
+  - Exception: pure data transformations on plain Ruby objects with no side effects can be pure`,
+};
+
+/**
+ * Get the aspect description for a given language, falling back to the TypeScript default.
+ */
+function getAspectDescription(aspect: string, language: SupportedLanguage): string {
+  if (language === 'ruby') {
+    return RUBY_ASPECT_DESCRIPTIONS[aspect] ?? ASPECT_DESCRIPTIONS[aspect] ?? 'A descriptive value for this aspect.';
+  }
+  return ASPECT_DESCRIPTIONS[aspect] ?? 'A descriptive value for this aspect.';
+}
+
+/**
+ * Build language-specific pure function guidelines for the system prompt.
+ */
+function buildPureGuidelines(language: SupportedLanguage): string {
+  if (language === 'ruby') {
+    return `- For pure: use "false" unless the method is fully deterministic with no side effects
+  - Methods that mutate instance variables (\`@ivar =\`, \`self.attr =\`): false
+  - Methods calling ActiveRecord (finders, \`save\`, \`update\`, \`destroy\`, \`create\`): false
+  - Methods with HTTP/IO concerns (\`render\`, \`redirect_to\`, file ops): false
+  - Methods that call \`Time.now\`, \`Date.today\`, or \`rand\`: false
+  - Simple data transformations on plain Ruby objects with no mutation: true
+  - Common pure:false patterns — DO NOT mark these as pure:
+    - \`@variable =\` anywhere in the method body → mutates instance state
+    - Any ActiveRecord finder or persistence call → database I/O
+    - \`render\` or \`redirect_to\` → HTTP side effect
+    - \`Time.now\` or \`Date.today\` → non-deterministic
+    - \`rand\` or \`SecureRandom.*\` → non-deterministic
+    - \`File.*\` or IO operations → filesystem I/O`;
+  }
+
+  return `- For pure: use "false" unless the function is fully deterministic with no side effects
+  - Factory functions that create instances (vi.fn(), mock factories, middleware factories): false
+  - Functions returning closures with mutable state: false
+  - Database/HTTP/file operations: false
+  - Functions that create objects with internal state: false
+    - Type definitions, interfaces, enums: true
+  - Simple data transformations without mutation: true
+  - Common pure:false patterns — DO NOT mark these as pure:
+    - \`new Date()\` anywhere in the function body → non-deterministic
+    - \`vi.fn()\` or \`jest.fn()\` → creates stateful mock
+    - \`process.env.*\` or \`import.meta.env.*\` → reads external state
+    - \`await anything\` → I/O side effect
+    - \`localStorage.*\` or \`sessionStorage.*\` → browser storage I/O
+    - \`useXxx()\` hooks → React stateful hooks
+    - \`Math.random()\` → non-deterministic
+    - Functions that return objects containing \`new Date()\` fields
+    - Functions returning \`new CustomClass(...)\` — creates mutable instance identity`;
+}
+
+/**
  * Build the system prompt for annotation.
  */
-export function buildSystemPrompt(aspects: string[]): string {
-  const aspectDescs = aspects
-    .map((a) => `- **${a}**: ${ASPECT_DESCRIPTIONS[a] || 'A descriptive value for this aspect.'}`)
-    .join('\n');
+export function buildSystemPrompt(aspects: string[], language: SupportedLanguage = 'typescript'): string {
+  const aspectDescs = aspects.map((a) => `- **${a}**: ${getAspectDescription(a, language)}`).join('\n');
 
-  return `You are a code analyst annotating TypeScript/JavaScript code.
+  const languageLabel = getLanguageLabel(language);
+
+  const pureGuidelines = buildPureGuidelines(language);
+
+  return `You are a code analyst annotating ${languageLabel} code.
 
 ## Your Task
 For each symbol, analyze its source code and provide:
@@ -121,79 +190,10 @@ The description depends on the relationship type:
 
 ## Guidelines
 - Use dependency annotations to understand what a symbol builds upon
-- For pure: use "false" unless the function is fully deterministic with no side effects
-  - Factory functions that create instances (vi.fn(), mock factories, middleware factories): false
-  - Functions returning closures with mutable state: false
-  - Database/HTTP/file operations: false
-  - Functions that create objects with internal state: false
-  - Type definitions, interfaces, enums: true
-  - Simple data transformations without mutation: true
-  - Common pure:false patterns — DO NOT mark these as pure:
-    - \`new Date()\` anywhere in the function body → non-deterministic
-    - \`vi.fn()\` or \`jest.fn()\` → creates stateful mock
-    - \`process.env.*\` or \`import.meta.env.*\` → reads external state
-    - \`await anything\` → I/O side effect
-    - \`localStorage.*\` or \`sessionStorage.*\` → browser storage I/O
-    - \`useXxx()\` hooks → React stateful hooks
-    - \`Math.random()\` → non-deterministic
-    - Functions that return objects containing \`new Date()\` fields
-    - Functions returning \`new CustomClass(...)\` — creates mutable instance identity
+${pureGuidelines}
 - For domain: pick 1-3 relevant domain tags that describe the problem area
 - For role: identify the architectural pattern the symbol represents
 - If unsure, make your best informed judgment based on the code`;
-}
-
-/**
- * Build the user prompt for a batch of symbols.
- */
-export function buildUserPrompt(symbols: SymbolContext[], aspects: string[], coverage: CoverageInfo[]): string {
-  const parts: string[] = [];
-
-  // Coverage section
-  if (coverage.length > 0) {
-    parts.push('## Current Coverage');
-    for (const c of coverage) {
-      parts.push(`${c.aspect}: ${c.covered}/${c.total} (${c.percentage.toFixed(1)}%)`);
-    }
-    parts.push('');
-  }
-
-  // Symbols section
-  parts.push(`## Symbols to Annotate (${symbols.length})`);
-  parts.push('');
-
-  for (const symbol of symbols) {
-    parts.push(`### #${symbol.id}: ${symbol.name} (${symbol.kind})`);
-
-    // File location
-    const lineRange = symbol.line === symbol.endLine ? `${symbol.line}` : `${symbol.line}-${symbol.endLine}`;
-    parts.push(`File: ${symbol.filePath}:${lineRange}`);
-    parts.push('');
-
-    // Dependencies with their annotations
-    if (symbol.dependencies.length === 0) {
-      parts.push('Dependencies: none');
-    } else {
-      parts.push('Dependencies (with their annotations):');
-      for (const dep of symbol.dependencies) {
-        const annotation = dep.aspectValue ? `"${dep.aspectValue}"` : '(not yet annotated)';
-        parts.push(`- ${dep.name} (${dep.kind}): ${annotation}`);
-      }
-    }
-    parts.push('');
-
-    // Source code
-    parts.push('Source Code:');
-    parts.push('```typescript');
-    parts.push(symbol.sourceCode);
-    parts.push('```');
-    parts.push('');
-  }
-
-  // Request
-  parts.push(`Respond with CSV annotations for: ${aspects.join(', ')}`);
-
-  return parts.join('\n');
 }
 
 /**
@@ -202,7 +202,9 @@ export function buildUserPrompt(symbols: SymbolContext[], aspects: string[], cov
 export function buildUserPromptEnhanced(
   symbols: SymbolContextEnhanced[],
   aspects: string[],
-  coverage: CoverageInfo[]
+  coverage: CoverageInfo[],
+  language: SupportedLanguage = 'typescript',
+  existingDomains?: string[]
 ): string {
   const parts: string[] = [];
 
@@ -212,6 +214,21 @@ export function buildUserPromptEnhanced(
     for (const c of coverage) {
       parts.push(`${c.aspect}: ${c.covered}/${c.total} (${c.percentage.toFixed(1)}%)`);
     }
+    parts.push('');
+  }
+
+  // Existing domains guidance (for domain taxonomy consistency)
+  if (existingDomains && existingDomains.length > 0 && aspects.includes('domain')) {
+    parts.push('## Existing Domain Tags');
+    parts.push(
+      'Prefer reusing these existing domain tags when applicable. Only introduce a new domain if none of these fit.'
+    );
+    const MAX_DOMAIN_HINTS = 80;
+    const domainList =
+      existingDomains.length <= MAX_DOMAIN_HINTS
+        ? existingDomains.join(', ')
+        : `${existingDomains.slice(0, MAX_DOMAIN_HINTS).join(', ')} ... and ${existingDomains.length - MAX_DOMAIN_HINTS} more`;
+    parts.push(`Domains in use: ${domainList}`);
     parts.push('');
   }
 
@@ -263,8 +280,9 @@ export function buildUserPromptEnhanced(
     }
 
     // Source code
+    const codeFenceLang = language === 'ruby' ? 'ruby' : 'typescript';
     parts.push('Source Code:');
-    parts.push('```typescript');
+    parts.push(`\`\`\`${codeFenceLang}`);
     parts.push(symbol.sourceCode);
     parts.push('```');
     parts.push('');
@@ -377,8 +395,9 @@ export interface RelationshipSourceGroup {
 /**
  * Build the system prompt for relationship-only annotation.
  */
-export function buildRelationshipSystemPrompt(): string {
-  return `You are a code analyst annotating relationships between TypeScript/JavaScript symbols.
+export function buildRelationshipSystemPrompt(language: SupportedLanguage = 'typescript'): string {
+  const languageLabel = getLanguageLabel(language);
+  return `You are a code analyst annotating relationships between ${languageLabel} symbols.
 
 ## Your Task
 For each source symbol, describe WHY it uses each listed dependency.
@@ -426,7 +445,10 @@ relationship,88,42,"delegates token validation to dedicated utility"
 /**
  * Build the user prompt for relationship-only annotation.
  */
-export function buildRelationshipUserPrompt(groups: RelationshipSourceGroup[]): string {
+export function buildRelationshipUserPrompt(
+  groups: RelationshipSourceGroup[],
+  language: SupportedLanguage = 'typescript'
+): string {
   const parts: string[] = [];
 
   parts.push('## Relationships to Annotate');
@@ -462,113 +484,15 @@ export function buildRelationshipUserPrompt(groups: RelationshipSourceGroup[]): 
     }
     parts.push('');
 
+    const codeFenceLang = language === 'ruby' ? 'ruby' : 'typescript';
     parts.push('Source Code:');
-    parts.push('```typescript');
+    parts.push(`\`\`\`${codeFenceLang}`);
     parts.push(group.sourceCode);
     parts.push('```');
     parts.push('');
   }
 
   parts.push('Respond with CSV relationship annotations for all listed dependencies.');
-
-  return parts.join('\n');
-}
-
-// ============================================================
-// Module Detection Prompts
-// ============================================================
-
-export interface ModuleMemberInfo {
-  id: number;
-  name: string;
-  kind: string;
-  filePath: string;
-  domains: string[];
-  role: string | null;
-}
-
-export interface ModuleCandidate {
-  id: number;
-  members: ModuleMemberInfo[];
-  internalEdges: number;
-  externalEdges: number;
-  dominantDomains: string[];
-  dominantRoles: string[];
-}
-
-/**
- * Build the system prompt for module naming.
- */
-export function buildModuleSystemPrompt(): string {
-  return `You are a software architect analyzing module boundaries detected by community detection on a call graph.
-
-## Your Task
-For each module candidate, analyze its members and provide:
-1. A concise, descriptive module name
-2. The architectural layer (controller/service/repository/adapter/utility)
-3. The primary business subsystem/domain
-4. A one-sentence description
-
-## Layers
-- **controller**: Entry points, HTTP handlers, CLI commands, event handlers
-- **service**: Business logic, orchestration, domain rules
-- **repository**: Data access, persistence, external data sources
-- **adapter**: Integration with external systems, APIs, third-party services
-- **utility**: Shared utilities, helpers, pure functions
-
-## Output Format
-Respond with **only** a CSV table:
-
-\`\`\`csv
-module_id,name,layer,subsystem,description
-1,PaymentProcessing,service,payments,"Handles payment request validation and processing"
-2,AccountManagement,service,accounts,"Manages account lifecycle and state transitions"
-3,DatabaseAccess,repository,persistence,"Provides data access layer for all entities"
-\`\`\`
-
-## Guidelines
-- Module names should be PascalCase
-- Prefer names that describe the cohesive purpose (e.g., "PaymentValidation" not "Validators")
-- Layer should match the dominant role of members
-- Subsystem should reflect the business domain
-- Description should explain WHY these symbols are grouped together`;
-}
-
-/**
- * Build the user prompt for module naming.
- */
-export function buildModuleUserPrompt(candidates: ModuleCandidate[]): string {
-  const parts: string[] = [];
-
-  parts.push(`## Module Candidates (${candidates.length})`);
-  parts.push('');
-
-  for (const candidate of candidates) {
-    parts.push(`### Module Candidate #${candidate.id} (${candidate.members.length} members)`);
-
-    // Show metrics
-    parts.push(`Internal edges: ${candidate.internalEdges}, External edges: ${candidate.externalEdges}`);
-
-    // Show dominant domains and roles
-    if (candidate.dominantDomains.length > 0) {
-      parts.push(`Dominant domains: ${candidate.dominantDomains.join(', ')}`);
-    }
-    if (candidate.dominantRoles.length > 0) {
-      parts.push(`Dominant roles: ${candidate.dominantRoles.join(', ')}`);
-    }
-    parts.push('');
-
-    // List all members
-    parts.push('Members:');
-    for (const member of candidate.members) {
-      const domainsStr = member.domains.length > 0 ? ` [${member.domains.join(', ')}]` : '';
-      const roleStr = member.role ? ` (${member.role})` : '';
-      parts.push(`- ${member.name} (${member.kind})${roleStr}${domainsStr}`);
-    }
-    parts.push('');
-  }
-
-  parts.push('Provide module annotations in CSV format.');
 
   return parts.join('\n');
 }

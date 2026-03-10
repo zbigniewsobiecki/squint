@@ -205,7 +205,9 @@ export default class InteractionsGenerate extends BaseLlmCommand {
           const toModuleWithMembers = db.modules.getWithMembers(li.toModuleId);
           const symbols = toModuleWithMembers
             ? toModuleWithMembers.members
-                .filter((m) => m.kind === 'function' || m.kind === 'class')
+                .filter(
+                  (m) => m.kind === 'function' || m.kind === 'class' || m.kind === 'method' || m.kind === 'module'
+                )
                 .slice(0, 10)
                 .map((m) => m.name)
             : [];

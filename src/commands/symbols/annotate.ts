@@ -5,6 +5,8 @@ import {
   LlmFlags,
   RelationshipRetryQueue,
   SharedFlags,
+  buildFileLanguageMap,
+  detectProjectLanguage,
   enhanceSymbols,
   readSourceAsString,
   validateAnnotationValue,
@@ -85,7 +87,7 @@ export default class Annotate extends BaseLlmCommand {
     }),
     kind: Flags.string({
       char: 'k',
-      description: 'Filter by symbol kind',
+      description: 'Filter by symbol kind (function, class, method, variable, module, etc.)',
     }),
     file: Flags.string({
       char: 'f',
@@ -115,8 +117,18 @@ export default class Annotate extends BaseLlmCommand {
     const excludePattern = flags.exclude as string | undefined;
     const relationshipLimit = flags['relationship-limit'] as number;
 
-    // Build system prompt once
-    const systemPrompt = buildSystemPrompt(aspects);
+    // Detect project language for language-aware prompts
+    const projectLanguage = detectProjectLanguage(db);
+    const fileLanguageMap = buildFileLanguageMap(db);
+
+    // Build system prompt once (language-aware)
+    const systemPrompt = buildSystemPrompt(aspects, projectLanguage);
+
+    // Query existing domains for snowball effect (later batches reuse earlier domains)
+    const getExistingDomains = (): string[] => {
+      if (!aspects.includes('domain')) return [];
+      return db.metadata.getAllDomains();
+    };
 
     // Track failed relationship annotations for retry
     const retryQueue = new RelationshipRetryQueue();
@@ -272,8 +284,18 @@ export default class Annotate extends BaseLlmCommand {
               incomingDependencyCount: s.incomingDependencyCount,
             }));
 
+            // Use first symbol's language for the batch. In mixed-language projects, batches
+            // may span languages; a future improvement could group symbols by language.
+            const cycleBatchLanguage = fileLanguageMap.get(cycleSymbols[0]?.filePath) ?? projectLanguage;
+
             // Build user prompt with cycle note
-            const basePrompt = buildUserPromptEnhanced(symbolContexts, aspects, coverage);
+            const basePrompt = buildUserPromptEnhanced(
+              symbolContexts,
+              aspects,
+              coverage,
+              cycleBatchLanguage,
+              getExistingDomains()
+            );
             const cycleNote =
               '\nNote: These symbols have circular dependencies - they reference each other. Annotate them based on their collective purpose and individual contributions.\n';
             const userPrompt = cycleNote + basePrompt;
@@ -331,7 +353,8 @@ export default class Annotate extends BaseLlmCommand {
                 value,
                 cycleSourceCodeById.get(row.symbolId),
                 cycleDepsById.get(row.symbolId),
-                cycleKindById.get(row.symbolId)
+                cycleKindById.get(row.symbolId),
+                cycleBatchLanguage
               );
               if (validationError?.startsWith('overridden to true')) {
                 if (!isJson && ctx.verbose) {
@@ -419,7 +442,16 @@ export default class Annotate extends BaseLlmCommand {
         incomingDependencies: s.incomingDependencies,
         incomingDependencyCount: s.incomingDependencyCount,
       }));
-      const userPrompt = buildUserPromptEnhanced(symbolContexts, aspects, coverage);
+      // Use first symbol's language for the batch. In mixed-language projects, batches
+      // may span languages; a future improvement could group symbols by language.
+      const batchLanguage = fileLanguageMap.get(symbols[0]?.filePath) ?? projectLanguage;
+      const userPrompt = buildUserPromptEnhanced(
+        symbolContexts,
+        aspects,
+        coverage,
+        batchLanguage,
+        getExistingDomains()
+      );
 
       // Show LLM request if requested
       if (showLlmRequests) {
@@ -540,7 +572,8 @@ export default class Annotate extends BaseLlmCommand {
           value,
           sourceCodeById.get(symbolId),
           depsById.get(symbolId),
-          kindById.get(symbolId)
+          kindById.get(symbolId),
+          batchLanguage
         );
         if (validationError?.startsWith('overridden to true')) {
           if (!isJson && ctx.verbose) {

@@ -1,15 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  type ModuleCandidate,
-  type SymbolContext,
   type SymbolContextEnhanced,
-  buildModuleSystemPrompt,
-  buildModuleUserPrompt,
+  buildRelationshipSystemPrompt,
+  buildRelationshipUserPrompt,
   buildSystemPrompt,
-  buildUserPrompt,
   buildUserPromptEnhanced,
 } from '../../../src/commands/llm/_shared/prompts.js';
-import type { CoverageInfo } from '../../../src/commands/llm/_shared/prompts.js';
+import type { CoverageInfo, RelationshipSourceGroup } from '../../../src/commands/llm/_shared/prompts.js';
 
 describe('prompts (annotation)', () => {
   // ============================================
@@ -40,92 +37,6 @@ describe('prompts (annotation)', () => {
       const prompt = buildSystemPrompt(['custom_aspect']);
       expect(prompt).toContain('**custom_aspect**');
       expect(prompt).toContain('A descriptive value for this aspect.');
-    });
-  });
-
-  // ============================================
-  // buildUserPrompt
-  // ============================================
-  describe('buildUserPrompt', () => {
-    const makeSymbol = (overrides?: Partial<SymbolContext>): SymbolContext => ({
-      id: 42,
-      name: 'UserService',
-      kind: 'class',
-      filePath: '/src/services/user.ts',
-      line: 10,
-      endLine: 50,
-      sourceCode: 'class UserService {}',
-      dependencies: [],
-      ...overrides,
-    });
-
-    it('includes coverage section', () => {
-      const coverage: CoverageInfo[] = [{ aspect: 'purpose', covered: 50, total: 100, percentage: 50 }];
-      const prompt = buildUserPrompt([makeSymbol()], ['purpose'], coverage);
-      expect(prompt).toContain('## Current Coverage');
-      expect(prompt).toContain('purpose: 50/100 (50.0%)');
-    });
-
-    it('omits coverage section when empty', () => {
-      const prompt = buildUserPrompt([makeSymbol()], ['purpose'], []);
-      expect(prompt).not.toContain('## Current Coverage');
-    });
-
-    it('formats symbol with file location and source code', () => {
-      const prompt = buildUserPrompt([makeSymbol()], ['purpose'], []);
-      expect(prompt).toContain('#42: UserService (class)');
-      expect(prompt).toContain('File: /src/services/user.ts:10-50');
-      expect(prompt).toContain('class UserService {}');
-    });
-
-    it('shows single line when line equals endLine', () => {
-      const prompt = buildUserPrompt([makeSymbol({ line: 10, endLine: 10 })], ['purpose'], []);
-      expect(prompt).toContain('File: /src/services/user.ts:10');
-      expect(prompt).not.toContain('10-10');
-    });
-
-    it('shows dependencies with annotations', () => {
-      const symbol = makeSymbol({
-        dependencies: [
-          {
-            name: 'Logger',
-            kind: 'class',
-            filePath: '/src/logger.ts',
-            line: 1,
-            dependencyId: 10,
-            aspectValue: 'Logging utility',
-          },
-        ],
-      });
-      const prompt = buildUserPrompt([symbol], ['purpose'], []);
-      expect(prompt).toContain('Logger (class): "Logging utility"');
-    });
-
-    it('shows "not yet annotated" for deps without annotations', () => {
-      const symbol = makeSymbol({
-        dependencies: [
-          {
-            name: 'Helper',
-            kind: 'function',
-            filePath: '/src/helper.ts',
-            line: 1,
-            dependencyId: 11,
-            aspectValue: null,
-          },
-        ],
-      });
-      const prompt = buildUserPrompt([symbol], ['purpose'], []);
-      expect(prompt).toContain('Helper (function): (not yet annotated)');
-    });
-
-    it('shows "Dependencies: none" for zero deps', () => {
-      const prompt = buildUserPrompt([makeSymbol()], ['purpose'], []);
-      expect(prompt).toContain('Dependencies: none');
-    });
-
-    it('includes aspects in request line', () => {
-      const prompt = buildUserPrompt([makeSymbol()], ['purpose', 'domain', 'role'], []);
-      expect(prompt).toContain('Respond with CSV annotations for: purpose, domain, role');
     });
   });
 
@@ -236,69 +147,211 @@ describe('prompts (annotation)', () => {
       expect(prompt).toContain('Annotate aspects: purpose, domain');
       expect(prompt).toContain('Include relationship annotations');
     });
-  });
 
-  // ============================================
-  // Module Detection Prompts
-  // ============================================
-  describe('buildModuleSystemPrompt', () => {
-    it('includes layer descriptions', () => {
-      const prompt = buildModuleSystemPrompt();
-      expect(prompt).toContain('controller');
-      expect(prompt).toContain('service');
-      expect(prompt).toContain('repository');
-      expect(prompt).toContain('adapter');
-      expect(prompt).toContain('utility');
+    it('uses typescript code fence by default', () => {
+      const symbol = makeEnhancedSymbol({ sourceCode: 'const x = 1;' });
+      const prompt = buildUserPromptEnhanced([symbol], ['purpose'], []);
+      expect(prompt).toContain('```typescript');
     });
 
-    it('includes CSV format', () => {
-      const prompt = buildModuleSystemPrompt();
-      expect(prompt).toContain('module_id,name,layer,subsystem,description');
+    it('uses ruby code fence when language is ruby', () => {
+      const symbol = makeEnhancedSymbol({ sourceCode: 'def hello; end' });
+      const prompt = buildUserPromptEnhanced([symbol], ['purpose'], [], 'ruby');
+      expect(prompt).toContain('```ruby');
+      expect(prompt).not.toContain('```typescript');
     });
   });
 
-  describe('buildModuleUserPrompt', () => {
-    it('formats module candidates', () => {
-      const candidates: ModuleCandidate[] = [
-        {
-          id: 1,
-          members: [
-            { id: 42, name: 'UserService', kind: 'class', filePath: '/user.ts', domains: ['auth'], role: 'service' },
-          ],
-          internalEdges: 5,
-          externalEdges: 3,
-          dominantDomains: ['auth'],
-          dominantRoles: ['service'],
-        },
-      ];
-
-      const prompt = buildModuleUserPrompt(candidates);
-      expect(prompt).toContain('Module Candidates (1)');
-      expect(prompt).toContain('Module Candidate #1 (1 members)');
-      expect(prompt).toContain('Internal edges: 5');
-      expect(prompt).toContain('External edges: 3');
-      expect(prompt).toContain('Dominant domains: auth');
-      expect(prompt).toContain('Dominant roles: service');
-      expect(prompt).toContain('UserService (class) (service) [auth]');
+  // ============================================
+  // Language-aware buildSystemPrompt
+  // ============================================
+  describe('buildSystemPrompt — language parameterization', () => {
+    it('defaults to TypeScript/JavaScript label', () => {
+      const prompt = buildSystemPrompt(['purpose']);
+      expect(prompt).toContain('TypeScript/JavaScript');
     });
 
-    it('omits domains/roles when empty', () => {
-      const candidates: ModuleCandidate[] = [
-        {
-          id: 1,
-          members: [{ id: 42, name: 'Helper', kind: 'function', filePath: '/h.ts', domains: [], role: null }],
-          internalEdges: 0,
-          externalEdges: 0,
-          dominantDomains: [],
-          dominantRoles: [],
-        },
-      ];
+    it('uses TypeScript/JavaScript label for typescript language', () => {
+      const prompt = buildSystemPrompt(['purpose'], 'typescript');
+      expect(prompt).toContain('TypeScript/JavaScript');
+    });
 
-      const prompt = buildModuleUserPrompt(candidates);
-      expect(prompt).not.toContain('Dominant domains:');
-      expect(prompt).not.toContain('Dominant roles:');
-      expect(prompt).toContain('Helper (function)');
-      expect(prompt).not.toContain('[]');
+    it('uses TypeScript/JavaScript label for javascript language', () => {
+      const prompt = buildSystemPrompt(['purpose'], 'javascript');
+      expect(prompt).toContain('TypeScript/JavaScript');
+    });
+
+    it('uses Ruby/Rails label for ruby language', () => {
+      const prompt = buildSystemPrompt(['purpose'], 'ruby');
+      expect(prompt).toContain('Ruby/Rails');
+      expect(prompt).not.toContain('TypeScript/JavaScript');
+    });
+
+    it('uses TypeScript/JavaScript pure guidelines by default', () => {
+      const prompt = buildSystemPrompt(['pure']);
+      expect(prompt).toContain('vi.fn()');
+      expect(prompt).toContain('process.env');
+      expect(prompt).toContain('useXxx()');
+    });
+
+    it('uses Ruby-specific pure guidelines for ruby language', () => {
+      const prompt = buildSystemPrompt(['pure'], 'ruby');
+      expect(prompt).toContain('@variable =');
+      expect(prompt).toContain('ActiveRecord');
+      expect(prompt).toContain('redirect_to');
+    });
+
+    it('does not include TypeScript-specific pure patterns for ruby', () => {
+      const prompt = buildSystemPrompt(['pure'], 'ruby');
+      expect(prompt).not.toContain('vi.fn()');
+      expect(prompt).not.toContain('useXxx()');
+    });
+
+    it('uses Rails-specific role description for ruby language', () => {
+      const prompt = buildSystemPrompt(['role'], 'ruby');
+      expect(prompt).toContain('serializer');
+      expect(prompt).toContain('mailer');
+      expect(prompt).toContain('job');
+      expect(prompt).toContain('concern');
+    });
+
+    it('does not mention Rails-specific roles for typescript', () => {
+      const prompt = buildSystemPrompt(['role'], 'typescript');
+      expect(prompt).not.toContain('serializer');
+      expect(prompt).not.toContain('mailer');
+    });
+
+    it('ruby pure aspect description mentions @ivar mutation', () => {
+      const prompt = buildSystemPrompt(['pure'], 'ruby');
+      expect(prompt).toContain('@ivar');
+    });
+
+    it('ruby pure aspect description mentions ActiveRecord finders', () => {
+      const prompt = buildSystemPrompt(['pure'], 'ruby');
+      expect(prompt).toContain('Model.find');
+    });
+  });
+
+  // ============================================
+  // buildUserPromptEnhanced — existingDomains
+  // ============================================
+  describe('buildUserPromptEnhanced — existingDomains', () => {
+    const makeEnhancedSymbol = (overrides?: Partial<SymbolContextEnhanced>): SymbolContextEnhanced => ({
+      id: 42,
+      name: 'UserService',
+      kind: 'class',
+      filePath: '/src/services/user.ts',
+      line: 10,
+      endLine: 50,
+      sourceCode: 'class UserService {}',
+      isExported: true,
+      dependencies: [],
+      relationshipsToAnnotate: [],
+      incomingDependencies: [],
+      incomingDependencyCount: 0,
+      ...overrides,
+    });
+
+    it('includes existing domains section when domains provided and domain in aspects', () => {
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['domain'], [], 'typescript', [
+        'authentication',
+        'billing',
+        'user-management',
+      ]);
+      expect(prompt).toContain('## Existing Domain Tags');
+      expect(prompt).toContain('authentication, billing, user-management');
+      expect(prompt).toContain('Prefer reusing');
+    });
+
+    it('omits existing domains section when no domains provided', () => {
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['domain'], [], 'typescript');
+      expect(prompt).not.toContain('## Existing Domain Tags');
+    });
+
+    it('omits existing domains section when empty array provided', () => {
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['domain'], [], 'typescript', []);
+      expect(prompt).not.toContain('## Existing Domain Tags');
+    });
+
+    it('omits existing domains section when domain is not in aspects', () => {
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['purpose', 'pure'], [], 'typescript', [
+        'authentication',
+      ]);
+      expect(prompt).not.toContain('## Existing Domain Tags');
+    });
+
+    it('truncates large domain list (100+ entries) with ellipsis', () => {
+      const domains = Array.from({ length: 120 }, (_, i) => `domain-${i}`);
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['domain'], [], 'typescript', domains);
+      expect(prompt).toContain('## Existing Domain Tags');
+      // Should contain the first 80 domains
+      expect(prompt).toContain('domain-0');
+      expect(prompt).toContain('domain-79');
+      // Should NOT contain domains beyond 80
+      expect(prompt).not.toContain('domain-80,');
+      expect(prompt).not.toContain('domain-119,');
+      // Should show the truncation message
+      expect(prompt).toContain('... and 40 more');
+    });
+
+    it('does not truncate domain list with 80 or fewer entries', () => {
+      const domains = Array.from({ length: 80 }, (_, i) => `domain-${i}`);
+      const prompt = buildUserPromptEnhanced([makeEnhancedSymbol()], ['domain'], [], 'typescript', domains);
+      expect(prompt).toContain('domain-79');
+      expect(prompt).not.toContain('... and');
+    });
+  });
+
+  // ============================================
+  // Language-aware buildRelationshipSystemPrompt
+  // ============================================
+  describe('buildRelationshipSystemPrompt — language parameterization', () => {
+    it('defaults to TypeScript/JavaScript label', () => {
+      const prompt = buildRelationshipSystemPrompt();
+      expect(prompt).toContain('TypeScript/JavaScript');
+    });
+
+    it('uses Ruby/Rails label for ruby language', () => {
+      const prompt = buildRelationshipSystemPrompt('ruby');
+      expect(prompt).toContain('Ruby/Rails');
+      expect(prompt).not.toContain('TypeScript/JavaScript');
+    });
+
+    it('uses TypeScript/JavaScript label for typescript language', () => {
+      const prompt = buildRelationshipSystemPrompt('typescript');
+      expect(prompt).toContain('TypeScript/JavaScript');
+    });
+  });
+
+  // ============================================
+  // Language-aware buildRelationshipUserPrompt
+  // ============================================
+  describe('buildRelationshipUserPrompt — language parameterization', () => {
+    const makeGroup = (overrides?: Partial<RelationshipSourceGroup>): RelationshipSourceGroup => ({
+      id: 42,
+      name: 'UserService',
+      kind: 'class',
+      filePath: '/src/services/user.ts',
+      line: 1,
+      endLine: 20,
+      sourceCode: 'class UserService {}',
+      purpose: null,
+      domains: null,
+      role: null,
+      relationships: [],
+      ...overrides,
+    });
+
+    it('uses typescript code fence by default', () => {
+      const prompt = buildRelationshipUserPrompt([makeGroup()]);
+      expect(prompt).toContain('```typescript');
+    });
+
+    it('uses ruby code fence when language is ruby', () => {
+      const group = makeGroup({ sourceCode: 'class UserService; end' });
+      const prompt = buildRelationshipUserPrompt([group], 'ruby');
+      expect(prompt).toContain('```ruby');
+      expect(prompt).not.toContain('```typescript');
     });
   });
 });

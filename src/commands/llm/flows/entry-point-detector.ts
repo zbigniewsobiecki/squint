@@ -26,7 +26,7 @@ import type {
 } from './types.js';
 
 /** AST kinds that represent callable/behavioral code (not type-only definitions). */
-const CALLABLE_KINDS = new Set(['function', 'class', 'const', 'variable', 'method']);
+const CALLABLE_KINDS = new Set(['function', 'class', 'const', 'variable', 'method', 'module']);
 
 export class EntryPointDetector {
   private memberClassifications: MemberClassification[] = [];

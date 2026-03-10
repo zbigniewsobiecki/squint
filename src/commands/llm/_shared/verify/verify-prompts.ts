@@ -2,8 +2,24 @@
  * Prompt templates for LLM-based verification of annotations and relationships.
  */
 
-export function buildAnnotationVerifySystemPrompt(): string {
-  return `You are a code analyst verifying the accuracy of existing annotations on TypeScript/JavaScript symbols.
+import type { SupportedLanguage } from '../prompts.js';
+
+function getLanguageLabelForVerify(language: SupportedLanguage): string {
+  switch (language) {
+    case 'ruby':
+      return 'Ruby/Rails';
+    default:
+      return 'TypeScript/JavaScript';
+  }
+}
+
+function getCodeFenceLang(language: SupportedLanguage): string {
+  return language === 'ruby' ? 'ruby' : 'typescript';
+}
+
+export function buildAnnotationVerifySystemPrompt(language: SupportedLanguage = 'typescript'): string {
+  const langLabel = getLanguageLabelForVerify(language);
+  return `You are a code analyst verifying the accuracy of existing annotations on ${langLabel} symbols.
 
 ## Your Task
 For each symbol, compare its source code against the provided annotations and report whether each annotation is correct.
@@ -39,8 +55,9 @@ definition_id,check,verdict,reason
 - Check pure annotations strictly: any I/O, mutation, or non-determinism means impure`;
 }
 
-export function buildRelationshipVerifySystemPrompt(): string {
-  return `You are a code analyst verifying the accuracy of existing relationship annotations between TypeScript/JavaScript symbols.
+export function buildRelationshipVerifySystemPrompt(language: SupportedLanguage = 'typescript'): string {
+  const langLabel = getLanguageLabelForVerify(language);
+  return `You are a code analyst verifying the accuracy of existing relationship annotations between ${langLabel} symbols.
 
 ## Your Task
 For each annotated relationship (from → to), verify:
@@ -81,8 +98,10 @@ export function buildAnnotationVerifyUserPrompt(
     sourceCode: string;
     annotations: Record<string, string>;
   }>,
-  aspects: string[]
+  aspects: string[],
+  language: SupportedLanguage = 'typescript'
 ): string {
+  const codeFence = getCodeFenceLang(language);
   const parts: string[] = [];
 
   parts.push(`## Symbols to Verify (${symbols.length})`);
@@ -104,7 +123,7 @@ export function buildAnnotationVerifyUserPrompt(
     parts.push('');
 
     parts.push('Source Code:');
-    parts.push('```typescript');
+    parts.push(`\`\`\`${codeFence}`);
     parts.push(symbol.sourceCode);
     parts.push('```');
     parts.push('');
@@ -115,8 +134,9 @@ export function buildAnnotationVerifyUserPrompt(
   return parts.join('\n');
 }
 
-export function buildModuleAssignmentVerifySystemPrompt(): string {
-  return `You are a software architect verifying module assignments in a TypeScript/JavaScript codebase.
+export function buildModuleAssignmentVerifySystemPrompt(language: SupportedLanguage = 'typescript'): string {
+  const langLabel = getLanguageLabelForVerify(language);
+  return `You are a software architect verifying module assignments in a ${langLabel} codebase.
 
 ## Your Task
 For each symbol, check whether its current module assignment is semantically appropriate.
@@ -164,8 +184,10 @@ export function buildModuleAssignmentVerifyUserPrompt(
     moduleName: string;
     modulePath: string;
   }>,
-  modules: Array<{ fullPath: string; name: string; description: string | null }>
+  modules: Array<{ fullPath: string; name: string; description: string | null }>,
+  language: SupportedLanguage = 'typescript'
 ): string {
+  const codeFence = getCodeFenceLang(language);
   const parts: string[] = [];
 
   parts.push('## Available Modules');
@@ -185,7 +207,7 @@ export function buildModuleAssignmentVerifyUserPrompt(
     parts.push(`Assigned to: ${item.modulePath} (${item.moduleName})`);
     parts.push('');
     parts.push('Source Code:');
-    parts.push('```typescript');
+    parts.push(`\`\`\`${codeFence}`);
     parts.push(item.sourceCode);
     parts.push('```');
     parts.push('');
@@ -210,8 +232,10 @@ export function buildRelationshipVerifyUserPrompt(
       semantic: string;
       relationshipType: string;
     }>;
-  }>
+  }>,
+  language: SupportedLanguage = 'typescript'
 ): string {
+  const codeFence = getCodeFenceLang(language);
   const parts: string[] = [];
 
   parts.push(`## Relationships to Verify (${groups.length} source symbols)`);
@@ -229,7 +253,7 @@ export function buildRelationshipVerifyUserPrompt(
     parts.push('');
 
     parts.push('Source Code:');
-    parts.push('```typescript');
+    parts.push(`\`\`\`${codeFence}`);
     parts.push(group.sourceCode);
     parts.push('```');
     parts.push('');

@@ -24,7 +24,7 @@ export default class SymbolsList extends Command {
     database: SharedFlags.database,
     json: SharedFlags.json,
     kind: Flags.string({
-      description: 'Filter by kind (function, class, variable, type, interface, enum)',
+      description: 'Filter by kind (function, class, method, variable, module, type, interface, enum)',
     }),
     file: Flags.string({
       description: 'Filter to symbols in a specific file',
