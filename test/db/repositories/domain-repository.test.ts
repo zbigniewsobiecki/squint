@@ -17,9 +17,9 @@ describe('DomainRepository', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     db.exec(SCHEMA);
-    repo = new DomainRepository(db);
     fileRepo = new FileRepository(db);
     metadataRepo = new MetadataRepository(db);
+    repo = new DomainRepository(db, metadataRepo);
 
     fileId = fileRepo.insert({
       path: '/test/file.ts',

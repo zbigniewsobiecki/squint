@@ -1,18 +1,17 @@
 import type Database from 'better-sqlite3';
 import { ensureDomainsTable } from '../schema-manager.js';
 import type { Domain, DomainWithCount } from '../schema.js';
-import { MetadataRepository } from './metadata-repository.js';
+import type { MetadataRepository } from './metadata-repository.js';
 
 /**
  * Repository for domain registry operations.
  * Handles CRUD operations for the domains table and domain-related queries.
  */
 export class DomainRepository {
-  private metadata: MetadataRepository;
-
-  constructor(private db: Database.Database) {
-    this.metadata = new MetadataRepository(db);
-  }
+  constructor(
+    private db: Database.Database,
+    private metadata: MetadataRepository
+  ) {}
 
   /**
    * Add a new domain to the registry.

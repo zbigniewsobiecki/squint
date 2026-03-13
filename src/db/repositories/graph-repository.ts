@@ -2,10 +2,10 @@ import type Database from 'better-sqlite3';
 import { ensureRelationshipTypeColumn } from '../schema-manager.js';
 import type { AnnotatedEdgeInfo, AnnotatedSymbolInfo, CallGraphEdge } from '../schema.js';
 import { queryCallGraphEdges } from './_shared/call-graph-query.js';
-import { DefinitionRepository } from './definition-repository.js';
-import { DependencyRepository } from './dependency-repository.js';
-import { MetadataRepository } from './metadata-repository.js';
-import { RelationshipRepository } from './relationship-repository.js';
+import type { DefinitionRepository } from './definition-repository.js';
+import type { DependencyRepository } from './dependency-repository.js';
+import type { MetadataRepository } from './metadata-repository.js';
+import type { RelationshipRepository } from './relationship-repository.js';
 
 export interface HighConnectivitySymbol {
   id: number;
@@ -40,17 +40,13 @@ export interface UnannotatedSymbolsResult {
  * Repository for graph analysis operations.
  */
 export class GraphRepository {
-  private deps: DependencyRepository;
-  private metadata: MetadataRepository;
-  private relationships: RelationshipRepository;
-  private definitions: DefinitionRepository;
-
-  constructor(private db: Database.Database) {
-    this.deps = new DependencyRepository(db);
-    this.metadata = new MetadataRepository(db);
-    this.relationships = new RelationshipRepository(db);
-    this.definitions = new DefinitionRepository(db);
-  }
+  constructor(
+    private db: Database.Database,
+    private deps: DependencyRepository,
+    private metadata: MetadataRepository,
+    private relationships: RelationshipRepository,
+    private definitions: DefinitionRepository
+  ) {}
 
   /**
    * Find strongly connected components (cycles) among unannotated symbols.
