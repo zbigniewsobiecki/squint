@@ -309,7 +309,7 @@ export default class InteractionsGenerate extends BaseLlmCommand {
 
     // Import-based interactions scoped to dirty modules
     const { importBasedCount } = !dryRun
-      ? this.createImportBasedInteractionsScoped(ctx, testModuleIds, dirtyModuleSet)
+      ? this.createImportBasedInteractions(ctx, testModuleIds, dirtyModuleSet)
       : { importBasedCount: 0 };
 
     // Contract matching scoped to dirty modules
@@ -317,7 +317,7 @@ export default class InteractionsGenerate extends BaseLlmCommand {
     let contractLinkedCount = 0;
     if (!dryRun && db.contracts.getCount() > 0) {
       const processGroups = computeProcessGroups(db);
-      const result = this.createContractInteractionsScoped(ctx, processGroups, dirtyModuleSet);
+      const result = this.createContractInteractions(ctx, processGroups, dirtyModuleSet);
       contractMatchedCount = result.contractMatchedCount;
       contractLinkedCount = result.contractLinkedCount;
     }
@@ -335,104 +335,6 @@ export default class InteractionsGenerate extends BaseLlmCommand {
       businessCount,
       utilityCount,
     });
-  }
-
-  /**
-   * Import-based interactions scoped to dirty modules.
-   */
-  private createImportBasedInteractionsScoped(
-    ctx: LlmContext,
-    testModuleIds: Set<number>,
-    dirtyModuleIds: Set<number>
-  ): { importBasedCount: number; fileLevelCount: number } {
-    const { db, isJson, verbose } = ctx;
-
-    let importBasedCount = 0;
-    const importPairs = db.interactions
-      .getImportOnlyModulePairs()
-      .filter((p) => dirtyModuleIds.has(p.fromModuleId) || dirtyModuleIds.has(p.toModuleId));
-
-    if (importPairs.length > 0) {
-      if (!isJson && verbose) {
-        this.log(chalk.gray(`  Processing ${importPairs.length} import-based pairs touching dirty modules`));
-      }
-
-      for (const pair of importPairs) {
-        if (this.upsertImportInteraction(db, pair, testModuleIds)) {
-          importBasedCount++;
-        }
-      }
-
-      if (!isJson && verbose) {
-        this.log(chalk.green(`  Added/updated ${importBasedCount} import-based interactions`));
-      }
-    }
-
-    // File-level import fallback (scoped to dirty modules)
-    let fileLevelCount = 0;
-    const fileLevelPairs = db.interactions
-      .getFileLevelImportModulePairs()
-      .filter((p) => dirtyModuleIds.has(p.fromModuleId) || dirtyModuleIds.has(p.toModuleId));
-
-    if (fileLevelPairs.length > 0) {
-      for (const pair of fileLevelPairs) {
-        const pattern =
-          testModuleIds.has(pair.fromModuleId) || testModuleIds.has(pair.toModuleId) ? 'test-internal' : 'business';
-        try {
-          db.interactions.upsert(pair.fromModuleId, pair.toModuleId, {
-            weight: pair.importCount,
-            pattern,
-            semantic: pair.isTypeOnly ? 'Type dependency (file-level import)' : 'File-level import dependency',
-            source: 'ast-import',
-          });
-          fileLevelCount++;
-        } catch {
-          // Skip if already exists
-        }
-      }
-
-      if (!isJson && verbose && fileLevelCount > 0) {
-        this.log(chalk.green(`  Added ${fileLevelCount} file-level import interactions (scoped)`));
-      }
-    }
-
-    return { importBasedCount, fileLevelCount };
-  }
-
-  /**
-   * Contract matching scoped to dirty modules.
-   */
-  private createContractInteractionsScoped(
-    ctx: LlmContext,
-    processGroups: ProcessGroups,
-    dirtyModuleIds: Set<number>
-  ): { contractMatchedCount: number; contractLinkedCount: number } {
-    const { db, isJson, verbose } = ctx;
-
-    db.contracts.backfillModuleIds();
-    const matcher = new ContractMatcher();
-    const allMatches = matcher.match(db, processGroups);
-
-    // Filter to matches touching dirty modules
-    const scopedMatches = allMatches.filter(
-      (m) => dirtyModuleIds.has(m.fromModuleId) || dirtyModuleIds.has(m.toModuleId)
-    );
-
-    if (scopedMatches.length === 0) {
-      return { contractMatchedCount: 0, contractLinkedCount: 0 };
-    }
-
-    const result = matcher.materializeInteractions(db, scopedMatches);
-
-    if (!isJson && verbose) {
-      this.log(
-        chalk.gray(
-          `  Contract-matched: ${result.created} interactions (${result.linked} definition links) [scoped to dirty modules]`
-        )
-      );
-    }
-
-    return { contractMatchedCount: result.created, contractLinkedCount: result.linked };
   }
 
   /**
@@ -463,19 +365,28 @@ export default class InteractionsGenerate extends BaseLlmCommand {
 
   /**
    * Step 2: Create import-based interactions (deterministic, no LLM).
+   * When `dirtyModuleIds` is provided, only processes pairs touching those modules (incremental mode).
    */
   private createImportBasedInteractions(
     ctx: LlmContext,
-    testModuleIds: Set<number>
+    testModuleIds: Set<number>,
+    dirtyModuleIds?: Set<number>
   ): { importBasedCount: number; fileLevelCount: number } {
     const { db, isJson, verbose } = ctx;
+    const isScoped = dirtyModuleIds !== undefined;
 
     let importBasedCount = 0;
-    const importPairs = db.interactions.getImportOnlyModulePairs();
+    const allImportPairs = db.interactions.getImportOnlyModulePairs();
+    const importPairs = isScoped
+      ? allImportPairs.filter((p) => dirtyModuleIds.has(p.fromModuleId) || dirtyModuleIds.has(p.toModuleId))
+      : allImportPairs;
+
     if (importPairs.length > 0) {
-      if (!isJson) {
+      if (!isScoped && !isJson) {
         this.log('');
         this.log(chalk.bold('Step 2: Import-Based Interactions (Deterministic)'));
+      } else if (isScoped && !isJson && verbose) {
+        this.log(chalk.gray(`  Processing ${importPairs.length} import-based pairs touching dirty modules`));
       }
 
       for (const pair of importPairs) {
@@ -484,14 +395,20 @@ export default class InteractionsGenerate extends BaseLlmCommand {
         }
       }
 
-      if (!isJson) {
+      if (!isScoped && !isJson) {
         this.log(chalk.green(`  Added ${importBasedCount} import-based interactions`));
+      } else if (isScoped && !isJson && verbose) {
+        this.log(chalk.green(`  Added/updated ${importBasedCount} import-based interactions`));
       }
     }
 
-    // Step 2b: File-level import fallback
+    // File-level import fallback
     let fileLevelCount = 0;
-    const fileLevelPairs = db.interactions.getFileLevelImportModulePairs();
+    const allFileLevelPairs = db.interactions.getFileLevelImportModulePairs();
+    const fileLevelPairs = isScoped
+      ? allFileLevelPairs.filter((p) => dirtyModuleIds.has(p.fromModuleId) || dirtyModuleIds.has(p.toModuleId))
+      : allFileLevelPairs;
+
     if (fileLevelPairs.length > 0) {
       for (const pair of fileLevelPairs) {
         const pattern =
@@ -510,7 +427,7 @@ export default class InteractionsGenerate extends BaseLlmCommand {
       }
 
       if (!isJson && verbose && fileLevelCount > 0) {
-        this.log(chalk.green(`  Added ${fileLevelCount} file-level import interactions`));
+        this.log(chalk.green(`  Added ${fileLevelCount} file-level import interactions${isScoped ? ' (scoped)' : ''}`));
       }
     }
 
@@ -519,34 +436,45 @@ export default class InteractionsGenerate extends BaseLlmCommand {
 
   /**
    * Step 2.5: Contract-based matching (deterministic, no LLM).
+   * When `dirtyModuleIds` is provided, only processes matches touching those modules (incremental mode).
    */
   private createContractInteractions(
     ctx: LlmContext,
-    processGroups: ProcessGroups
+    processGroups: ProcessGroups,
+    dirtyModuleIds?: Set<number>
   ): { contractMatchedCount: number; contractLinkedCount: number } {
     const { db, isJson, verbose } = ctx;
+    const isScoped = dirtyModuleIds !== undefined;
 
     let contractMatchedCount = 0;
     let contractLinkedCount = 0;
 
     if (db.contracts.getCount() > 0) {
       const backfilled = db.contracts.backfillModuleIds();
-      if (backfilled > 0 && !isJson && verbose) {
+      if (!isScoped && backfilled > 0 && !isJson && verbose) {
         this.log(chalk.gray(`  Backfilled ${backfilled} contract participant module_id(s)`));
       }
 
-      if (!isJson) {
+      if (!isScoped && !isJson) {
         this.log('');
         this.log(chalk.bold('Step 2.5: Contract-Based Matching (Deterministic)'));
       }
 
       const matcher = new ContractMatcher();
-      const contractMatches = matcher.match(db, processGroups);
+      const allMatches = matcher.match(db, processGroups);
+      const contractMatches = isScoped
+        ? allMatches.filter((m) => dirtyModuleIds.has(m.fromModuleId) || dirtyModuleIds.has(m.toModuleId))
+        : allMatches;
+
+      if (isScoped && contractMatches.length === 0) {
+        return { contractMatchedCount: 0, contractLinkedCount: 0 };
+      }
+
       const matchResult = matcher.materializeInteractions(db, contractMatches);
       contractMatchedCount = matchResult.created;
       contractLinkedCount = matchResult.linked;
 
-      if (!isJson) {
+      if (!isScoped && !isJson) {
         this.log(
           chalk.green(
             `  Added ${contractMatchedCount} contract-matched interactions (${contractLinkedCount} definition links)`
@@ -562,6 +490,12 @@ export default class InteractionsGenerate extends BaseLlmCommand {
         if (stats.unmatched > 0) {
           this.log(chalk.yellow(`  Unmatched contracts (one-sided): ${stats.unmatched}`));
         }
+      } else if (isScoped && !isJson && verbose) {
+        this.log(
+          chalk.gray(
+            `  Contract-matched: ${contractMatchedCount} interactions (${contractLinkedCount} definition links) [scoped to dirty modules]`
+          )
+        );
       }
     }
 
