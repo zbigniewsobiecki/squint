@@ -2,9 +2,9 @@ import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { LlmFlags, SharedFlags } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
-import { getErrorMessage } from '../llm/_shared/llm-utils.js';
 import { type ProcessGroups, computeProcessGroups, getProcessGroupLabel } from '../llm/_shared/process-utils.js';
-import { type InteractionSuggestion, createDefaultInteraction, generateAstSemantics } from './_shared/ast-semantics.js';
+import type { InteractionSuggestion } from './_shared/ast-semantics.js';
+import { persistInteractions, processBatchSemantics, tagTestInternalInteractions } from './_shared/batch-processor.js';
 import { ContractMatcher } from './_shared/contract-matcher.js';
 import { runCoverageInference } from './_shared/coverage-inferrer.js';
 import { inferCrossProcessInteractions } from './_shared/cross-process-inferrer.js';
@@ -91,71 +91,22 @@ export default class InteractionsGenerate extends BaseLlmCommand {
     }
 
     // Step 1: Generate semantics for each edge using LLM (in batches)
-    const interactions: InteractionSuggestion[] = [];
-
-    for (let i = 0; i < enrichedEdges.length; i += batchSize) {
-      const batch = enrichedEdges.slice(i, i + batchSize);
-
-      try {
-        const batchIdx = Math.floor(i / batchSize);
-        const totalBatches = Math.ceil(enrichedEdges.length / batchSize);
-        const suggestions = await generateAstSemantics(batch, model, db, this, isJson, batchIdx + 1, totalBatches);
-        interactions.push(...suggestions);
-
-        if (!isJson && verbose) {
-          this.log(
-            chalk.gray(`  Batch ${Math.floor(i / batchSize) + 1}: Generated ${suggestions.length} interactions`)
-          );
-        }
-      } catch (error) {
-        const message = getErrorMessage(error);
-        if (!isJson) {
-          this.log(chalk.yellow(`  Batch ${Math.floor(i / batchSize) + 1} failed: ${message}`));
-        }
-        for (const edge of batch) {
-          interactions.push(createDefaultInteraction(edge));
-        }
-      }
-    }
+    const interactions: InteractionSuggestion[] = await processBatchSemantics(
+      enrichedEdges,
+      batchSize,
+      model,
+      db,
+      this,
+      isJson,
+      verbose
+    );
 
     // Tag test-internal interactions: if either module is a test module, override pattern
     const testModuleIds = db.modules.getTestModuleIds();
-    if (testModuleIds.size > 0) {
-      for (const interaction of interactions) {
-        if (testModuleIds.has(interaction.fromModuleId) || testModuleIds.has(interaction.toModuleId)) {
-          interaction.pattern = 'test-internal';
-        }
-      }
-
-      const testInternalCount = interactions.filter((i) => i.pattern === 'test-internal').length;
-      if (!isJson && verbose && testInternalCount > 0) {
-        this.log(chalk.gray(`  Tagged ${testInternalCount} interactions as test-internal`));
-      }
-    }
+    tagTestInternalInteractions(interactions, testModuleIds, { command: this, isJson, verbose });
 
     // Persist interactions
-    if (!dryRun) {
-      for (const interaction of interactions) {
-        try {
-          db.interactions.upsert(interaction.fromModuleId, interaction.toModuleId, {
-            weight: interaction.weight,
-            pattern: interaction.pattern,
-            symbols: interaction.symbols,
-            semantic: interaction.semantic,
-          });
-        } catch {
-          if (verbose && !isJson) {
-            this.log(chalk.yellow(`  Skipping duplicate: ${interaction.fromModulePath} → ${interaction.toModulePath}`));
-          }
-        }
-      }
-
-      // Create inheritance-based interactions (extends/implements)
-      const inheritanceResult = db.interactionAnalysis.syncInheritanceInteractions();
-      if (!isJson && verbose && inheritanceResult.created > 0) {
-        this.log(chalk.gray(`  Inheritance edges: ${inheritanceResult.created}`));
-      }
-    }
+    persistInteractions(db, interactions, verbose, isJson, dryRun, this);
 
     // Step 2: Import-based interactions (deterministic — no LLM)
     const { importBasedCount } = !dryRun
@@ -339,59 +290,22 @@ export default class InteractionsGenerate extends BaseLlmCommand {
     }
 
     // Generate semantics via LLM (in batches)
-    const interactions: InteractionSuggestion[] = [];
-
-    for (let i = 0; i < enrichedEdges.length; i += batchSize) {
-      const batch = enrichedEdges.slice(i, i + batchSize);
-      try {
-        const batchIdx = Math.floor(i / batchSize);
-        const totalBatches = Math.ceil(enrichedEdges.length / batchSize);
-        const suggestions = await generateAstSemantics(batch, model, db, this, isJson, batchIdx + 1, totalBatches);
-        interactions.push(...suggestions);
-      } catch (error) {
-        const message = getErrorMessage(error);
-        if (!isJson) {
-          this.log(chalk.yellow(`  Batch ${Math.floor(i / batchSize) + 1} failed: ${message}`));
-        }
-        for (const edge of batch) {
-          interactions.push(createDefaultInteraction(edge));
-        }
-      }
-    }
+    const interactions: InteractionSuggestion[] = await processBatchSemantics(
+      enrichedEdges,
+      batchSize,
+      model,
+      db,
+      this,
+      isJson,
+      verbose
+    );
 
     // Tag test-internal interactions
     const testModuleIds = db.modules.getTestModuleIds();
-    if (testModuleIds.size > 0) {
-      for (const interaction of interactions) {
-        if (testModuleIds.has(interaction.fromModuleId) || testModuleIds.has(interaction.toModuleId)) {
-          interaction.pattern = 'test-internal';
-        }
-      }
-    }
+    tagTestInternalInteractions(interactions, testModuleIds);
 
     // Persist via upsert (preserves IDs for clean-endpoint interactions)
-    if (!dryRun) {
-      for (const interaction of interactions) {
-        try {
-          db.interactions.upsert(interaction.fromModuleId, interaction.toModuleId, {
-            weight: interaction.weight,
-            pattern: interaction.pattern,
-            symbols: interaction.symbols,
-            semantic: interaction.semantic,
-          });
-        } catch {
-          if (verbose && !isJson) {
-            this.log(chalk.yellow(`  Skipping duplicate: ${interaction.fromModulePath} → ${interaction.toModulePath}`));
-          }
-        }
-      }
-
-      // Sync inheritance-based interactions
-      const inheritanceResult = db.interactionAnalysis.syncInheritanceInteractions();
-      if (!isJson && verbose && inheritanceResult.created > 0) {
-        this.log(chalk.gray(`  Inheritance edges: ${inheritanceResult.created}`));
-      }
-    }
+    persistInteractions(db, interactions, verbose, isJson, dryRun, this);
 
     // Import-based interactions scoped to dirty modules
     const { importBasedCount } = !dryRun
