@@ -15,3 +15,13 @@ export { buildSourceGroups } from './relationship-source-groups.js';
 export { validateAnnotationValue } from './annotation-validators.js';
 export { RelationshipRetryQueue } from './retry-queue.js';
 export { detectProjectLanguage, buildFileLanguageMap } from './language-detection.js';
+export {
+  processSymbolAnnotations,
+  processRelationshipAnnotations,
+  getCoverageForPrompt,
+  type ProcessSymbolAnnotationsOptions,
+  type ProcessSymbolAnnotationsResult,
+  type ProcessRelationshipAnnotationsOptions,
+  type ProcessRelationshipAnnotationsResult,
+  type GetCoverageForPromptOptions,
+} from './annotation-processor.js';

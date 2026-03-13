@@ -8,8 +8,10 @@ import {
   buildFileLanguageMap,
   detectProjectLanguage,
   enhanceSymbols,
+  getCoverageForPrompt,
+  processRelationshipAnnotations,
+  processSymbolAnnotations,
   readSourceAsString,
-  validateAnnotationValue,
 } from '../_shared/index.js';
 import { BaseLlmCommand, type LlmContext } from '../llm/_shared/base-llm-command.js';
 import {
@@ -17,7 +19,6 @@ import {
   type IterationSummary,
   type RelationshipAnnotationResult,
   type RelationshipCoverageInfo,
-  filterCoverageForAspects,
   formatFinalSummary,
   formatIterationResults,
 } from '../llm/_shared/coverage.js';
@@ -116,6 +117,8 @@ export default class Annotate extends BaseLlmCommand {
     const forceMode = flags.force as boolean;
     const excludePattern = flags.exclude as string | undefined;
     const relationshipLimit = flags['relationship-limit'] as number;
+    const kindFilter = flags.kind as string | undefined;
+    const fileFilter = flags.file as string | undefined;
 
     // Detect project language for language-aware prompts
     const projectLanguage = detectProjectLanguage(db);
@@ -186,8 +189,8 @@ export default class Annotate extends BaseLlmCommand {
         // Force mode: get all unannotated symbols regardless of dependencies
         const result = db.graph.getAllUnannotated(primaryAspect, {
           limit: batchSize,
-          kind: flags.kind as string | undefined,
-          filePattern: flags.file as string | undefined,
+          kind: kindFilter,
+          filePattern: fileFilter,
           excludePattern: excludePattern,
         });
         symbols = result.symbols;
@@ -197,8 +200,8 @@ export default class Annotate extends BaseLlmCommand {
         // Normal mode: only get symbols with all dependencies annotated
         const result = db.dependencies.getReadySymbols(primaryAspect, {
           limit: batchSize,
-          kind: flags.kind as string | undefined,
-          filePattern: flags.file as string | undefined,
+          kind: kindFilter,
+          filePattern: fileFilter,
         });
         symbols = result.symbols;
         totalRemaining = result.totalReady + result.remaining;
@@ -258,15 +261,7 @@ export default class Annotate extends BaseLlmCommand {
             const enhancedCycleSymbols = await enhanceSymbols(db, cycleSymbols, aspects, relationshipLimit);
 
             // Get current coverage for the prompt
-            const cycleCoverage = db.metadata.getAspectCoverage({
-              kind: flags.kind as string | undefined,
-              filePattern: flags.file as string | undefined,
-            });
-            const cycleTotalSymbols = db.metadata.getFilteredCount({
-              kind: flags.kind as string | undefined,
-              filePattern: flags.file as string | undefined,
-            });
-            const coverage = filterCoverageForAspects(cycleCoverage, aspects, cycleTotalSymbols);
+            const coverage = getCoverageForPrompt({ db, aspects, kind: kindFilter, filePattern: fileFilter });
 
             // Build prompt with cycle context
             const symbolContexts: SymbolContextEnhanced[] = enhancedCycleSymbols.map((s) => ({
@@ -324,7 +319,7 @@ export default class Annotate extends BaseLlmCommand {
             const parseResult = parseCombinedCsv(response);
             const validSymbolIds = new Set(enhancedCycleSymbols.map((s) => s.id));
 
-            // Build valid relationship map for cycle symbols
+            // Build valid relationship map for cycle symbols (Set<toId> form)
             const cycleValidRelationships = new Map<number, Set<number>>();
             for (const s of enhancedCycleSymbols) {
               const toIds = new Set<number>();
@@ -334,75 +329,42 @@ export default class Annotate extends BaseLlmCommand {
               cycleValidRelationships.set(s.id, toIds);
             }
 
-            let cycleAnnotations = 0;
-            let cycleRelAnnotations = 0;
-
             // Build source code, dependency, and kind maps for cycle symbols
             const cycleSourceCodeById = new Map(symbolContexts.map((s) => [s.id, s.sourceCode]));
             const cycleDepsById = new Map(enhancedCycleSymbols.map((s) => [s.id, s.dependencies]));
             const cycleKindById = new Map(enhancedCycleSymbols.map((s) => [s.id, s.kind]));
 
-            // Process symbol annotations
-            for (const row of parseResult.symbols) {
-              if (!validSymbolIds.has(row.symbolId)) continue;
-              if (!aspects.includes(row.aspect)) continue;
+            // Process symbol annotations (cycle path — no symbolNameById, no result tracking)
+            const symResult = processSymbolAnnotations({
+              rows: parseResult.symbols,
+              validSymbolIds,
+              aspects,
+              sourceCodeById: cycleSourceCodeById,
+              depsById: cycleDepsById,
+              kindById: cycleKindById,
+              batchLanguage: cycleBatchLanguage,
+              dryRun,
+              db,
+            });
+            totalAnnotations += symResult.annotationCount;
+            totalErrors += symResult.errorCount;
 
-              let value = row.value;
-              const validationError = validateAnnotationValue(
-                row.aspect,
-                value,
-                cycleSourceCodeById.get(row.symbolId),
-                cycleDepsById.get(row.symbolId),
-                cycleKindById.get(row.symbolId),
-                cycleBatchLanguage
-              );
-              if (validationError?.startsWith('overridden to true')) {
-                if (!isJson && ctx.verbose) {
-                  this.log(chalk.yellow(`  Pure override for #${row.symbolId}: ${validationError}`));
-                }
-                value = 'true';
-              } else if (validationError?.startsWith('overridden')) {
-                if (!isJson && ctx.verbose) {
-                  this.log(chalk.yellow(`  Pure override for #${row.symbolId}: ${validationError}`));
-                }
-                value = 'false';
-              } else if (validationError) {
-                totalErrors++;
-                continue;
-              }
-
-              if (!dryRun) {
-                db.metadata.set(row.symbolId, row.aspect, value);
-              }
-              cycleAnnotations++;
-              totalAnnotations++;
-            }
-
-            // Process relationship annotations
-            for (const row of parseResult.relationships) {
-              const fromId = row.fromId;
-              const toId = row.toId;
-
-              if (!validSymbolIds.has(fromId)) continue;
-
-              const toIds = cycleValidRelationships.get(fromId);
-              if (!toIds || !toIds.has(toId)) continue;
-
-              if (!row.value || row.value.length < 5) {
-                totalErrors++;
-                continue;
-              }
-
-              if (!dryRun) {
-                db.relationships.set(fromId, toId, row.value);
-              }
-              cycleRelAnnotations++;
-              totalRelationshipAnnotations++;
-            }
+            // Process relationship annotations (cycle path — Set<toId> form)
+            const relResult = processRelationshipAnnotations({
+              rows: parseResult.relationships,
+              validSymbolIds,
+              validRelationships: cycleValidRelationships,
+              dryRun,
+              db,
+            });
+            totalRelationshipAnnotations += relResult.annotationCount;
+            totalErrors += relResult.errorCount;
 
             if (!isJson) {
               this.log(
-                chalk.green(`    ✓ Annotated ${cycleAnnotations} symbols, ${cycleRelAnnotations} relationships`)
+                chalk.green(
+                  `    ✓ Annotated ${symResult.annotationCount} symbols, ${relResult.annotationCount} relationships`
+                )
               );
             }
           }
@@ -417,15 +379,7 @@ export default class Annotate extends BaseLlmCommand {
       const enhancedSymbols = await enhanceSymbols(db, symbols, aspects, relationshipLimit);
 
       // Get current coverage for the prompt
-      const allCoverage = db.metadata.getAspectCoverage({
-        kind: flags.kind as string | undefined,
-        filePattern: flags.file as string | undefined,
-      });
-      const totalSymbols = db.metadata.getFilteredCount({
-        kind: flags.kind as string | undefined,
-        filePattern: flags.file as string | undefined,
-      });
-      const coverage = filterCoverageForAspects(allCoverage, aspects, totalSymbols);
+      const coverage = getCoverageForPrompt({ db, aspects, kind: kindFilter, filePattern: fileFilter });
 
       // Build prompt
       const symbolContexts: SymbolContextEnhanced[] = enhancedSymbols.map((s) => ({
@@ -515,7 +469,7 @@ export default class Annotate extends BaseLlmCommand {
       const depsById = new Map(enhancedSymbols.map((s) => [s.id, s.dependencies]));
       const kindById = new Map(enhancedSymbols.map((s) => [s.id, s.kind]));
 
-      // Build valid relationship map (from_id -> Set of valid to_ids)
+      // Build valid relationship map (from_id -> Map<toId, toName>)
       const validRelationships = new Map<number, Map<number, string>>();
       for (const s of enhancedSymbols) {
         const toMap = new Map<number, string>();
@@ -533,162 +487,42 @@ export default class Annotate extends BaseLlmCommand {
         totalErrors++;
       }
 
-      // Process symbol annotation rows
-      for (const row of parseResult.symbols) {
-        const symbolId = row.symbolId;
+      // Process symbol annotation rows (normal batch path — full AnnotationResult tracking)
+      const symResult = processSymbolAnnotations({
+        rows: parseResult.symbols,
+        validSymbolIds,
+        aspects,
+        sourceCodeById,
+        depsById,
+        kindById,
+        batchLanguage,
+        dryRun,
+        db,
+        symbolNameById,
+        verbose: ctx.verbose,
+        log: (msg) => this.log(msg),
+        isJson,
+      });
+      iterationResults.push(...symResult.results);
+      totalAnnotations += symResult.annotationCount;
+      totalErrors += symResult.errorCount;
 
-        // Validate symbol ID
-        if (!validSymbolIds.has(symbolId)) {
-          iterationResults.push({
-            symbolId,
-            symbolName: String(symbolId),
-            aspect: row.aspect,
-            value: row.value,
-            success: false,
-            error: `Invalid symbol ID: ${symbolId}`,
-          });
-          totalErrors++;
-          continue;
-        }
-
-        // Validate aspect
-        if (!aspects.includes(row.aspect)) {
-          iterationResults.push({
-            symbolId,
-            symbolName: symbolNameById.get(symbolId) || String(symbolId),
-            aspect: row.aspect,
-            value: row.value,
-            success: false,
-            error: `Unexpected aspect: ${row.aspect}`,
-          });
-          totalErrors++;
-          continue;
-        }
-
-        // Validate value (aspect-specific)
-        let value = row.value;
-        const validationError = validateAnnotationValue(
-          row.aspect,
-          value,
-          sourceCodeById.get(symbolId),
-          depsById.get(symbolId),
-          kindById.get(symbolId),
-          batchLanguage
-        );
-        if (validationError?.startsWith('overridden to true')) {
-          if (!isJson && ctx.verbose) {
-            this.log(chalk.yellow(`  Pure override for #${symbolId}: ${validationError}`));
-          }
-          value = 'true';
-        } else if (validationError?.startsWith('overridden')) {
-          // Pure gate triggered — override value to false and log
-          if (!isJson && ctx.verbose) {
-            this.log(chalk.yellow(`  Pure override for #${symbolId}: ${validationError}`));
-          }
-          value = 'false';
-        } else if (validationError) {
-          iterationResults.push({
-            symbolId,
-            symbolName: symbolNameById.get(symbolId) || String(symbolId),
-            aspect: row.aspect,
-            value,
-            success: false,
-            error: validationError,
-          });
-          totalErrors++;
-          continue;
-        }
-
-        // Persist (unless dry-run)
-        if (!dryRun) {
-          db.metadata.set(symbolId, row.aspect, value);
-        }
-
-        iterationResults.push({
-          symbolId,
-          symbolName: symbolNameById.get(symbolId) || String(symbolId),
-          aspect: row.aspect,
-          value,
-          success: true,
-        });
-        totalAnnotations++;
-      }
-
-      // Process relationship annotation rows
-      for (const row of parseResult.relationships) {
-        const fromId = row.fromId;
-        const toId = row.toId;
-
-        // Validate from_id
-        if (!validSymbolIds.has(fromId)) {
-          iterationRelResults.push({
-            fromId,
-            fromName: String(fromId),
-            toId,
-            toName: String(toId),
-            value: row.value,
-            success: false,
-            error: `Invalid from_id: ${fromId}`,
-          });
-          totalErrors++;
-          continue;
-        }
-
-        // Validate relationship exists
-        const toMap = validRelationships.get(fromId);
-        if (!toMap || !toMap.has(toId)) {
-          iterationRelResults.push({
-            fromId,
-            fromName: symbolNameById.get(fromId) || String(fromId),
-            toId,
-            toName: String(toId),
-            value: row.value,
-            success: false,
-            error: `Unexpected relationship: ${fromId} → ${toId}`,
-          });
-          totalErrors++;
-          continue;
-        }
-
-        // Validate value is not empty
-        if (!row.value || row.value.length < 5) {
-          const errorMsg = 'Relationship description must be at least 5 characters';
-          iterationRelResults.push({
-            fromId,
-            fromName: symbolNameById.get(fromId) || String(fromId),
-            toId,
-            toName: toMap.get(toId) || String(toId),
-            value: row.value,
-            success: false,
-            error: errorMsg,
-          });
-          retryQueue.add(fromId, toId, errorMsg);
-          totalErrors++;
-          continue;
-        }
-
-        // Persist (unless dry-run)
-        if (!dryRun) {
-          db.relationships.set(fromId, toId, row.value);
-        }
-
-        iterationRelResults.push({
-          fromId,
-          fromName: symbolNameById.get(fromId) || String(fromId),
-          toId,
-          toName: toMap.get(toId) || String(toId),
-          value: row.value,
-          success: true,
-        });
-        totalRelationshipAnnotations++;
-      }
+      // Process relationship annotation rows (normal batch path — Map<toId, toName> form)
+      const relResult = processRelationshipAnnotations({
+        rows: parseResult.relationships,
+        validSymbolIds,
+        validRelationships,
+        dryRun,
+        db,
+        symbolNameById,
+        retryQueue,
+      });
+      iterationRelResults.push(...relResult.results);
+      totalRelationshipAnnotations += relResult.annotationCount;
+      totalErrors += relResult.errorCount;
 
       // Get updated coverage
-      const updatedCoverage = db.metadata.getAspectCoverage({
-        kind: flags.kind as string | undefined,
-        filePattern: flags.file as string | undefined,
-      });
-      const finalCoverage = filterCoverageForAspects(updatedCoverage, aspects, totalSymbols);
+      const finalCoverage = getCoverageForPrompt({ db, aspects, kind: kindFilter, filePattern: fileFilter });
 
       // Get relationship coverage (handle missing table in older databases)
       let annotatedRels = 0;
@@ -709,8 +543,8 @@ export default class Annotate extends BaseLlmCommand {
       // Get ready/blocked counts
       const updatedResult = db.dependencies.getReadySymbols(primaryAspect, {
         limit: 1,
-        kind: flags.kind as string | undefined,
-        filePattern: flags.file as string | undefined,
+        kind: kindFilter,
+        filePattern: fileFilter,
       });
 
       const summary: IterationSummary = {
@@ -826,15 +660,7 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
     }
 
     // Final summary
-    const finalCoverageData = db.metadata.getAspectCoverage({
-      kind: flags.kind as string | undefined,
-      filePattern: flags.file as string | undefined,
-    });
-    const totalSymbols = db.metadata.getFilteredCount({
-      kind: flags.kind as string | undefined,
-      filePattern: flags.file as string | undefined,
-    });
-    const coverage = filterCoverageForAspects(finalCoverageData, aspects, totalSymbols);
+    const finalCoverageData = getCoverageForPrompt({ db, aspects, kind: kindFilter, filePattern: fileFilter });
 
     // Get final relationship coverage (handle missing table in older databases)
     let finalAnnotatedRels = 0;
@@ -858,7 +684,7 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
         totalAnnotations,
         totalRelationshipAnnotations,
         totalErrors,
-        coverage,
+        coverage: finalCoverageData,
         relationshipCoverage: finalRelCoverage,
       };
       this.log(JSON.stringify(jsonOutput, null, 2));
@@ -868,7 +694,7 @@ ${toIds.map((toId) => `${fromId},${toId},"<describe how ${def.name} uses this de
         totalRelationshipAnnotations,
         totalErrors,
         iteration - 1,
-        coverage,
+        finalCoverageData,
         finalRelCoverage
       )) {
         this.log(line);
