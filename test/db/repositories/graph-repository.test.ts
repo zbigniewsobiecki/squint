@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DefinitionRepository } from '../../../src/db/repositories/definition-repository.js';
+import { DependencyRepository } from '../../../src/db/repositories/dependency-repository.js';
 import { FileRepository } from '../../../src/db/repositories/file-repository.js';
 import { GraphRepository } from '../../../src/db/repositories/graph-repository.js';
 import { MetadataRepository } from '../../../src/db/repositories/metadata-repository.js';
@@ -12,6 +14,8 @@ describe('GraphRepository', () => {
   let fileRepo: FileRepository;
   let metadataRepo: MetadataRepository;
   let relationshipRepo: RelationshipRepository;
+  let definitionRepo: DefinitionRepository;
+  let dependencyRepo: DependencyRepository;
   let fileId: number;
   let defId1: number;
   let defId2: number;
@@ -21,10 +25,12 @@ describe('GraphRepository', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     db.exec(SCHEMA);
-    repo = new GraphRepository(db);
     fileRepo = new FileRepository(db);
     metadataRepo = new MetadataRepository(db);
     relationshipRepo = new RelationshipRepository(db);
+    definitionRepo = new DefinitionRepository(db);
+    dependencyRepo = new DependencyRepository(db);
+    repo = new GraphRepository(db, dependencyRepo, metadataRepo, relationshipRepo, definitionRepo);
 
     fileId = fileRepo.insert({
       path: '/test/file.ts',

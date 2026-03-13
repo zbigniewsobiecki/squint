@@ -56,13 +56,13 @@ export class IndexDatabase implements IIndexWriter {
     this.metadata = new MetadataRepository(this.conn);
     this.dependencies = new DependencyRepository(this.conn);
     this.relationships = new RelationshipRepository(this.conn);
-    this.domains = new DomainRepository(this.conn);
+    this.domains = new DomainRepository(this.conn, this.metadata);
     this.modules = new ModuleRepository(this.conn);
     this.interactions = new InteractionRepository(this.conn);
     this.contracts = new ContractRepository(this.conn);
     this.features = new FeatureRepository(this.conn);
     this.flows = new FlowRepository(this.conn);
-    this.graph = new GraphRepository(this.conn);
+    this.graph = new GraphRepository(this.conn, this.dependencies, this.metadata, this.relationships, this.definitions);
     this.callGraph = new CallGraphService(this.conn);
     this.interactionAnalysis = new InteractionAnalysis(this.conn);
     this.syncDirty = new SyncDirtyRepository(this.conn);
