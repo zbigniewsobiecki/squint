@@ -334,7 +334,7 @@ export default class Annotate extends BaseLlmCommand {
             const cycleDepsById = new Map(enhancedCycleSymbols.map((s) => [s.id, s.dependencies]));
             const cycleKindById = new Map(enhancedCycleSymbols.map((s) => [s.id, s.kind]));
 
-            // Process symbol annotations (cycle path — no symbolNameById, no result tracking)
+            // Process symbol annotations (cycle path — includes verbose logging, no symbolNameById)
             const symResult = processSymbolAnnotations({
               rows: parseResult.symbols,
               validSymbolIds,
@@ -345,6 +345,9 @@ export default class Annotate extends BaseLlmCommand {
               batchLanguage: cycleBatchLanguage,
               dryRun,
               db,
+              verbose: ctx.verbose,
+              log: (msg) => this.log(msg),
+              isJson,
             });
             totalAnnotations += symResult.annotationCount;
             totalErrors += symResult.errorCount;
