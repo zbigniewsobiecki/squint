@@ -1,8 +1,9 @@
 /**
+ * @deprecated Import from specific modules instead:
+ * - `src/db/connection.ts` for connection management
+ * - `src/db/repositories/*.ts` for specific repositories
+ *
  * This file re-exports from the refactored database modules for backward compatibility.
- * New code should import directly from the specific modules:
- * - src/db/connection.ts for connection management
- * - src/db/repositories/*.ts for specific repositories
  */
 
 // Re-export the facade as IndexDatabase for backward compatibility
