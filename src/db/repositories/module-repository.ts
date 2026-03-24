@@ -77,14 +77,14 @@ function toModuleWithMembers(
  * Repository for module tree operations.
  */
 export class ModuleRepository {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database) {
+    ensureModulesTables(this.db);
+  }
 
   /**
    * Ensure the root "project" module exists and return its ID.
    */
   ensureRoot(): number {
-    ensureModulesTables(this.db);
-
     const existing = this.db
       .prepare(`
       SELECT id FROM modules WHERE full_path = 'project'
@@ -105,8 +105,6 @@ export class ModuleRepository {
    * Insert a new module in the tree.
    */
   insert(parentId: number | null, slug: string, name: string, description?: string, isTest?: boolean): number {
-    ensureModulesTables(this.db);
-
     // Calculate full_path and depth
     let fullPath: string;
     let depth: number;
@@ -147,7 +145,6 @@ export class ModuleRepository {
    * Get a module by its full path.
    */
   getByPath(fullPath: string): Module | null {
-    ensureModulesTables(this.db);
     const row = this.db
       .prepare(`SELECT ${MODULE_COLS} FROM modules WHERE full_path = ?`)
       .get(fullPath) as RawModule | null;
@@ -159,7 +156,6 @@ export class ModuleRepository {
    * Get a module by ID.
    */
   getById(id: number): Module | null {
-    ensureModulesTables(this.db);
     const row = this.db.prepare(`SELECT ${MODULE_COLS} FROM modules WHERE id = ?`).get(id) as RawModule | null;
     if (!row) return null;
     return toModule(row);
@@ -169,7 +165,6 @@ export class ModuleRepository {
    * Get direct children of a module.
    */
   getChildren(moduleId: number): Module[] {
-    ensureModulesTables(this.db);
     const rows = this.db
       .prepare(`SELECT ${MODULE_COLS} FROM modules WHERE parent_id = ? ORDER BY slug`)
       .all(moduleId) as RawModule[];
@@ -180,7 +175,6 @@ export class ModuleRepository {
    * Get all modules as a flat list.
    */
   getAll(): Module[] {
-    ensureModulesTables(this.db);
     const rows = this.db.prepare(`SELECT ${MODULE_COLS} FROM modules ORDER BY depth, full_path`).all() as RawModule[];
     return rows.map(toModule);
   }
@@ -189,7 +183,6 @@ export class ModuleRepository {
    * Get the module tree as a recursive structure.
    */
   getTree(): ModuleTreeNode | null {
-    ensureModulesTables(this.db);
     const modules = this.getAll();
     if (modules.length === 0) return null;
 
@@ -200,7 +193,6 @@ export class ModuleRepository {
    * Delete all modules and their memberships.
    */
   clear(): void {
-    ensureModulesTables(this.db);
     this.db.exec('DELETE FROM modules');
   }
 
@@ -208,7 +200,6 @@ export class ModuleRepository {
    * Assign a symbol (definition) to a module.
    */
   assignSymbol(definitionId: number, moduleId: number): void {
-    ensureModulesTables(this.db);
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO module_members (module_id, definition_id)
       VALUES (?, ?)
@@ -220,8 +211,6 @@ export class ModuleRepository {
    * Get all symbols not yet assigned to any module.
    */
   getUnassigned(): AnnotatedSymbolInfo[] {
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT
         d.id,
@@ -279,8 +268,6 @@ export class ModuleRepository {
    * Get symbols assigned to a specific module.
    */
   getSymbols(moduleId: number): ModuleSymbol[] {
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT
         d.id,
@@ -304,8 +291,6 @@ export class ModuleRepository {
    * Get a module with all its members.
    */
   getWithMembers(moduleId: number): ModuleWithMembers | null {
-    ensureModulesTables(this.db);
-
     const module = this.getById(moduleId);
     if (!module) return null;
 
@@ -320,7 +305,6 @@ export class ModuleRepository {
    * Get all modules with their members.
    */
   getAllWithMembers(): ModuleWithMembers[] {
-    ensureModulesTables(this.db);
     const modules = this.getAll();
     return modules.map((m) => {
       const members = this.getSymbols(m.id);
@@ -335,8 +319,6 @@ export class ModuleRepository {
    * Get module statistics.
    */
   getStats(): ModuleStats {
-    ensureModulesTables(this.db);
-
     const moduleCount = (this.db.prepare('SELECT COUNT(*) as count FROM modules').get() as { count: number }).count;
     const assigned = (this.db.prepare('SELECT COUNT(*) as count FROM module_members').get() as { count: number }).count;
     const totalDefs = (this.db.prepare('SELECT COUNT(*) as count FROM definitions').get() as { count: number }).count;
@@ -352,7 +334,6 @@ export class ModuleRepository {
    * Get count of modules.
    */
   getCount(): number {
-    ensureModulesTables(this.db);
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM modules');
     const row = stmt.get() as { count: number };
     return row.count;
@@ -362,7 +343,6 @@ export class ModuleRepository {
    * Get module membership for a definition.
    */
   getDefinitionModule(definitionId: number): { module: Module } | null {
-    ensureModulesTables(this.db);
     const row = this.db
       .prepare(
         `SELECT ${MODULE_COLS_M} FROM module_members mm JOIN modules m ON mm.module_id = m.id WHERE mm.definition_id = ?`
@@ -385,8 +365,6 @@ export class ModuleRepository {
    * Returns modules with member_count > threshold, including their member details.
    */
   getModulesExceedingThreshold(threshold: number): ModuleWithMembers[] {
-    ensureModulesTables(this.db);
-
     const rawModules = this.db
       .prepare(`
       SELECT ${MODULE_COLS_M}, COUNT(mm.definition_id) as memberCount
@@ -405,8 +383,6 @@ export class ModuleRepository {
    * Get detailed member info for a module (used by deepen phase).
    */
   getMemberInfo(moduleId: number): ModuleMemberInfo[] {
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT
         mm.definition_id as definitionId,
@@ -431,8 +407,6 @@ export class ModuleRepository {
    * Each depth-1 module gets a sequential index; descendants inherit their ancestor's index.
    */
   assignColorIndices(): void {
-    ensureModulesTables(this.db);
-
     const depth1Modules = this.db
       .prepare('SELECT id, full_path FROM modules WHERE depth = 1 ORDER BY id')
       .all() as Array<{ id: number; full_path: string }>;
@@ -455,7 +429,6 @@ export class ModuleRepository {
    * Get IDs of all test modules (is_test = 1).
    */
   getTestModuleIds(): Set<number> {
-    ensureModulesTables(this.db);
     const stmt = this.db.prepare('SELECT id FROM modules WHERE is_test = 1');
     const rows = stmt.all() as Array<{ id: number }>;
     return new Set(rows.map((r) => r.id));
@@ -487,8 +460,6 @@ export class ModuleRepository {
    * Update a module's name and/or description.
    */
   update(id: number, updates: { name?: string; description?: string }): boolean {
-    ensureModulesTables(this.db);
-
     const sets: string[] = [];
     const params: (string | null)[] = [];
 
@@ -514,8 +485,6 @@ export class ModuleRepository {
    * Throws an error if the module has members unless the caller handles that externally.
    */
   delete(id: number): boolean {
-    ensureModulesTables(this.db);
-
     // Check for members
     const memberCount = (
       this.db.prepare('SELECT COUNT(*) as count FROM module_members WHERE module_id = ?').get(id) as { count: number }
@@ -534,7 +503,6 @@ export class ModuleRepository {
    * Remove a symbol from its module assignment.
    */
   unassignSymbol(definitionId: number): boolean {
-    ensureModulesTables(this.db);
     const stmt = this.db.prepare('DELETE FROM module_members WHERE definition_id = ?');
     const result = stmt.run(definitionId);
     return result.changes > 0;
@@ -545,8 +513,6 @@ export class ModuleRepository {
    * Leaf = not a parent of any other module. Ordered by member count DESC (largest first).
    */
   getLeafModulesExceedingThreshold(threshold: number): ModuleWithMembers[] {
-    ensureModulesTables(this.db);
-
     const rawModules = this.db
       .prepare(`
       SELECT ${MODULE_COLS_M}, COUNT(mm.definition_id) as memberCount
@@ -567,8 +533,6 @@ export class ModuleRepository {
    * These need rebalancing, not splitting.
    */
   getBranchModulesWithDirectMembers(threshold: number): ModuleWithMembers[] {
-    ensureModulesTables(this.db);
-
     const rawModules = this.db
       .prepare(`
       SELECT ${MODULE_COLS_M}, COUNT(mm.definition_id) as memberCount
@@ -589,7 +553,6 @@ export class ModuleRepository {
    * Returns definition_id, module_id, and file path for every module member.
    */
   getAssignedSymbolsByFile(): Array<{ definitionId: number; moduleId: number; filePath: string }> {
-    ensureModulesTables(this.db);
     return this.db
       .prepare(
         `SELECT mm.definition_id as definitionId, mm.module_id as moduleId, f.path as filePath
@@ -608,7 +571,6 @@ export class ModuleRepository {
    * limitation of the extends_name schema.
    */
   getBaseClassCandidates(): Array<{ definitionId: number; name: string; moduleId: number; extendedByCount: number }> {
-    ensureModulesTables(this.db);
     return this.db
       .prepare(`
         SELECT d.id as definitionId, d.name, mm.module_id as moduleId, cnt.extendedByCount
@@ -633,7 +595,6 @@ export class ModuleRepository {
    * limitation of the extends_name schema.
    */
   getExtenderModules(className: string): Array<{ definitionId: number; moduleId: number }> {
-    ensureModulesTables(this.db);
     return this.db
       .prepare(`
         SELECT d.id as definitionId, mm.module_id as moduleId
@@ -649,7 +610,6 @@ export class ModuleRepository {
    * Used to avoid N+1 queries when processing multiple base class candidates.
    */
   getAllExtenderModulesByClass(): Map<string, Array<{ definitionId: number; moduleId: number }>> {
-    ensureModulesTables(this.db);
     const rows = this.db
       .prepare(`
         SELECT d.extends_name as className, d.id as definitionId, mm.module_id as moduleId
@@ -672,8 +632,6 @@ export class ModuleRepository {
    * Get all callers of a definition with their module assignments.
    */
   getIncomingEdgesFor(definitionId: number): IncomingEdge[] {
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT
         caller.id as callerId,

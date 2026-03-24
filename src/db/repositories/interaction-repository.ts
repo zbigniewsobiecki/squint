@@ -76,15 +76,17 @@ function parseSymbols(row: Interaction): Interaction {
  * Repository for interaction (module-to-module edge) operations.
  */
 export class InteractionRepository {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database) {
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+    ensureInteractionDefinitionLinks(this.db);
+  }
 
   /**
    * Insert a new interaction.
    * Throws if an interaction between these modules already exists.
    */
   insert(fromModuleId: number, toModuleId: number, options?: InteractionInsertOptions): number {
-    ensureInteractionsTables(this.db);
-
     const stmt = this.db.prepare(`
       INSERT INTO interactions (from_module_id, to_module_id, direction, weight, pattern, symbols, semantic, source, confidence)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -109,8 +111,6 @@ export class InteractionRepository {
    * Upsert an interaction (insert or update on conflict).
    */
   upsert(fromModuleId: number, toModuleId: number, options?: InteractionInsertOptions): number {
-    ensureInteractionsTables(this.db);
-
     const existing = this.getByModules(fromModuleId, toModuleId);
     if (existing) {
       this.update(existing.id, {
@@ -137,7 +137,6 @@ export class InteractionRepository {
    * Get interaction by ID.
    */
   getById(id: number): Interaction | null {
-    ensureInteractionsTables(this.db);
     const stmt = this.db.prepare(`SELECT ${INTERACTION_COLS} FROM interactions WHERE id = ?`);
     const row = stmt.get(id) as Interaction | undefined;
     if (!row) return null;
@@ -148,7 +147,6 @@ export class InteractionRepository {
    * Get interaction by module pair.
    */
   getByModules(fromModuleId: number, toModuleId: number): Interaction | null {
-    ensureInteractionsTables(this.db);
     const stmt = this.db.prepare(
       `SELECT ${INTERACTION_COLS} FROM interactions WHERE from_module_id = ? AND to_module_id = ?`
     );
@@ -161,8 +159,6 @@ export class InteractionRepository {
    * Get all interactions with module paths.
    */
   getAll(): InteractionWithPaths[] {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
     return this.db.prepare(`${INTERACTION_WITH_PATHS_SELECT} ORDER BY i.weight DESC`).all() as InteractionWithPaths[];
   }
 
@@ -170,8 +166,6 @@ export class InteractionRepository {
    * Get interactions by pattern.
    */
   getByPattern(pattern: 'utility' | 'business'): InteractionWithPaths[] {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
     return this.db
       .prepare(`${INTERACTION_WITH_PATHS_SELECT} WHERE i.pattern = ? ORDER BY i.weight DESC`)
       .all(pattern) as InteractionWithPaths[];
@@ -181,8 +175,6 @@ export class InteractionRepository {
    * Get interactions from a specific module.
    */
   getFromModule(moduleId: number): InteractionWithPaths[] {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
     return this.db
       .prepare(`${INTERACTION_WITH_PATHS_SELECT} WHERE i.from_module_id = ? ORDER BY i.weight DESC`)
       .all(moduleId) as InteractionWithPaths[];
@@ -192,8 +184,6 @@ export class InteractionRepository {
    * Get interactions to a specific module.
    */
   getToModule(moduleId: number): InteractionWithPaths[] {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
     return this.db
       .prepare(`${INTERACTION_WITH_PATHS_SELECT} WHERE i.to_module_id = ? ORDER BY i.weight DESC`)
       .all(moduleId) as InteractionWithPaths[];
@@ -205,8 +195,6 @@ export class InteractionRepository {
    */
   getIncomingForSymbols(moduleId: number, symbolNames: string[]): InteractionWithPaths[] {
     if (symbolNames.length === 0) return [];
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
     const placeholders = symbolNames.map(() => '?').join(', ');
     return this.db
       .prepare(
@@ -225,8 +213,6 @@ export class InteractionRepository {
    */
   getOutgoingForSymbols(moduleId: number, calledSymbolNames: string[]): InteractionWithPaths[] {
     if (calledSymbolNames.length === 0) return [];
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
     const placeholders = calledSymbolNames.map(() => '?').join(', ');
     return this.db
       .prepare(
@@ -243,8 +229,6 @@ export class InteractionRepository {
    * Update an interaction.
    */
   update(id: number, updates: InteractionUpdateOptions): boolean {
-    ensureInteractionsTables(this.db);
-
     const sets: string[] = [];
     const params: (string | null)[] = [];
 
@@ -277,7 +261,6 @@ export class InteractionRepository {
    * Delete an interaction.
    */
   delete(id: number): boolean {
-    ensureInteractionsTables(this.db);
     const stmt = this.db.prepare('DELETE FROM interactions WHERE id = ?');
     const result = stmt.run(id);
     return result.changes > 0;
@@ -287,7 +270,6 @@ export class InteractionRepository {
    * Delete all interactions.
    */
   clear(): number {
-    ensureInteractionsTables(this.db);
     const stmt = this.db.prepare('DELETE FROM interactions');
     const result = stmt.run();
     return result.changes;
@@ -297,7 +279,6 @@ export class InteractionRepository {
    * Get count of interactions.
    */
   getCount(): number {
-    ensureInteractionsTables(this.db);
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM interactions');
     const row = stmt.get() as { count: number };
     return row.count;
@@ -307,8 +288,6 @@ export class InteractionRepository {
    * Get interaction statistics.
    */
   getStats(): InteractionStats {
-    ensureInteractionsTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT
         COUNT(*) as totalCount,
@@ -324,8 +303,6 @@ export class InteractionRepository {
    * Get interactions by source type.
    */
   getBySource(source: InteractionSource): InteractionWithPaths[] {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
     return this.db
       .prepare(`${INTERACTION_WITH_PATHS_SELECT} WHERE i.source = ? ORDER BY i.weight DESC`)
       .all(source) as InteractionWithPaths[];
@@ -335,7 +312,6 @@ export class InteractionRepository {
    * Get count of interactions by source type.
    */
   getCountBySource(source: InteractionSource): number {
-    ensureInteractionsTables(this.db);
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM interactions WHERE source = ?');
     const row = stmt.get(source) as { count: number };
     return row.count;
@@ -346,7 +322,6 @@ export class InteractionRepository {
    * Used by fan-in anomaly detection to bulk-remove hallucinated connections.
    */
   removeInferredToModule(targetModuleId: number): number {
-    ensureInteractionsTables(this.db);
     const stmt = this.db.prepare("DELETE FROM interactions WHERE to_module_id = ? AND source = 'llm-inferred'");
     const result = stmt.run(targetModuleId);
     return result.changes;
@@ -358,7 +333,6 @@ export class InteractionRepository {
    */
   deleteForModulePairsBothDirty(moduleIds: number[]): number {
     if (moduleIds.length === 0) return 0;
-    ensureInteractionsTables(this.db);
 
     const CHUNK_SIZE = 400;
     let totalRemoved = 0;
@@ -382,8 +356,6 @@ export class InteractionRepository {
    */
   getForModules(moduleIds: number[]): InteractionWithPaths[] {
     if (moduleIds.length === 0) return [];
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
 
     const placeholders = moduleIds.map(() => '?').join(', ');
     return this.db
@@ -447,8 +419,6 @@ export class InteractionRepository {
    * Returns a Map from fileId to moduleId.
    */
   getFileToModuleMap(): Map<number, number> {
-    ensureModulesTables(this.db);
-
     const rows = this.db
       .prepare(`
         SELECT DISTINCT d.file_id, mm.module_id
@@ -479,9 +449,6 @@ export class InteractionRepository {
     weight: number;
     isTypeOnly: boolean;
   }> {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT
         from_mm.module_id as fromModuleId,
@@ -526,9 +493,6 @@ export class InteractionRepository {
     importCount: number;
     isTypeOnly: boolean;
   }> {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT
         from_mm.module_id as fromModuleId,
@@ -577,8 +541,6 @@ export class InteractionRepository {
    * Join: module_members → definitions → files → imports → files → definitions → module_members
    */
   hasModuleImportPath(fromModuleId: number, toModuleId: number): boolean {
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT EXISTS (
         SELECT 1
@@ -602,8 +564,6 @@ export class InteractionRepository {
    * Returns symbol names and kinds for enriching prompts and deriving `symbols` field.
    */
   getModuleImportedSymbols(fromModuleId: number, toModuleId: number): Array<{ name: string; kind: string }> {
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT DISTINCT to_d.name, to_d.kind
       FROM module_members from_mm
@@ -633,8 +593,6 @@ export class InteractionRepository {
     toDefinitionId: number,
     contractId: number
   ): void {
-    ensureInteractionDefinitionLinks(this.db);
-
     this.db
       .prepare(
         `INSERT OR IGNORE INTO interaction_definition_links
@@ -648,8 +606,6 @@ export class InteractionRepository {
    * Get all definition links for a specific interaction.
    */
   getDefinitionLinksForInteraction(interactionId: number): InteractionDefinitionLink[] {
-    ensureInteractionDefinitionLinks(this.db);
-
     return this.db
       .prepare(
         `SELECT interaction_id as interactionId, from_definition_id as fromDefinitionId,
@@ -670,8 +626,6 @@ export class InteractionRepository {
       contractKey: string;
     }
   > {
-    ensureInteractionDefinitionLinks(this.db);
-
     return this.db
       .prepare(
         `SELECT idl.interaction_id as interactionId,
@@ -701,8 +655,6 @@ export class InteractionRepository {
    * Used by FlowTracer for definition-level bridge precision.
    */
   getAllDefinitionLinks(): Array<InteractionDefinitionLink & { toModuleId: number; source: string }> {
-    ensureInteractionDefinitionLinks(this.db);
-
     return this.db
       .prepare(
         `SELECT idl.interaction_id as interactionId,

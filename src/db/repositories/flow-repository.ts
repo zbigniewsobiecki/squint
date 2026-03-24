@@ -61,14 +61,16 @@ const FLOW_COLS = `
  * Repository for flow (user journey) operations.
  */
 export class FlowRepository {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database) {
+    ensureFlowsTables(this.db);
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+  }
 
   /**
    * Insert a new flow.
    */
   insert(name: string, slug: string, options?: FlowInsertOptions): number {
-    ensureFlowsTables(this.db);
-
     const stmt = this.db.prepare(`
       INSERT INTO flows (name, slug, entry_point_module_id, entry_point_id, entry_path, stakeholder, description, action_type, target_entity, tier)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -94,7 +96,6 @@ export class FlowRepository {
    * Get flow by ID.
    */
   getById(id: number): Flow | null {
-    ensureFlowsTables(this.db);
     const row = this.db.prepare(`SELECT ${FLOW_COLS} FROM flows WHERE id = ?`).get(id) as Flow | undefined;
     return row ?? null;
   }
@@ -103,7 +104,6 @@ export class FlowRepository {
    * Get flow by slug.
    */
   getBySlug(slug: string): Flow | null {
-    ensureFlowsTables(this.db);
     const row = this.db.prepare(`SELECT ${FLOW_COLS} FROM flows WHERE slug = ?`).get(slug) as Flow | undefined;
     return row ?? null;
   }
@@ -112,7 +112,6 @@ export class FlowRepository {
    * Get all flows.
    */
   getAll(): Flow[] {
-    ensureFlowsTables(this.db);
     return this.db.prepare(`SELECT ${FLOW_COLS} FROM flows ORDER BY name`).all() as Flow[];
   }
 
@@ -120,7 +119,6 @@ export class FlowRepository {
    * Get flows by stakeholder.
    */
   getByStakeholder(stakeholder: FlowStakeholder): Flow[] {
-    ensureFlowsTables(this.db);
     return this.db
       .prepare(`SELECT ${FLOW_COLS} FROM flows WHERE stakeholder = ? ORDER BY name`)
       .all(stakeholder) as Flow[];
@@ -130,7 +128,6 @@ export class FlowRepository {
    * Get flows by entry point definition ID.
    */
   getByEntryPoint(entryPointId: number): Flow[] {
-    ensureFlowsTables(this.db);
     return this.db
       .prepare(`SELECT ${FLOW_COLS} FROM flows WHERE entry_point_id = ? ORDER BY name`)
       .all(entryPointId) as Flow[];
@@ -140,7 +137,6 @@ export class FlowRepository {
    * Get flows by entry point module ID.
    */
   getByEntryPointModule(entryPointModuleId: number): Flow[] {
-    ensureFlowsTables(this.db);
     return this.db
       .prepare(`SELECT ${FLOW_COLS} FROM flows WHERE entry_point_module_id = ? ORDER BY name`)
       .all(entryPointModuleId) as Flow[];
@@ -150,10 +146,6 @@ export class FlowRepository {
    * Get flow with all its steps and interaction details.
    */
   getWithSteps(flowId: number): FlowWithSteps | null {
-    ensureFlowsTables(this.db);
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
     const flow = this.getById(flowId);
     if (!flow) return null;
 
@@ -212,8 +204,6 @@ export class FlowRepository {
    * Update a flow.
    */
   update(flowId: number, updates: FlowUpdateOptions): boolean {
-    ensureFlowsTables(this.db);
-
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
 
@@ -262,7 +252,6 @@ export class FlowRepository {
    * Delete a flow (cascade deletes steps).
    */
   delete(flowId: number): boolean {
-    ensureFlowsTables(this.db);
     const stmt = this.db.prepare('DELETE FROM flows WHERE id = ?');
     const result = stmt.run(flowId);
     return result.changes > 0;
@@ -272,7 +261,6 @@ export class FlowRepository {
    * Delete all flows.
    */
   clear(): number {
-    ensureFlowsTables(this.db);
     const stmt = this.db.prepare('DELETE FROM flows');
     const result = stmt.run();
     return result.changes;
@@ -282,7 +270,6 @@ export class FlowRepository {
    * Get count of flows.
    */
   getCount(): number {
-    ensureFlowsTables(this.db);
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM flows');
     const row = stmt.get() as { count: number };
     return row.count;
@@ -296,8 +283,6 @@ export class FlowRepository {
    * Add a step to a flow.
    */
   addStep(flowId: number, interactionId: number, stepOrder?: number): void {
-    ensureFlowsTables(this.db);
-
     // Auto-calculate step_order if not provided
     let order = stepOrder;
     if (order === undefined) {
@@ -320,8 +305,6 @@ export class FlowRepository {
    * Add multiple steps to a flow in order.
    */
   addSteps(flowId: number, interactionIds: number[]): void {
-    ensureFlowsTables(this.db);
-
     const stmt = this.db.prepare(`
       INSERT INTO flow_steps (flow_id, step_order, interaction_id)
       VALUES (?, ?, ?)
@@ -336,7 +319,6 @@ export class FlowRepository {
    * Remove a step from a flow.
    */
   removeStep(flowId: number, stepOrder: number): boolean {
-    ensureFlowsTables(this.db);
     const stmt = this.db.prepare('DELETE FROM flow_steps WHERE flow_id = ? AND step_order = ?');
     const result = stmt.run(flowId, stepOrder);
     return result.changes > 0;
@@ -346,7 +328,6 @@ export class FlowRepository {
    * Clear all steps from a flow.
    */
   clearSteps(flowId: number): number {
-    ensureFlowsTables(this.db);
     const stmt = this.db.prepare('DELETE FROM flow_steps WHERE flow_id = ?');
     const result = stmt.run(flowId);
     return result.changes;
@@ -356,7 +337,6 @@ export class FlowRepository {
    * Get steps for a flow.
    */
   getSteps(flowId: number): FlowStep[] {
-    ensureFlowsTables(this.db);
     const stmt = this.db.prepare(`
       SELECT
         flow_id as flowId,
@@ -373,8 +353,6 @@ export class FlowRepository {
    * Reorder steps in a flow.
    */
   reorderSteps(flowId: number, interactionIds: number[]): void {
-    ensureFlowsTables(this.db);
-
     // Clear existing steps
     this.clearSteps(flowId);
 
@@ -390,8 +368,6 @@ export class FlowRepository {
    * Add a definition-level step to a flow.
    */
   addDefinitionStep(flowId: number, fromDefinitionId: number, toDefinitionId: number, stepOrder?: number): void {
-    ensureFlowsTables(this.db);
-
     // Auto-calculate step_order if not provided
     let order = stepOrder;
     if (order === undefined) {
@@ -414,8 +390,6 @@ export class FlowRepository {
    * Add multiple definition-level steps to a flow in order.
    */
   addDefinitionSteps(flowId: number, steps: Array<{ fromDefinitionId: number; toDefinitionId: number }>): void {
-    ensureFlowsTables(this.db);
-
     const stmt = this.db.prepare(`
       INSERT INTO flow_definition_steps (flow_id, step_order, from_definition_id, to_definition_id)
       VALUES (?, ?, ?, ?)
@@ -430,7 +404,6 @@ export class FlowRepository {
    * Clear all definition-level steps from a flow.
    */
   clearDefinitionSteps(flowId: number): number {
-    ensureFlowsTables(this.db);
     const stmt = this.db.prepare('DELETE FROM flow_definition_steps WHERE flow_id = ?');
     const result = stmt.run(flowId);
     return result.changes;
@@ -440,7 +413,6 @@ export class FlowRepository {
    * Get definition-level steps for a flow.
    */
   getDefinitionSteps(flowId: number): FlowDefinitionStep[] {
-    ensureFlowsTables(this.db);
     const stmt = this.db.prepare(`
       SELECT
         flow_id as flowId,
@@ -458,8 +430,6 @@ export class FlowRepository {
    * Get flow with all its definition-level steps and details.
    */
   getWithDefinitionSteps(flowId: number): FlowWithDefinitionSteps | null {
-    ensureFlowsTables(this.db);
-
     const flow = this.getById(flowId);
     if (!flow) return null;
 
@@ -509,7 +479,6 @@ export class FlowRepository {
    * Get count of definition-level steps for a flow.
    */
   getDefinitionStepCount(flowId: number): number {
-    ensureFlowsTables(this.db);
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM flow_definition_steps WHERE flow_id = ?');
     const row = stmt.get(flowId) as { count: number };
     return row.count;
@@ -523,8 +492,6 @@ export class FlowRepository {
    * Add subflow step references to a composite flow.
    */
   addSubflowSteps(flowId: number, subflowIds: number[]): void {
-    ensureFlowsTables(this.db);
-
     const stmt = this.db.prepare(`
       INSERT INTO flow_subflow_steps (flow_id, step_order, subflow_id)
       VALUES (?, ?, ?)
@@ -539,7 +506,6 @@ export class FlowRepository {
    * Get subflow steps for a composite flow.
    */
   getSubflowSteps(flowId: number): FlowSubflowStep[] {
-    ensureFlowsTables(this.db);
     const stmt = this.db.prepare(`
       SELECT
         flow_id as flowId,
@@ -556,7 +522,6 @@ export class FlowRepository {
    * Clear all subflow steps from a flow.
    */
   clearSubflowSteps(flowId: number): number {
-    ensureFlowsTables(this.db);
     const stmt = this.db.prepare('DELETE FROM flow_subflow_steps WHERE flow_id = ?');
     const result = stmt.run(flowId);
     return result.changes;
@@ -566,7 +531,6 @@ export class FlowRepository {
    * Get flows by tier.
    */
   getByTier(tier: number): Flow[] {
-    ensureFlowsTables(this.db);
     return this.db.prepare(`SELECT ${FLOW_COLS} FROM flows WHERE tier = ? ORDER BY name`).all(tier) as Flow[];
   }
 
@@ -604,8 +568,6 @@ export class FlowRepository {
    * Get flow statistics.
    */
   getStats(): FlowStats {
-    ensureFlowsTables(this.db);
-
     const flowCount = this.getCount();
 
     const withEntryStmt = this.db.prepare(`
@@ -645,9 +607,6 @@ export class FlowRepository {
    * Shows how many interactions are covered by flows.
    */
   getCoverage(): FlowCoverageStats {
-    ensureFlowsTables(this.db);
-    ensureInteractionsTables(this.db);
-
     // Exclude ast-import and test-internal interactions from the total (runtime only)
     const totalStmt = this.db.prepare(
       "SELECT COUNT(*) as count FROM interactions WHERE source != 'ast-import' AND (pattern IS NULL OR pattern != 'test-internal')"
@@ -675,7 +634,6 @@ export class FlowRepository {
    * Get flows that include a specific interaction.
    */
   getFlowsWithInteraction(interactionId: number): Flow[] {
-    ensureFlowsTables(this.db);
     return this.db
       .prepare(
         `SELECT DISTINCT
@@ -700,7 +658,6 @@ export class FlowRepository {
    * Get flows that involve a specific definition (as from or to in definition steps).
    */
   getFlowsWithDefinition(definitionId: number): Flow[] {
-    ensureFlowsTables(this.db);
     return this.db
       .prepare(
         `SELECT DISTINCT
@@ -725,10 +682,6 @@ export class FlowRepository {
    * Get uncovered interactions (not part of any flow).
    */
   getUncoveredInteractions(): InteractionWithPaths[] {
-    ensureFlowsTables(this.db);
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT
         i.id,

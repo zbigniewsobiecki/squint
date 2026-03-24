@@ -9,14 +9,14 @@ import type { InteractionRepository } from './interaction-repository.js';
  * Extracted from InteractionRepository to separate call graph analysis from CRUD.
  */
 export class CallGraphService {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database) {
+    ensureModulesTables(this.db);
+  }
 
   /**
    * Get the module-level call graph (for detecting interactions).
    */
   getModuleCallGraph(): ModuleCallEdge[] {
-    ensureModulesTables(this.db);
-
     // Get symbol-level call graph
     const symbolEdges = queryCallGraphEdges(this.db, { includeJsx: true });
 
@@ -71,8 +71,6 @@ export class CallGraphService {
    * When moduleIds is provided, only returns edges touching those modules.
    */
   getEnrichedModuleCallGraph(moduleIds?: Set<number>): EnrichedModuleCallEdge[] {
-    ensureModulesTables(this.db);
-
     // Build optional WHERE clause for module filtering
     let moduleFilter = '';
     const filterParams: number[] = [];

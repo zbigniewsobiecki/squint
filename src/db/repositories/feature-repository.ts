@@ -10,14 +10,15 @@ export interface FeatureInsertOptions {
  * Repository for feature (product-level flow grouping) operations.
  */
 export class FeatureRepository {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database) {
+    ensureFeaturesTables(this.db);
+    ensureFlowsTables(this.db);
+  }
 
   /**
    * Insert a new feature.
    */
   insert(name: string, slug: string, options?: FeatureInsertOptions): number {
-    ensureFeaturesTables(this.db);
-
     const stmt = this.db.prepare(`
       INSERT INTO features (name, slug, description)
       VALUES (?, ?, ?)
@@ -31,8 +32,6 @@ export class FeatureRepository {
    * Add flow associations to a feature.
    */
   addFlows(featureId: number, flowIds: number[]): void {
-    ensureFeaturesTables(this.db);
-
     const stmt = this.db.prepare(`
       INSERT INTO feature_flows (feature_id, flow_id)
       VALUES (?, ?)
@@ -47,7 +46,6 @@ export class FeatureRepository {
    * Get feature by ID.
    */
   getById(id: number): Feature | null {
-    ensureFeaturesTables(this.db);
     const stmt = this.db.prepare(`
       SELECT
         id,
@@ -66,7 +64,6 @@ export class FeatureRepository {
    * Get feature by slug.
    */
   getBySlug(slug: string): Feature | null {
-    ensureFeaturesTables(this.db);
     const stmt = this.db.prepare(`
       SELECT
         id,
@@ -85,7 +82,6 @@ export class FeatureRepository {
    * Get all features.
    */
   getAll(): Feature[] {
-    ensureFeaturesTables(this.db);
     const stmt = this.db.prepare(`
       SELECT
         id,
@@ -103,9 +99,6 @@ export class FeatureRepository {
    * Get a feature with its associated flows.
    */
   getWithFlows(featureId: number): FeatureWithFlows | null {
-    ensureFeaturesTables(this.db);
-    ensureFlowsTables(this.db);
-
     const feature = this.getById(featureId);
     if (!feature) return null;
 
@@ -137,7 +130,6 @@ export class FeatureRepository {
    * Get features associated with a specific flow.
    */
   getFeaturesForFlow(flowId: number): Feature[] {
-    ensureFeaturesTables(this.db);
     return this.db
       .prepare(
         `SELECT f.id, f.name, f.slug, f.description, f.created_at as createdAt
@@ -153,7 +145,6 @@ export class FeatureRepository {
    * Get count of features.
    */
   getCount(): number {
-    ensureFeaturesTables(this.db);
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM features');
     const row = stmt.get() as { count: number };
     return row.count;
@@ -163,7 +154,6 @@ export class FeatureRepository {
    * Get count of flows assigned to at least one feature.
    */
   getAssignedFlowCount(): number {
-    ensureFeaturesTables(this.db);
     const stmt = this.db.prepare('SELECT COUNT(DISTINCT flow_id) as count FROM feature_flows');
     const row = stmt.get() as { count: number };
     return row.count;
@@ -173,8 +163,6 @@ export class FeatureRepository {
    * Update a feature's name and/or description.
    */
   update(id: number, updates: { name?: string; description?: string }): boolean {
-    ensureFeaturesTables(this.db);
-
     const sets: string[] = [];
     const params: (string | null)[] = [];
 
@@ -199,8 +187,6 @@ export class FeatureRepository {
    * Delete a feature and cascade delete its flow associations.
    */
   delete(id: number): boolean {
-    ensureFeaturesTables(this.db);
-
     // Delete flow associations first
     this.db.prepare('DELETE FROM feature_flows WHERE feature_id = ?').run(id);
 
@@ -213,7 +199,6 @@ export class FeatureRepository {
    * Remove a flow-feature association.
    */
   removeFlow(featureId: number, flowId: number): boolean {
-    ensureFeaturesTables(this.db);
     const stmt = this.db.prepare('DELETE FROM feature_flows WHERE feature_id = ? AND flow_id = ?');
     const result = stmt.run(featureId, flowId);
     return result.changes > 0;
@@ -223,7 +208,6 @@ export class FeatureRepository {
    * Delete all features and their flow associations.
    */
   clear(): number {
-    ensureFeaturesTables(this.db);
     const stmt = this.db.prepare('DELETE FROM features');
     const result = stmt.run();
     return result.changes;

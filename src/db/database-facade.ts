@@ -75,7 +75,16 @@ export class IndexDatabase implements IIndexWriter {
   initialize(): void {
     this.conn.exec(`
       DROP TABLE IF EXISTS sync_dirty;
+      DROP TABLE IF EXISTS feature_flows;
+      DROP TABLE IF EXISTS features;
+      DROP TABLE IF EXISTS flow_subflow_steps;
+      DROP TABLE IF EXISTS flow_definition_steps;
+      DROP TABLE IF EXISTS flow_steps;
       DROP TABLE IF EXISTS flows;
+      DROP TABLE IF EXISTS interaction_definition_links;
+      DROP TABLE IF EXISTS interactions;
+      DROP TABLE IF EXISTS contract_participants;
+      DROP TABLE IF EXISTS contracts;
       DROP TABLE IF EXISTS module_members;
       DROP TABLE IF EXISTS modules;
       DROP TABLE IF EXISTS domains;
