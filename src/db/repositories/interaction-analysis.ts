@@ -8,15 +8,15 @@ import type { InteractionRepository } from './interaction-repository.js';
  * Extracted from InteractionRepository to separate analysis from CRUD.
  */
 export class InteractionAnalysis {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database) {
+    ensureInteractionsTables(this.db);
+    ensureModulesTables(this.db);
+  }
 
   /**
    * Get relationship-to-interaction coverage statistics.
    */
   getRelationshipCoverage(): RelationshipInteractionCoverage {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
     const totalStmt = this.db.prepare('SELECT COUNT(*) as count FROM relationship_annotations');
     const totalRelationships = (totalStmt.get() as { count: number }).count;
 
@@ -71,9 +71,6 @@ export class InteractionAnalysis {
    * Get detailed breakdown of relationship coverage for diagnostics.
    */
   getRelationshipCoverageBreakdown(): RelationshipCoverageBreakdown {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT
         ra.relationship_type,
@@ -156,9 +153,6 @@ export class InteractionAnalysis {
     toPath: string;
     relationshipCount: number;
   }> {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT DISTINCT mm1.module_id as fromModuleId, mm2.module_id as toModuleId,
              m1.full_path as fromPath, m2.full_path as toPath,
@@ -190,9 +184,6 @@ export class InteractionAnalysis {
    * Create interaction edges for inheritance relationships (extends/implements).
    */
   syncInheritanceInteractions(): { created: number } {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO interactions (from_module_id, to_module_id, direction, weight, pattern)
       SELECT DISTINCT
@@ -259,9 +250,6 @@ export class InteractionAnalysis {
     toPath: string;
     issue: string;
   }> {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
     const inferred = interactionRepo.getBySource('llm-inferred');
     const issues: Array<{
       interactionId: number;
@@ -332,8 +320,6 @@ export class InteractionAnalysis {
     semantic: string;
     relationshipType: string;
   }> {
-    ensureModulesTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT
         from_d.name as fromName,
@@ -365,8 +351,6 @@ export class InteractionAnalysis {
    * Check if an interaction exists in the reverse direction (toModuleId → fromModuleId).
    */
   hasReverseInteraction(fromModuleId: number, toModuleId: number): boolean {
-    ensureInteractionsTables(this.db);
-
     const stmt = this.db.prepare(`
       SELECT EXISTS (
         SELECT 1 FROM interactions
@@ -390,9 +374,6 @@ export class InteractionAnalysis {
     llmFanIn: number;
     astFanIn: number;
   }> {
-    ensureInteractionsTables(this.db);
-    ensureModulesTables(this.db);
-
     // Query llm-inferred fan-in per target module
     const llmFanInRows = this.db
       .prepare(`

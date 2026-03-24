@@ -11,14 +11,15 @@ export class DomainRepository {
   constructor(
     private db: Database.Database,
     private metadata: MetadataRepository
-  ) {}
+  ) {
+    ensureDomainsTable(this.db);
+  }
 
   /**
    * Add a new domain to the registry.
    * @returns The domain ID if created, or null if already exists.
    */
   add(name: string, description?: string): number | null {
-    ensureDomainsTable(this.db);
     try {
       const stmt = this.db.prepare(`
         INSERT INTO domains (name, description) VALUES (?, ?)
@@ -38,7 +39,6 @@ export class DomainRepository {
    * Get a domain by name.
    */
   get(name: string): Domain | null {
-    ensureDomainsTable(this.db);
     const stmt = this.db.prepare(`
       SELECT id, name, description, created_at as createdAt
       FROM domains WHERE name = ?
@@ -51,7 +51,6 @@ export class DomainRepository {
    * Get all domains from the registry.
    */
   getAll(): Domain[] {
-    ensureDomainsTable(this.db);
     const stmt = this.db.prepare(`
       SELECT id, name, description, created_at as createdAt
       FROM domains ORDER BY name
@@ -63,8 +62,6 @@ export class DomainRepository {
    * Get all domains with their symbol counts.
    */
   getAllWithCounts(): DomainWithCount[] {
-    ensureDomainsTable(this.db);
-
     // Get all registered domains
     const domains = this.getAll();
 
@@ -97,7 +94,6 @@ export class DomainRepository {
    * Update a domain's description.
    */
   updateDescription(name: string, description: string): boolean {
-    ensureDomainsTable(this.db);
     const stmt = this.db.prepare(`
       UPDATE domains SET description = ? WHERE name = ?
     `);
@@ -110,8 +106,6 @@ export class DomainRepository {
    * @returns Number of symbols updated.
    */
   rename(oldName: string, newName: string): { updated: boolean; symbolsUpdated: number } {
-    ensureDomainsTable(this.db);
-
     // Update registry
     const updateRegistry = this.db.prepare(`
       UPDATE domains SET name = ? WHERE name = ?
@@ -155,8 +149,6 @@ export class DomainRepository {
    * @returns Number of symbols updated.
    */
   merge(fromName: string, intoName: string): { symbolsUpdated: number; registryRemoved: boolean } {
-    ensureDomainsTable(this.db);
-
     // Update all symbol metadata
     const getMetadata = this.db.prepare(`
       SELECT id, definition_id, value FROM definition_metadata WHERE key = 'domain'
@@ -205,8 +197,6 @@ export class DomainRepository {
    * @returns Object with removed status and count of symbols still using the domain.
    */
   remove(name: string, force = false): { removed: boolean; symbolsUsingDomain: number } {
-    ensureDomainsTable(this.db);
-
     // Count symbols using this domain
     const symbolsUsingDomain = this.getSymbolsByDomain(name).length;
 
@@ -232,8 +222,6 @@ export class DomainRepository {
    * @returns Array of newly registered domain names.
    */
   syncFromMetadata(): string[] {
-    ensureDomainsTable(this.db);
-
     // Get all unique domains from metadata
     const domainsInUse = this.metadata.getAllDomains();
 
@@ -258,7 +246,6 @@ export class DomainRepository {
    * Get all unregistered domains currently in use.
    */
   getUnregistered(): string[] {
-    ensureDomainsTable(this.db);
     const domainsInUse = this.metadata.getAllDomains();
     const registeredDomains = new Set(this.getAll().map((d) => d.name));
     return domainsInUse.filter((d) => !registeredDomains.has(d));
@@ -268,7 +255,6 @@ export class DomainRepository {
    * Check if a domain is registered.
    */
   isRegistered(name: string): boolean {
-    ensureDomainsTable(this.db);
     const stmt = this.db.prepare(`
       SELECT 1 FROM domains WHERE name = ?
     `);
