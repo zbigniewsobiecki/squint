@@ -123,6 +123,21 @@ function toFiniteNumber(s: string): number | null {
 }
 
 /**
+ * Build a child-process env that excludes the vitest-specific keys that
+ * confuse oclif's command resolution. Returns a new object — does not mutate
+ * the input.
+ */
+function filterChildEnv(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const filtered: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(parent)) {
+    if (key === 'NODE_ENV' || key === 'NODE_PATH') continue;
+    if (key === 'VITEST' || key.startsWith('VITEST_')) continue;
+    filtered[key] = value;
+  }
+  return filtered;
+}
+
+/**
  * Run squint ingest as a subprocess. Streams stdout/stderr to log files,
  * enforces a hard timeout, parses cost lines into a running total.
  */
@@ -149,7 +164,22 @@ export async function runIngest(opts: RunOptions, deps: RunnerDeps = {}): Promis
     streamError = err;
   });
 
-  const spawnOpts: SpawnOptions = { stdio: ['ignore', 'pipe', 'pipe'] };
+  // CRITICAL: scrub vitest-specific env vars before spawning squint.
+  //
+  // When the eval runs inside a vitest worker, vitest sets `NODE_ENV=test`
+  // (and several VITEST_* vars). When the spawned squint subprocess inherits
+  // `NODE_ENV=test`, oclif's command parser switches into a degraded mode
+  // where it interprets `ingest <path>` as a colon-joined topic-command
+  // name `ingest:<path>`, which doesn't exist. Net effect: every eval run
+  // would fail with "command ingest:<path> not found".
+  //
+  // Empirically (verified by spawning with each var set/unset individually),
+  // `NODE_ENV` is THE variable that breaks things. NODE_PATH and the
+  // VITEST_* vars are harmless in isolation. We strip them all anyway as
+  // defence in depth — squint should run as if invoked from a clean shell,
+  // not from inside a test runner.
+  const childEnv = filterChildEnv(process.env);
+  const spawnOpts: SpawnOptions = { stdio: ['ignore', 'pipe', 'pipe'], env: childEnv };
   const child = spawnFn('node', [squintBin, ...argv], spawnOpts);
 
   let costEstimate: number | undefined;

@@ -39,7 +39,12 @@ export function defineFixture(name: string): FixtureConfig {
     fixtureDir: path.resolve(repoRoot, 'evals/fixtures', name),
     resultsRoot: path.resolve(repoRoot, 'evals/results'),
     baselinePath: path.resolve(repoRoot, 'evals/baselines', `${name}.json`),
-    squintBin: path.resolve(repoRoot, 'bin/dev.js'),
+    // Use bin/run.js (compiled) instead of bin/dev.js (TS loader). bin/dev.js
+    // breaks when tsx is in devDependencies because oclif's dev-mode TS loader
+    // detection fails on @oclif/core 4.8 + tsx 4.21. Compiled mode is also
+    // closer to how end users invoke squint, so eval runs are more
+    // production-realistic. Requires `pnpm run build:server` first.
+    squintBin: path.resolve(repoRoot, 'bin/run.js'),
     judgeCachePath: path.resolve(repoRoot, 'evals/.judge-cache.json'),
     squintCommit: () => {
       try {

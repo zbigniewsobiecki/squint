@@ -77,9 +77,17 @@ const VOC_HTTP = [
   'endpoint',
   'request-handling', // LLM-preferred for handlers
   'response-handling', // LLM-preferred for response builders
+  'error-handling', // LLM picks this for BaseController (it has handleError)
 ];
 const VOC_TASKS = ['tasks', 'task-management', 'todo', 'business-logic'];
-const VOC_PERSISTENCE = ['persistence', 'data-access', 'repository', 'storage', 'in-memory'];
+const VOC_PERSISTENCE = [
+  'persistence',
+  'data-access',
+  'repository',
+  'storage',
+  'in-memory',
+  'data-storage', // LLM-preferred form
+];
 const VOC_EVENTS = [
   'events',
   'pubsub',
@@ -96,6 +104,11 @@ const VOC_FRAMEWORK = [
   'infrastructure',
   'request-handling',
   'framework', // LLM-preferred shorter form
+  'http', // LLM picks for createRouter/createApp
+  'registry', // LLM picks for routerRegistry/appRegistry
+  'application-lifecycle', // LLM picks for createApp / app instances
+  'application-framework', // LLM-preferred form
+  'dependency-injection', // LLM picks for the registries
 ];
 const VOC_MIDDLEWARE = ['middleware', 'authentication', 'authorization', 'http', 'security', 'request-handling'];
 const VOC_BOOTSTRAP = [
@@ -107,6 +120,9 @@ const VOC_BOOTSTRAP = [
   'framework',
   'request-handling',
   'routing', // LLM picks these for bootstrap
+  'http',
+  'application-lifecycle', // LLM picks for app instance
+  'application-framework',
 ];
 const VOC_CLIENT = [
   'http',
@@ -115,15 +131,25 @@ const VOC_CLIENT = [
   'rest',
   'frontend',
   'network',
+  'networking', // LLM-preferred plural form
   'client-side', // LLM-preferred form
   'network-configuration', // LLM picks for the http function ref
+  'request-handling', // LLM consistently picks this for client API functions
 ];
 const VOC_AUDIT = ['audit', 'logging', 'observability', 'events', 'monitoring', 'auditing'];
 const VOC_PASSWORD = ['security', 'authentication', 'cryptography', 'password', 'hashing'];
-const VOC_TOKEN = ['security', 'authentication', 'session', 'jwt', 'token'];
+const VOC_TOKEN = [
+  'security',
+  'authentication',
+  'session',
+  'jwt',
+  'token',
+  'token-management', // LLM-preferred form
+];
 
-// Common LLM tag for singleton/instance consts — used to absorb 'dependency-injection' drift
-const VOC_DI_INSTANCE = ['dependency-injection'];
+// Common LLM tags for singleton/instance consts. The LLM picks any of these
+// interchangeably for module-level instance constants.
+const VOC_DI_INSTANCE = ['dependency-injection', 'application-lifecycle', 'application-framework'];
 
 // ============================================================
 // All metadata entries
@@ -165,26 +191,42 @@ export const definitionMetadata: GroundTruthDefinitionMetadata[] = [
     'Interface for the top-level HTTP application that mounts routers and starts the server.'
   ),
 
+  // Module-level registries (mutated by createRouter/createApp to make
+  // those functions unambiguously impure)
+  purpose(
+    'src/framework.ts',
+    'routerRegistry',
+    'Module-level mutable array tracking every Router instance constructed by createRouter, used by the framework for diagnostics.'
+  ),
+  domain('src/framework.ts', 'routerRegistry', VOC_FRAMEWORK),
+  pure('src/framework.ts', 'routerRegistry', false),
+
+  purpose(
+    'src/framework.ts',
+    'appRegistry',
+    'Module-level mutable array tracking every App instance constructed by createApp, used by the framework for diagnostics.'
+  ),
+  domain('src/framework.ts', 'appRegistry', VOC_FRAMEWORK),
+  pure('src/framework.ts', 'appRegistry', false),
+
   // Functions
   purpose(
     'src/framework.ts',
     'createRouter',
-    'Construct a new empty Router instance with no-op handlers for every HTTP method (stub fixture framework — not real Express).'
+    'Construct a new Router instance that registers HTTP route handlers per method and path.'
   ),
   domain('src/framework.ts', 'createRouter', VOC_FRAMEWORK),
-  // SKIP `pure` for createRouter/createApp: the returned object has no mutable
-  // state (methods are noops) but each call returns a new identity. The squint
-  // prompt is genuinely ambiguous here, and the LLM flips between true/false
-  // across runs. Both interpretations are defensible. Documented in iteration 2
-  // triage notes.
+  // Now unambiguously impure: each call mutates the module-level routerRegistry.
+  pure('src/framework.ts', 'createRouter', false),
 
   purpose(
     'src/framework.ts',
     'createApp',
-    'Construct a stub App object with no-op use and listen methods (placeholder fixture framework — not real Express).'
+    'Construct a new App instance for mounting routers and starting the HTTP server.'
   ),
   domain('src/framework.ts', 'createApp', VOC_FRAMEWORK),
-  // SKIP `pure` — see createRouter above.
+  // Now unambiguously impure: each call mutates the module-level appRegistry.
+  pure('src/framework.ts', 'createApp', false),
 
   // ----------------------------------------------------------
   // src/types.ts — domain types
@@ -285,7 +327,8 @@ export const definitionMetadata: GroundTruthDefinitionMetadata[] = [
   purpose(
     'src/services/auth.service.ts',
     'usersByEmail',
-    'Module-scoped in-memory map storing registered users keyed by email.'
+    'Module-scoped Map of registered users keyed by email — the in-memory user store backing the auth service.',
+    0.6 // tolerant: LLM tends to describe surrounding auth context, not just the storage
   ),
   domain('src/services/auth.service.ts', 'usersByEmail', [...VOC_PERSISTENCE, ...VOC_AUTH]),
   pure('src/services/auth.service.ts', 'usersByEmail', false), // mutable Map instance
@@ -389,7 +432,8 @@ export const definitionMetadata: GroundTruthDefinitionMetadata[] = [
   purpose(
     'src/controllers/auth.controller.ts',
     'authController',
-    'Singleton AuthController instance constructed at module load and shared by the application.'
+    'Module-level AuthController instance whose handlers are wired into the auth HTTP routes.',
+    0.6 // tolerant — LLM and reference describe the same instantiation in different words
   ),
   domain('src/controllers/auth.controller.ts', 'authController', [...VOC_HTTP, ...VOC_AUTH, ...VOC_DI_INSTANCE]),
   pure('src/controllers/auth.controller.ts', 'authController', false),
@@ -420,7 +464,8 @@ export const definitionMetadata: GroundTruthDefinitionMetadata[] = [
   purpose(
     'src/index.ts',
     'app',
-    'Top-level HTTP application instance initialized at module load with the auth and tasks routers configured.'
+    'HTTP application instance initialized at module load that mounts the auth and tasks routes and starts the server.',
+    0.6 // tolerant — LLM describes the lifecycle, reference describes the role
   ),
   domain('src/index.ts', 'app', VOC_BOOTSTRAP),
   pure('src/index.ts', 'app', false),

@@ -13,7 +13,7 @@ import type { GroundTruthDefinition } from '../../harness/types.js';
  */
 export const definitions: GroundTruthDefinition[] = [
   // ----------------------------------------------------------
-  // src/framework.ts (8 definitions)
+  // src/framework.ts (10 definitions)
   // ----------------------------------------------------------
   { file: 'src/framework.ts', name: 'Request', kind: 'interface', isExported: true, line: 5 },
   { file: 'src/framework.ts', name: 'Response', kind: 'interface', isExported: true, line: 12 },
@@ -21,8 +21,13 @@ export const definitions: GroundTruthDefinition[] = [
   { file: 'src/framework.ts', name: 'Handler', kind: 'type', isExported: true, line: 18 },
   { file: 'src/framework.ts', name: 'Router', kind: 'interface', isExported: true, line: 20 },
   { file: 'src/framework.ts', name: 'App', kind: 'interface', isExported: true, line: 28 },
-  { file: 'src/framework.ts', name: 'createRouter', kind: 'function', isExported: true, line: 33 },
-  { file: 'src/framework.ts', name: 'createApp', kind: 'function', isExported: true, line: 38 },
+  // routerRegistry and appRegistry exist solely to make createRouter and
+  // createApp unambiguously impure (each call appends to a module-level array).
+  // Without these, the LLM flips between true/false on the pure aspect.
+  { file: 'src/framework.ts', name: 'routerRegistry', kind: 'const', isExported: false, line: 40 },
+  { file: 'src/framework.ts', name: 'appRegistry', kind: 'const', isExported: false, line: 47 },
+  { file: 'src/framework.ts', name: 'createRouter', kind: 'function', isExported: true, line: 49 },
+  { file: 'src/framework.ts', name: 'createApp', kind: 'function', isExported: true, line: 68 },
 
   // ----------------------------------------------------------
   // src/types.ts (3 definitions)

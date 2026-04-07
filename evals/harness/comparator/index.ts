@@ -80,13 +80,23 @@ export async function compare(opts: CompareOptions): Promise<DiffReport> {
  * Refuse to use a stub judge for any scope that actually contains declared
  * prose references. Catches the bug where iteration 2+ ships and the eval
  * file forgets to swap the stub judge for a real LLM call.
+ *
+ * When the guardrail is checked but does NOT fire (the common, healthy case),
+ * a single line is logged via console.debug so CI logs visibly confirm the
+ * guardrail is alive. Set EVAL_DEBUG=1 to see these lines locally.
  */
 function assertNoStubJudgeForProseChecks(judgeFn: ProseJudgeFn, scope: TableName[], gt: GroundTruth): void {
   const isStub = judgeFn[STUB_JUDGE_MARKER] === true;
-  if (!isStub) return;
+  if (!isStub) {
+    debugLog(`stub-judge guardrail: real judge in use; no check needed (scope=[${scope.join(', ')}])`);
+    return;
+  }
 
   const proseScopes = scope.filter((s) => PROSE_BEARING_TABLES.has(s));
-  if (proseScopes.length === 0) return;
+  if (proseScopes.length === 0) {
+    debugLog(`stub-judge guardrail: stub OK; no prose-bearing tables in scope (scope=[${scope.join(', ')}])`);
+    return;
+  }
 
   // Stub judge IS allowed unless GT actually declares prose references in
   // an in-scope table. Walk the GT to check.
@@ -95,6 +105,21 @@ function assertNoStubJudgeForProseChecks(judgeFn: ProseJudgeFn, scope: TableName
     throw new Error(
       `Stub judge is forbidden when prose checks are in scope and ground truth declares prose references. Scope contains ${proseScopes.length} prose-bearing table(s) (${proseScopes.join(', ')}) and ground truth declares ${hasProseRefs} prose reference(s). Inject a real LLM-backed judge instead of a stub.`
     );
+  }
+  debugLog(
+    `stub-judge guardrail: stub OK; ${proseScopes.length} prose-bearing scope(s) but GT declares 0 prose references (proseScopes=[${proseScopes.join(', ')}])`
+  );
+}
+
+/**
+ * Single-line trace channel for the eval harness. Off by default; turn on
+ * with EVAL_DEBUG=1. Goes to stderr to avoid polluting the eval's stdout
+ * report log lines.
+ */
+function debugLog(message: string): void {
+  if (process.env.EVAL_DEBUG === '1') {
+    // eslint-disable-next-line no-console
+    console.error(`[eval debug] ${message}`);
   }
 }
 

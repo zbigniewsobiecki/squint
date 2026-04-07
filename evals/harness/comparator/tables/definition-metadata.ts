@@ -177,7 +177,7 @@ function compareSingleMetadataEntry(entry: GroundTruthDefinitionMetadata, actual
   if (entry.proseReference !== undefined) {
     return { kind: 'prose', reference: entry.proseReference, candidate: actualValue };
   }
-  // None of the strategy fields set — programmer error
+  // None of the strategy fields set — programmer error.
   throw new Error(
     `Ground truth metadata entry for ${entry.defKey}.${entry.key} has none of exactValue/acceptableSet/proseReference set`
   );
