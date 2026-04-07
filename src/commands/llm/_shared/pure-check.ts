@@ -7,6 +7,7 @@ import type { SyntaxNode } from 'tree-sitter';
 import Parser from 'tree-sitter';
 import Ruby from 'tree-sitter-ruby';
 import TypeScript from 'tree-sitter-typescript';
+import { countArguments } from '../../../parser/_shared/ast-utils.js';
 
 let tsParser: Parser | null = null;
 function getParser(): Parser {
@@ -624,21 +625,6 @@ function resolveRootIdentifier(node: SyntaxNode): string | null {
     if (obj) return resolveRootIdentifier(obj);
   }
   return null;
-}
-
-/**
- * Count non-punctuation arguments in an arguments node.
- */
-function countArguments(argsNode: SyntaxNode): number {
-  let count = 0;
-  for (let i = 0; i < argsNode.childCount; i++) {
-    const child = argsNode.child(i);
-    if (child) {
-      const t = child.type;
-      if (t !== '(' && t !== ')' && t !== ',') count++;
-    }
-  }
-  return count;
 }
 
 /**

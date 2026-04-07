@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { Args, Command } from '@oclif/core';
 import chalk from 'chalk';
-import { SharedFlags, withDatabase } from '../_shared/index.js';
+import { SharedFlags, resolveFileId, withDatabase } from '../_shared/index.js';
 
 export default class ImportedBy extends Command {
   static override description = 'List files that import a specific file';
@@ -27,7 +27,7 @@ export default class ImportedBy extends Command {
     const filePath = path.resolve(args.file);
 
     await withDatabase(flags.database, this, async (db) => {
-      const fileId = db.files.getIdByPath(db.toRelativePath(filePath)) ?? db.files.getIdByPath(filePath);
+      const fileId = resolveFileId(db, filePath);
       if (fileId === null) {
         this.error(chalk.red(`File "${filePath}" not found in the index.`));
       }

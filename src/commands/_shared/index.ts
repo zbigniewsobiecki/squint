@@ -1,4 +1,5 @@
 export { openDatabase, withDatabase, resolveDbPath } from './db-helper.js';
+export { resolveFileId } from './file-resolver.js';
 export { SymbolResolver, type ResolvedSymbol, type ResolvedSymbolWithDetails } from './symbol-resolver.js';
 export { SharedFlags, LlmFlags } from './flags.js';
 export { outputJsonOrPlain, truncate, tableSeparator, formatLineNumber } from './output.js';

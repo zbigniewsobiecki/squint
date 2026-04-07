@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SyntaxNode } from 'tree-sitter';
+import { countArguments } from './_shared/ast-utils.js';
 import type { Definition } from './definition-extractor.js';
 import type { WorkspaceMap } from './workspace-resolver.js';
 import { resolveWorkspaceImport } from './workspace-resolver.js';
@@ -250,24 +251,6 @@ function isValidUsage(node: SyntaxNode): boolean {
 interface UsageInfo {
   context: string;
   callsite?: CallsiteMetadata;
-}
-
-/**
- * Count the number of arguments in an arguments node
- */
-function countArguments(argsNode: SyntaxNode): number {
-  let count = 0;
-  for (let i = 0; i < argsNode.childCount; i++) {
-    const child = argsNode.child(i);
-    if (child) {
-      // Skip punctuation: (, ), ,
-      const type = child.type;
-      if (type !== '(' && type !== ')' && type !== ',') {
-        count++;
-      }
-    }
-  }
-  return count;
 }
 
 /**
