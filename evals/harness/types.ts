@@ -338,17 +338,30 @@ export function makeStubJudge(): ProseJudgeFn {
 }
 
 /**
- * Tables that involve prose-judged fields. If any of these are in scope AND
- * the GT actually declares prose references, a stub judge is forbidden.
+ * Single source of truth for "which tables have prose-judged fields, and how
+ * to count declared references in a GroundTruth".
+ *
+ * Adding a new prose-bearing table = ONE new entry here. Previously this was
+ * encoded in two places (PROSE_BEARING_TABLES set + a hardcoded if-chain in
+ * countDeclaredProseReferences). The set is now derived from the keys.
  */
-export const PROSE_BEARING_TABLES: ReadonlySet<TableName> = new Set([
-  'definition_metadata',
-  'relationship_annotations',
-  'modules',
-  'interactions',
-  'flows',
-  'features',
-]);
+export const PROSE_REFERENCE_COUNTERS: Partial<Record<TableName, (gt: GroundTruth) => number>> = {
+  definition_metadata: (gt) => (gt.definitionMetadata ?? []).filter((m) => m.proseReference != null).length,
+  relationship_annotations: (gt) => (gt.relationships ?? []).filter((r) => r.semanticReference != null).length,
+  modules: (gt) => (gt.modules ?? []).filter((m) => m.descriptionReference != null).length,
+  interactions: (gt) => (gt.interactions ?? []).filter((i) => i.semanticReference != null).length,
+  flows: (gt) => (gt.flows ?? []).filter((f) => f.descriptionReference != null).length,
+  features: (gt) => (gt.features ?? []).filter((f) => f.descriptionReference != null).length,
+};
+
+/**
+ * Tables that involve prose-judged fields, derived from PROSE_REFERENCE_COUNTERS.
+ * If any of these are in scope AND the GT actually declares prose references,
+ * a stub judge is forbidden.
+ */
+export const PROSE_BEARING_TABLES: ReadonlySet<TableName> = new Set(
+  Object.keys(PROSE_REFERENCE_COUNTERS) as TableName[]
+);
 
 // ============================================================
 // Fix hint database

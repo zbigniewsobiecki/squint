@@ -52,18 +52,29 @@ describe('runner — buildIngestArgv', () => {
 });
 
 describe('runner — parseCostLine', () => {
-  it('parses a USD cost line', () => {
+  it('parses a "Total cost: $X" line', () => {
     expect(parseCostLine('  Total cost: $0.0123')).toBe(0.0123);
     expect(parseCostLine('Total cost: $0.50')).toBe(0.5);
   });
 
-  it('parses cost: $X format', () => {
+  it('parses a "cost: $X" line', () => {
     expect(parseCostLine('cost: $0.05')).toBe(0.05);
+  });
+
+  it('parses squint\'s actual "← LLM" summary line format (the format that matters in production)', () => {
+    // This is what squint actually emits — captured from a real run.
+    // See src/commands/llm/_shared/llm-utils.ts:310-318 (formatCost + parts.join).
+    expect(parseCostLine('  ← LLM  4.6s  in: 2,930  out: 603  cached: 0  $0.0024  [2/200]')).toBe(0.0024);
+    expect(parseCostLine('  ← LLM  2.2s  in: 3,010  out: 397  cached: 0  $0.0019')).toBe(0.0019);
+    expect(parseCostLine('  ← LLM  1.6s  in: 1,720  out: 194  cached: 0  $0.0010  [5/200]')).toBe(0.001);
+    // Larger amounts (≥$0.01) — squint formats them with two decimals
+    expect(parseCostLine('  ← LLM  5s  in: 100  out: 100  cached: 0  $0.50')).toBe(0.5);
   });
 
   it('returns null for non-cost lines', () => {
     expect(parseCostLine('parsing files...')).toBeNull();
     expect(parseCostLine('')).toBeNull();
+    expect(parseCostLine('  → LLM  openrouter:google/gemini-2.5-flash  ~3,500 tok')).toBeNull();
   });
 });
 

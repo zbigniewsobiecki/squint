@@ -149,9 +149,10 @@ export function makeLlmProseJudge(opts: MakeLlmProseJudgeOptions = {}): ProseJud
 // ============================================================
 
 function defaultCachePath(): string {
-  // evals/results/.judge-cache.json — co-located with per-run results, gitignored
-  // by the same `evals/results/*` rule.
-  return path.resolve(process.cwd(), 'evals/results/.judge-cache.json');
+  // evals/.judge-cache.json — sibling of `results/`, NOT inside it. Lives
+  // outside the per-run rotation directory so the rotator can never touch it.
+  // Gitignored via an explicit `.judge-cache.json` rule.
+  return path.resolve(process.cwd(), 'evals/.judge-cache.json');
 }
 
 /** Minimal mock Command for completeWithLogging — only needs a `log` method. */

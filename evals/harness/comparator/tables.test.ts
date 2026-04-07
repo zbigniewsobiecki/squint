@@ -16,7 +16,7 @@ import {
   compareInteractions,
   compareModuleMembers,
   compareModules,
-} from './tables.js';
+} from './tables/index.js';
 
 /**
  * Per-table comparator strategies. Each comparator takes a "produced" DB

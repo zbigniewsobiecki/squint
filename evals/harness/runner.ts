@@ -92,14 +92,33 @@ export function buildIngestArgv(opts: {
 
 /**
  * Parse a single stdout line for a USD cost. Returns null on no match.
- * Matches:
- *   "Total cost: $0.0123"
- *   "cost: $0.05"
+ *
+ * Matches three formats:
+ *   1. "← LLM  4.6s  in: 2,930  out: 603  cached: 0  $0.0024  [2/200]"
+ *      — squint's actual per-call summary line (the format that matters
+ *        in production; see src/commands/llm/_shared/llm-utils.ts:310-318)
+ *   2. "Total cost: $0.0123" — aggregate summary
+ *   3. "cost: $0.05" — generic
+ *
+ * Order of matching: explicit "cost" prefix wins (more specific). Fall back
+ * to the LLM-summary-line shape (a $X.XX trailing a "← LLM" prefix).
  */
 export function parseCostLine(line: string): number | null {
-  const match = line.match(/cost[: ]\s*\$([0-9]+\.?[0-9]*)/i);
-  if (!match) return null;
-  const value = Number.parseFloat(match[1]);
+  // Format 2 & 3: explicit "cost" prefix
+  const costPrefixed = line.match(/cost[: ]\s*\$([0-9]+\.?[0-9]*)/i);
+  if (costPrefixed) return toFiniteNumber(costPrefixed[1]);
+
+  // Format 1: squint's "← LLM ... $X.XXXX" summary. Anchor on the LLM
+  // summary marker so we don't accidentally match dollar signs in other
+  // contexts (e.g. user prompts that contain "$10" string literals).
+  const llmSummary = line.match(/←\s*LLM\b.*\$([0-9]+\.?[0-9]*)/);
+  if (llmSummary) return toFiniteNumber(llmSummary[1]);
+
+  return null;
+}
+
+function toFiniteNumber(s: string): number | null {
+  const value = Number.parseFloat(s);
   return Number.isFinite(value) ? value : null;
 }
 

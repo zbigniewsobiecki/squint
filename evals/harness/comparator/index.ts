@@ -4,6 +4,7 @@ import {
   type DiffSummary,
   type GroundTruth,
   PROSE_BEARING_TABLES,
+  PROSE_REFERENCE_COUNTERS,
   type ProseJudgeFn,
   STUB_JUDGE_MARKER,
   type TableDiff,
@@ -19,7 +20,7 @@ import {
   compareInteractions,
   compareModuleMembers,
   compareModules,
-} from './tables.js';
+} from './tables/index.js';
 
 export interface CompareOptions {
   produced: IndexDatabase;
@@ -99,43 +100,36 @@ function assertNoStubJudgeForProseChecks(judgeFn: ProseJudgeFn, scope: TableName
 
 function countDeclaredProseReferences(gt: GroundTruth, scopes: TableName[]): number {
   let n = 0;
-  if (scopes.includes('definition_metadata')) {
-    n += (gt.definitionMetadata ?? []).filter((m) => m.proseReference != null).length;
-  }
-  if (scopes.includes('relationship_annotations')) {
-    n += (gt.relationships ?? []).filter((r) => r.semanticReference != null).length;
-  }
-  if (scopes.includes('modules')) {
-    n += (gt.modules ?? []).filter((m) => m.descriptionReference != null).length;
-  }
-  if (scopes.includes('interactions')) {
-    n += (gt.interactions ?? []).filter((i) => i.semanticReference != null).length;
-  }
-  if (scopes.includes('flows')) {
-    n += (gt.flows ?? []).filter((f) => f.descriptionReference != null).length;
-  }
-  if (scopes.includes('features')) {
-    n += (gt.features ?? []).filter((f) => f.descriptionReference != null).length;
+  for (const scope of scopes) {
+    const counter = PROSE_REFERENCE_COUNTERS[scope];
+    if (counter) n += counter(gt);
   }
   return n;
 }
 
 /**
- * Tables for which a comparator exists. Anything outside this set throws when
- * requested in scope — silently skipping is dangerous because the user could
- * believe they're checking a table when they're not.
+ * Comparator function signature. Some comparators need the prose judge,
+ * some don't — both shapes are accepted (the dispatcher passes judgeFn
+ * unconditionally).
  */
-const IMPLEMENTED_COMPARATORS: ReadonlySet<TableName> = new Set([
-  'files',
-  'definitions',
-  'imports',
-  'modules',
-  'module_members',
-  'contracts',
-  'interactions',
-  'flows',
-  'definition_metadata',
-]);
+type ComparatorFn = (produced: IndexDatabase, gt: GroundTruth, judgeFn: ProseJudgeFn) => TableDiff | Promise<TableDiff>;
+
+/**
+ * Single source of truth for which tables have a comparator implementation.
+ * Adding a new table = one entry here. The dispatcher and the
+ * "no comparator implemented" guard both read from this map.
+ */
+const COMPARATORS: Partial<Record<TableName, ComparatorFn>> = {
+  files: (p, g) => compareFiles(p, g),
+  definitions: (p, g) => compareDefinitions(p, g),
+  imports: (p, g) => compareImports(p, g),
+  modules: (p, g) => compareModules(p, g),
+  module_members: (p, g) => compareModuleMembers(p, g),
+  contracts: (p, g) => compareContracts(p, g),
+  interactions: (p, g) => compareInteractions(p, g),
+  flows: (p, g) => compareFlows(p, g),
+  definition_metadata: (p, g, j) => compareDefinitionMetadata(p, g, j),
+};
 
 async function runComparator(
   table: TableName,
@@ -143,35 +137,12 @@ async function runComparator(
   gt: GroundTruth,
   judgeFn: ProseJudgeFn
 ): Promise<TableDiff> {
-  if (!IMPLEMENTED_COMPARATORS.has(table)) {
-    throw new Error(
-      `No comparator implemented for table '${table}'. Implemented: [${[...IMPLEMENTED_COMPARATORS].sort().join(', ')}]`
-    );
+  const fn = COMPARATORS[table];
+  if (!fn) {
+    const implemented = (Object.keys(COMPARATORS) as TableName[]).sort().join(', ');
+    throw new Error(`No comparator implemented for table '${table}'. Implemented: [${implemented}]`);
   }
-  switch (table) {
-    case 'files':
-      return compareFiles(produced, gt);
-    case 'definitions':
-      return compareDefinitions(produced, gt);
-    case 'imports':
-      return compareImports(produced, gt);
-    case 'modules':
-      return compareModules(produced, gt);
-    case 'module_members':
-      return compareModuleMembers(produced, gt);
-    case 'contracts':
-      return compareContracts(produced, gt);
-    case 'interactions':
-      return compareInteractions(produced, gt);
-    case 'flows':
-      return compareFlows(produced, gt);
-    case 'definition_metadata':
-      return compareDefinitionMetadata(produced, gt, judgeFn);
-    default:
-      // Unreachable — IMPLEMENTED_COMPARATORS guard above ensures this branch can't fire.
-      // Kept for exhaustiveness in case someone adds a TableName without updating both lists.
-      throw new Error(`Unreachable: comparator dispatch fell through for '${table}'`);
-  }
+  return fn(produced, gt, judgeFn);
 }
 
 /**
