@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { SharedFlags, withDatabase } from '../_shared/index.js';
+import { SharedFlags, resolveFileId, withDatabase } from '../_shared/index.js';
 
 export default class SymbolsList extends Command {
   static override description = 'List all symbols in the index';
@@ -169,10 +169,9 @@ export default class SymbolsList extends Command {
       // Resolve file path if provided
       let fileId: number | null = null;
       if (flags.file) {
-        const filePath = path.resolve(flags.file);
-        fileId = db.files.getIdByPath(db.toRelativePath(filePath)) ?? db.files.getIdByPath(filePath);
+        fileId = resolveFileId(db, flags.file);
         if (fileId === null) {
-          this.error(chalk.red(`File "${filePath}" not found in the index.`));
+          this.error(chalk.red(`File "${path.resolve(flags.file)}" not found in the index.`));
         }
       }
 
