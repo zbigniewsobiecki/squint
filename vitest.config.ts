@@ -2,7 +2,14 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
+    include: [
+      'test/**/*.test.ts',
+      'src/**/*.test.ts',
+      // Harness unit tests are free (no LLM, no subprocess) and must run in CI.
+      // The actual eval scenarios live in evals/**/*.eval.ts and run via the
+      // separate `npm run eval` command (vitest.eval.config.ts).
+      'evals/harness/**/*.test.ts',
+    ],
     coverage: {
       enabled: false, // Enable via CLI: --coverage
       provider: 'v8',

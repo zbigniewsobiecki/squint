@@ -1,0 +1,8 @@
+{
+  "name": "@squint-eval/todo-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "description": "Tiny todo API fixture for squint eval harness — exercises HTTP contracts, events, inheritance, and re-exports."
+}

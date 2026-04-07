@@ -1,0 +1,31 @@
+{
+  "fixture": "todo-api",
+  "lastRun": "2026-04-07T21:20:11.095Z",
+  "squintCommit": "823ef1c",
+  "tableScores": {
+    "files": {
+      "passed": true,
+      "expected": 14,
+      "produced": 14,
+      "critical": 0,
+      "major": 0,
+      "minor": 0
+    },
+    "definitions": {
+      "passed": true,
+      "expected": 48,
+      "produced": 48,
+      "critical": 0,
+      "major": 0,
+      "minor": 10
+    },
+    "imports": {
+      "passed": true,
+      "expected": 25,
+      "produced": 25,
+      "critical": 0,
+      "major": 0,
+      "minor": 0
+    }
+  }
+}
