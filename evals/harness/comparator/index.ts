@@ -11,6 +11,7 @@ import {
 } from '../types.js';
 import {
   compareContracts,
+  compareDefinitionMetadata,
   compareDefinitions,
   compareFiles,
   compareFlows,
@@ -55,7 +56,8 @@ export async function compare(opts: CompareOptions): Promise<DiffReport> {
   const tables: TableDiff[] = [];
 
   for (const tableName of scope) {
-    tables.push(runComparator(tableName, produced, groundTruth));
+    // Some comparators are async (those that call the LLM judge); awaited uniformly here.
+    tables.push(await runComparator(tableName, produced, groundTruth, judgeFn));
   }
 
   const summary = aggregateSummary(tables);
@@ -132,9 +134,15 @@ const IMPLEMENTED_COMPARATORS: ReadonlySet<TableName> = new Set([
   'contracts',
   'interactions',
   'flows',
+  'definition_metadata',
 ]);
 
-function runComparator(table: TableName, produced: IndexDatabase, gt: GroundTruth): TableDiff {
+async function runComparator(
+  table: TableName,
+  produced: IndexDatabase,
+  gt: GroundTruth,
+  judgeFn: ProseJudgeFn
+): Promise<TableDiff> {
   if (!IMPLEMENTED_COMPARATORS.has(table)) {
     throw new Error(
       `No comparator implemented for table '${table}'. Implemented: [${[...IMPLEMENTED_COMPARATORS].sort().join(', ')}]`
@@ -157,6 +165,8 @@ function runComparator(table: TableName, produced: IndexDatabase, gt: GroundTrut
       return compareInteractions(produced, gt);
     case 'flows':
       return compareFlows(produced, gt);
+    case 'definition_metadata':
+      return compareDefinitionMetadata(produced, gt, judgeFn);
     default:
       // Unreachable — IMPLEMENTED_COMPARATORS guard above ensures this branch can't fire.
       // Kept for exhaustiveness in case someone adds a TableName without updating both lists.

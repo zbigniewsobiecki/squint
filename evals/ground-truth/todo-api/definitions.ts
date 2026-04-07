@@ -122,16 +122,16 @@ export const definitions: GroundTruthDefinition[] = [
   // ----------------------------------------------------------
   { file: 'client/tasks.client.ts', name: 'BASE_URL', kind: 'const', isExported: false, line: 7 },
   { file: 'client/tasks.client.ts', name: 'HttpFn', kind: 'type', isExported: false, line: 9 },
-  { file: 'client/tasks.client.ts', name: 'http', kind: 'const', isExported: false, line: 12 },
-  { file: 'client/tasks.client.ts', name: 'request', kind: 'function', isExported: false, line: 14 },
-  { file: 'client/tasks.client.ts', name: 'login', kind: 'function', isExported: true, line: 26 },
-  { file: 'client/tasks.client.ts', name: 'register', kind: 'function', isExported: true, line: 30 },
-  { file: 'client/tasks.client.ts', name: 'listTasks', kind: 'function', isExported: true, line: 34 },
-  { file: 'client/tasks.client.ts', name: 'getTask', kind: 'function', isExported: true, line: 38 },
-  { file: 'client/tasks.client.ts', name: 'createTask', kind: 'function', isExported: true, line: 42 },
-  { file: 'client/tasks.client.ts', name: 'updateTask', kind: 'function', isExported: true, line: 46 },
-  { file: 'client/tasks.client.ts', name: 'completeTask', kind: 'function', isExported: true, line: 54 },
-  { file: 'client/tasks.client.ts', name: 'deleteTask', kind: 'function', isExported: true, line: 58 },
+  { file: 'client/tasks.client.ts', name: 'http', kind: 'const', isExported: false, line: 15 },
+  { file: 'client/tasks.client.ts', name: 'request', kind: 'function', isExported: false, line: 20 },
+  { file: 'client/tasks.client.ts', name: 'login', kind: 'function', isExported: true, line: 32 },
+  { file: 'client/tasks.client.ts', name: 'register', kind: 'function', isExported: true, line: 36 },
+  { file: 'client/tasks.client.ts', name: 'listTasks', kind: 'function', isExported: true, line: 40 },
+  { file: 'client/tasks.client.ts', name: 'getTask', kind: 'function', isExported: true, line: 44 },
+  { file: 'client/tasks.client.ts', name: 'createTask', kind: 'function', isExported: true, line: 48 },
+  { file: 'client/tasks.client.ts', name: 'updateTask', kind: 'function', isExported: true, line: 52 },
+  { file: 'client/tasks.client.ts', name: 'completeTask', kind: 'function', isExported: true, line: 60 },
+  { file: 'client/tasks.client.ts', name: 'deleteTask', kind: 'function', isExported: true, line: 64 },
 
   // ----------------------------------------------------------
   // index.ts (barrel) — 0 definitions (only re-exports)

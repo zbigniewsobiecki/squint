@@ -70,11 +70,28 @@ export interface GroundTruthUsage {
 export interface GroundTruthDefinitionMetadata {
   defKey: DefKey; // natural key for the definition
   key: string; // 'purpose' | 'domain' | 'role' | 'pure' | etc.
-  /** For non-prose values (e.g. 'pure': 'true'), comparator does exact match. */
+  /**
+   * EXACTLY ONE of `exactValue`, `proseReference`, or `acceptableSet` must be set.
+   * The comparator picks its strategy based on which field is present.
+   */
+  /** Byte-for-byte string match. Use for booleans like 'pure': "true"/"false". Mismatch is **major**. */
   exactValue?: string;
-  /** For prose values, comparator uses LLM judge against this reference. */
+  /** LLM-judged similarity vs reference text. Use for free-form prose like 'purpose'. Failure is **minor** prose-drift. */
   proseReference?: string;
-  /** Min similarity for prose judge (default 0.75). */
+  /**
+   * Subset check after JSON parse. Use for tag arrays like 'domain': ["auth","http"].
+   *
+   * Semantics: produced value must be a JSON array of strings that is BOTH
+   *  (a) non-empty (LLM did pick some tags), AND
+   *  (b) a subset of `acceptableSet` (every produced tag appears in the GT vocabulary).
+   *
+   * This is more useful than strict set equality because the LLM legitimately
+   * varies which tags it picks from a fixed vocabulary. Declare `acceptableSet`
+   * as a SUPERSET of what you expect; any outlier tags trigger a minor diff.
+   * Mismatch is **minor** (vocabulary drift expected).
+   */
+  acceptableSet?: string[];
+  /** Min similarity for prose judge (default 0.75). Only used with proseReference. */
   minSimilarity?: number;
 }
 

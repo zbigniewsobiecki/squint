@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { IndexDatabase } from '../../../src/db/database-facade.js';
 import { buildGroundTruthDb } from '../builder.js';
 import { type GroundTruth, defKey } from '../types.js';
+import type { ProseJudgeFn } from '../types.js';
 import {
   compareContracts,
+  compareDefinitionMetadata,
   compareDefinitions,
   compareFiles,
   compareFlows,
@@ -639,6 +641,364 @@ describe('per-table comparators', () => {
           details: expect.stringContaining('stakeholder'),
         }),
       ]);
+    });
+  });
+
+  // ============================================================
+  // definition_metadata
+  // ============================================================
+  describe('compareDefinitionMetadata', () => {
+    /** Builds a stub judge that returns canned scores per (reference, candidate) pair. */
+    function stubJudge(scores: Record<string, number>): ProseJudgeFn {
+      return async (req) => {
+        const score = scores[`${req.reference}|${req.candidate}`] ?? 0;
+        return {
+          similarity: score,
+          passed: score >= req.minSimilarity,
+          reasoning: `stub score ${score}`,
+        };
+      };
+    }
+
+    /** Build a fixture with one definition and pre-populated metadata in the produced DB. */
+    function buildWithMetadata(metadata: Array<{ key: string; value: string }>): void {
+      const gt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: metadata.map((m) => ({
+          defKey: defKey('src/foo.ts', 'login'),
+          key: m.key,
+          exactValue: m.value,
+        })),
+      };
+      buildGroundTruthDb(producedDb, gt);
+    }
+
+    it('passes when all expected metadata is present and matches exactly', async () => {
+      buildWithMetadata([
+        { key: 'purpose', value: 'Authenticates a user.' },
+        { key: 'pure', value: 'false' },
+      ]);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'purpose',
+            exactValue: 'Authenticates a user.',
+          },
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'pure',
+            exactValue: 'false',
+          },
+        ],
+      };
+
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+      expect(diff.expectedCount).toBe(2);
+    });
+
+    it('reports critical when GT references a definition that does not exist in produced', async () => {
+      // Build a DB with one def, but GT metadata references a non-existent def
+      buildWithMetadata([{ key: 'purpose', value: 'whatever' }]);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/missing.ts', 'ghost'),
+            key: 'purpose',
+            exactValue: 'should not match anything',
+          },
+        ],
+      };
+
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'missing',
+          severity: 'critical',
+          naturalKey: expect.stringContaining('src/missing.ts::ghost'),
+        }),
+      ]);
+    });
+
+    it('reports major when an aspect is not annotated for an existing definition', async () => {
+      buildWithMetadata([
+        { key: 'purpose', value: 'Authenticates a user.' },
+        // pure NOT annotated
+      ]);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'purpose',
+            exactValue: 'Authenticates a user.',
+          },
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'pure',
+            exactValue: 'false',
+          },
+        ],
+      };
+
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'missing',
+          severity: 'major',
+          naturalKey: expect.stringContaining('src/foo.ts::login'),
+          details: expect.stringContaining('pure'),
+        }),
+      ]);
+    });
+
+    it('reports major mismatch when pure value differs (exact match)', async () => {
+      buildWithMetadata([{ key: 'pure', value: 'true' }]);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'pure',
+            exactValue: 'false',
+          },
+        ],
+      };
+
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'mismatch',
+          severity: 'major',
+          details: expect.stringContaining('pure'),
+        }),
+      ]);
+    });
+
+    it('reports MINOR (not major) when domain set differs (vocabulary drift)', async () => {
+      buildWithMetadata([{ key: 'domain', value: '["http"]' }]);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'domain',
+            acceptableSet: ['authentication', 'security'],
+          },
+        ],
+      };
+
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, stubJudge({}));
+      // Minor diff present, but table still passes (no critical/major)
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'mismatch',
+          severity: 'minor',
+          details: expect.stringContaining('domain'),
+        }),
+      ]);
+    });
+
+    it('domain set match is order-independent', async () => {
+      buildWithMetadata([{ key: 'domain', value: '["http","authentication"]' }]);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'domain',
+            acceptableSet: ['authentication', 'http'], // reversed
+          },
+        ],
+      };
+
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+    });
+
+    it('domain subset semantics: produced is a strict subset of acceptableSet → pass', async () => {
+      // LLM picked just one tag from a vocabulary of three; that's still acceptable
+      buildWithMetadata([{ key: 'domain', value: '["authentication"]' }]);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'domain',
+            acceptableSet: ['authentication', 'auth', 'http', 'security'],
+          },
+        ],
+      };
+
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+    });
+
+    it('domain subset semantics: outlier tag in produced → minor mismatch', async () => {
+      // LLM picked one OK tag and one out-of-vocabulary tag
+      buildWithMetadata([{ key: 'domain', value: '["authentication","payments"]' }]);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'domain',
+            acceptableSet: ['authentication', 'auth', 'http', 'security'],
+          },
+        ],
+      };
+
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(true); // minor only
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'mismatch',
+          severity: 'minor',
+          details: expect.stringContaining('payments'),
+        }),
+      ]);
+    });
+
+    it('domain subset semantics: empty produced array → minor mismatch', async () => {
+      buildWithMetadata([{ key: 'domain', value: '[]' }]);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'domain',
+            acceptableSet: ['authentication'],
+          },
+        ],
+      };
+
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(true); // minor only
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'mismatch',
+          severity: 'minor',
+        }),
+      ]);
+    });
+
+    it('records prose-drift minor diff when judge score < threshold', async () => {
+      buildWithMetadata([{ key: 'purpose', value: 'Sends emails to nobody.' }]);
+
+      const reference = 'Authenticates a user by verifying credentials.';
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'purpose',
+            proseReference: reference,
+            minSimilarity: 0.75,
+          },
+        ],
+      };
+
+      const judge = stubJudge({ [`${reference}|Sends emails to nobody.`]: 0.2 });
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, judge);
+
+      // Minor prose drift → does NOT flip passed
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'prose-drift',
+          severity: 'minor',
+        }),
+      ]);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 1 });
+    });
+
+    it('bumps proseChecks.passed when judge approves', async () => {
+      buildWithMetadata([{ key: 'purpose', value: 'Verifies user identity and signs an auth token.' }]);
+
+      const reference = 'Authenticates a user by verifying credentials and returning a JWT.';
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'purpose',
+            proseReference: reference,
+          },
+        ],
+      };
+
+      const judge = stubJudge({
+        [`${reference}|Verifies user identity and signs an auth token.`]: 0.9,
+      });
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, judge);
+
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+      expect(diff.proseChecks).toEqual({ passed: 1, failed: 0 });
+    });
+
+    it('uses default min similarity 0.75 when not specified', async () => {
+      buildWithMetadata([{ key: 'purpose', value: 'cand' }]);
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'purpose',
+            proseReference: 'ref',
+            // no minSimilarity → default 0.75
+          },
+        ],
+      };
+      // 0.74 < 0.75 → fail
+      const judge = stubJudge({ 'ref|cand': 0.74 });
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, judge);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 1 });
     });
   });
 });
