@@ -20,13 +20,19 @@ import type { ProseJudgeFn, ProseJudgeRequest, ProseJudgeResult } from '../types
  */
 
 /**
- * Bumped whenever the system prompt changes. Forces a cache miss for old
+ * Bumped whenever a system prompt changes. Forces a cache miss for old
  * (model, ref, cand) entries that were judged under the old instructions,
  * since the same inputs would semantically produce a different score now.
+ *
+ * Two distinct version namespaces: prose judging (strict, full sentences)
+ * and theme judging (tolerant, prose-vs-tag-list). They live in the same
+ * cache file but never collide because the version string is part of the
+ * SHA-256 cache key.
  */
-const JUDGE_PROMPT_VERSION = 'v1';
+const PROSE_PROMPT_VERSION = 'v1';
+const THEME_PROMPT_VERSION = 'theme-v1';
 
-const SYSTEM_PROMPT = `You are a strict semantic similarity judge for code documentation.
+const PROSE_SYSTEM_PROMPT = `You are a strict semantic similarity judge for code documentation.
 
 Compare a REFERENCE description (the ground-truth expected meaning) against a CANDIDATE description (what an LLM produced). Score how well the candidate captures the same meaning as the reference, on a scale of 0.0 to 1.0.
 
@@ -38,6 +44,23 @@ Scoring rubric:
 - 0.0-0.39 = different meaning or wrong topic
 
 Be strict. Surface drift. Do not give credit for vague descriptions that could apply to many things. A description that says "handles requests" when the reference says "validates auth credentials and signs JWT" is missing key concepts — score around 0.5.
+
+Output ONLY a JSON object with this exact shape, no other text:
+{"similarity": <number 0..1>, "reasoning": "<one sentence>"}`;
+
+const THEME_SYSTEM_PROMPT = `You judge whether a list of LLM-generated semantic tags reasonably reflect a target code-element concept.
+
+The CANDIDATE is a tag list formatted as "tags: a, b, c". These are short labels another LLM picked while annotating a definition (function, class, const, etc.).
+
+The REFERENCE is a one-sentence description of what kind of code element the tags should reflect. It is a TARGET CONCEPT, not a list of expected tag words. Don't penalize the tags for "missing concepts" — the tags are short labels, not a paraphrase of the reference.
+
+Score how reasonably the candidate tags fit the reference concept, on a scale of 0.0 to 1.0:
+- 0.85-1.0 = the tags clearly fit the concept (any reasonable labels for that kind of element)
+- 0.6-0.84 = the tags are reasonable, perhaps using broader or different vocabulary than expected
+- 0.3-0.59 = the tags are tangentially related but don't clearly identify this kind of element
+- 0.0-0.29 = the tags are unrelated, off-topic, or actively misleading
+
+Be tolerant of vocabulary choice. The annotating LLM has freedom to pick synonyms ("event-management" vs "events", "user-management" vs "auth", "task-management" vs "tasks"). Score above 0.7 unless the tags are clearly wrong.
 
 Output ONLY a JSON object with this exact shape, no other text:
 {"similarity": <number 0..1>, "reasoning": "<one sentence>"}`;
@@ -102,15 +125,20 @@ export function makeLlmProseJudge(opts: MakeLlmProseJudgeOptions = {}): ProseJud
     fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2));
   }
 
-  function cacheKey(reference: string, candidate: string): string {
+  function cacheKey(version: string, reference: string, candidate: string): string {
     // Excludes minSimilarity by design — the same (model, ref, cand) always produces the
     // same similarity score; passed/failed is computed at request time.
-    return createHash('sha256').update(`${JUDGE_PROMPT_VERSION}\n${model}\n${reference}\n${candidate}`).digest('hex');
+    // The version string is mode-specific so prose and theme judgments cohabit
+    // the same cache file without colliding.
+    return createHash('sha256').update(`${version}\n${model}\n${reference}\n${candidate}`).digest('hex');
   }
 
   return async function llmProseJudge(req: ProseJudgeRequest): Promise<ProseJudgeResult> {
+    const mode = req.mode ?? 'prose';
+    const systemPrompt = mode === 'theme' ? THEME_SYSTEM_PROMPT : PROSE_SYSTEM_PROMPT;
+    const version = mode === 'theme' ? THEME_PROMPT_VERSION : PROSE_PROMPT_VERSION;
     const c = loadCache();
-    const key = cacheKey(req.reference, req.candidate);
+    const key = cacheKey(version, req.reference, req.candidate);
     const hit = c[key];
 
     let similarity: number;
@@ -123,7 +151,7 @@ export function makeLlmProseJudge(opts: MakeLlmProseJudgeOptions = {}): ProseJud
       const userPrompt = `REFERENCE: ${req.reference}\nCANDIDATE: ${req.candidate}\n\nScore the similarity.`;
       const response = await llmCall({
         model,
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt,
         userPrompt,
         temperature: 0,
         command: stubCommand(),

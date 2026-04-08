@@ -365,6 +365,22 @@ export interface ProseJudgeRequest {
   reference: string;
   candidate: string;
   minSimilarity: number;
+  /**
+   * Judging mode. The two modes use different system prompts and different
+   * cache namespaces:
+   *
+   * - 'prose' (default): the reference and candidate are both natural-language
+   *   descriptions. The judge scores STRICT semantic similarity — it surfaces
+   *   missing concepts and vague descriptions. Use for `purpose`, module
+   *   descriptions, relationship semantics, etc.
+   *
+   * - 'theme': the reference describes what concept a tag list should reflect,
+   *   and the candidate is a tag list (formatted as "tags: a, b, c"). The
+   *   judge scores TOLERANT semantic fit — it accepts any reasonable tags for
+   *   the concept, even if they use different vocabulary. Use for noisy
+   *   LLM-generated tag fields like `domain`.
+   */
+  mode?: 'prose' | 'theme';
 }
 
 export interface ProseJudgeResult {

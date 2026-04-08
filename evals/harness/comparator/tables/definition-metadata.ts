@@ -120,7 +120,8 @@ export async function compareDefinitionMetadata(
         details: `${entry.key}: themeReference set but produced value is not a JSON string array (got ${truncate(actualValue, 60)})`,
       });
     } else if (result.kind === 'prose' || result.kind === 'theme') {
-      // Async judge call
+      // Async judge call. Theme strategy uses a tolerant tag-list judging
+      // prompt; prose strategy uses the strict similarity prompt.
       const defaultMinSim = result.kind === 'theme' ? DEFAULT_THEME_MIN_SIMILARITY : DEFAULT_PROSE_MIN_SIMILARITY;
       const minSim = entry.minSimilarity ?? defaultMinSim;
       const judgment = await judgeFn({
@@ -128,6 +129,7 @@ export async function compareDefinitionMetadata(
         reference: result.reference,
         candidate: result.candidate,
         minSimilarity: minSim,
+        mode: result.kind === 'theme' ? 'theme' : 'prose',
       });
       if (judgment.passed) {
         proseChecksPassed += 1;
