@@ -139,4 +139,35 @@ describe('todo-api eval', () => {
       costBudgetUsd: 0.3,
     });
   }, 540_000);
+
+  it('iteration 6: interactions stage produces expected module-pair edges', async () => {
+    // The interactions stage derives module-to-module edges from the AST call
+    // graph + import graph + contract matching, then runs an LLM Step 1 to
+    // assign semantics + pattern (utility/business) to each edge.
+    //
+    // Uses the anchor-based interactionRubric (instead of strict module-name
+    // exact match) so the rubric stays decoupled from iter 4's LLM-picked
+    // module names. Each entry asserts: "the module containing definition X
+    // should interact with the module containing definition Y, with a source
+    // in the AST-derived set, and a semantic that matches this theme".
+    await runIterationStep({
+      fixture: TODO_API,
+      groundTruth: todoApiGroundTruth,
+      label: 'interactions',
+      toStage: 'interactions',
+      scope: [
+        'files',
+        'definitions',
+        'imports',
+        'definition_metadata',
+        'relationship_annotations',
+        'module_cohesion',
+        'contracts',
+        'interaction_rubric',
+      ],
+      judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
+      timeoutMs: 480_000,
+      costBudgetUsd: 0.4,
+    });
+  }, 600_000);
 });

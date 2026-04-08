@@ -139,6 +139,79 @@ export interface GroundTruthModule {
 }
 
 /**
+ * Cohesion rubric for the LLM-driven features stage.
+ *
+ * The features stage groups flows into product-level features. The LLM picks
+ * the feature names + slugs + descriptions, none of which are deterministic.
+ * The rubric instead asserts:
+ *
+ *   - "These flows (identified by entry path or entry def) should belong
+ *     to the same feature"
+ *   - "That feature's name + description should match this expected role"
+ *
+ * Mirror of `ModuleCohesionGroup` but for flows-into-features. The
+ * comparator joins `features` + `feature_flows` + `flows`, identifies the
+ * feature(s) containing each rubric flow, and verifies cohesion + role.
+ */
+export interface FeatureCohesionGroup {
+  /** Stable label for diff reporting and cache stability. */
+  label: string;
+  /**
+   * Flows that should land in the same feature. Each is identified by
+   * deterministic anchors — entry path (HTTP) or entry def — NOT by the
+   * LLM-picked flow slug.
+   */
+  flows: Array<{ entryPath?: string; entryDef?: DefKey }>;
+  /** What role the containing feature should play. */
+  expectedRole: string;
+  /**
+   * Cohesion mode:
+   * - 'strict' (default): all flows must be in the same feature
+   * - 'majority': >=50% of flows in the same feature
+   */
+  cohesion?: 'strict' | 'majority';
+  /** Min similarity for the role judge (default 0.6). */
+  minRoleSimilarity?: number;
+}
+
+/**
+ * Flow rubric for the LLM-driven flows stage.
+ *
+ * A flow is a user-facing journey through interactions, identified by an
+ * entry point (HTTP path or entry def). The LLM picks the flow name, slug,
+ * stakeholder, and description — none of which are deterministic. The
+ * rubric instead asserts:
+ *
+ *   - "There exists a flow whose entry point is X"
+ *   - "Its stakeholder is in this acceptable set"
+ *   - "Its definition-level steps include these required edges (subset, order-independent)"
+ *   - "Its name + description match this expected role (theme judge)"
+ *
+ * The comparator picks the BEST-matching flow per rubric entry (the one
+ * with the matching entry point) and verifies the asserted properties.
+ */
+export interface FlowRubricEntry {
+  /** Stable label for diff reporting and cache stability. */
+  label: string;
+  /** Match the flow by its entry definition (preferred for non-HTTP). */
+  entryDef?: DefKey;
+  /** Match the flow by its HTTP entry path (e.g. 'POST /auth/login'). */
+  entryPath?: string;
+  /** Acceptable stakeholders — the LLM may pick any from this set. */
+  acceptableStakeholders?: FlowStakeholder[];
+  /**
+   * Definition-level steps the flow MUST contain. Subset semantics: each
+   * required edge must appear somewhere in flow_definition_steps regardless
+   * of order. Extras in the produced flow are fine.
+   */
+  requiredDefinitionEdges?: Array<{ from: DefKey; to: DefKey }>;
+  /** Optional prose role check on the flow's name + description (theme judge). */
+  expectedRole?: string;
+  /** Min similarity for the role judge (default 0.6). */
+  minRoleSimilarity?: number;
+}
+
+/**
  * Interaction rubric for the LLM-driven interactions stage.
  *
  * Replaces strict `(fromModulePath, toModulePath)` exact-match GT with a
@@ -289,6 +362,18 @@ export interface GroundTruth {
    * See `InteractionRubricEntry` for the rationale.
    */
   interactionRubric?: InteractionRubricEntry[];
+  /**
+   * Entry-point-based GT for the LLM-driven flows stage. When set, use the
+   * `flow_rubric` virtual table in scope INSTEAD of `flows`. See
+   * `FlowRubricEntry` for the rationale.
+   */
+  flowRubric?: FlowRubricEntry[];
+  /**
+   * Cohesion-based GT for the LLM-driven features stage. When set, use the
+   * `feature_cohesion` virtual table in scope INSTEAD of `features`. See
+   * `FeatureCohesionGroup` for the rationale.
+   */
+  featureCohesion?: FeatureCohesionGroup[];
   flows?: GroundTruthFlow[];
   features?: GroundTruthFeature[];
 }
@@ -353,6 +438,16 @@ export type TableName =
    * Use this in scope INSTEAD of `interactions` for LLM-driven iterations.
    */
   | 'interaction_rubric'
+  /**
+   * Virtual table — `compareFlowRubric` matches flows by entry point and
+   * verifies stakeholder + required step edges + role prose.
+   */
+  | 'flow_rubric'
+  /**
+   * Virtual table — `compareFeatureCohesion` joins features + feature_flows
+   * and verifies cohesion + role for each rubric flow group.
+   */
+  | 'feature_cohesion'
   | 'contracts'
   | 'contract_participants'
   | 'interactions'
@@ -490,6 +585,8 @@ export const PROSE_REFERENCE_COUNTERS: Partial<Record<TableName, (gt: GroundTrut
   // so the count is the entire rubric length.
   module_cohesion: (gt) => (gt.moduleCohesion ?? []).length,
   interaction_rubric: (gt) => (gt.interactionRubric ?? []).filter((i) => i.semanticReference != null).length,
+  flow_rubric: (gt) => (gt.flowRubric ?? []).filter((f) => f.expectedRole != null).length,
+  feature_cohesion: (gt) => (gt.featureCohesion ?? []).length,
   interactions: (gt) => (gt.interactions ?? []).filter((i) => i.semanticReference != null).length,
   flows: (gt) => (gt.flows ?? []).filter((f) => f.descriptionReference != null).length,
   features: (gt) => (gt.features ?? []).filter((f) => f.descriptionReference != null).length,

@@ -16,7 +16,9 @@
 export { compareContracts } from './contracts.js';
 export { compareDefinitionMetadata } from './definition-metadata.js';
 export { compareDefinitions } from './definitions.js';
+export { compareFeatureCohesion } from './feature-cohesion.js';
 export { compareFiles } from './files.js';
+export { compareFlowRubric } from './flow-rubric.js';
 export { compareFlows } from './flows.js';
 export { compareImports } from './imports.js';
 export { compareInteractionRubric } from './interaction-rubric.js';

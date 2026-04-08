@@ -1,7 +1,7 @@
 {
   "fixture": "todo-api",
-  "lastRun": "2026-04-08T19:32:28.465Z",
-  "squintCommit": "50d440a",
+  "lastRun": "2026-04-08T20:34:05.593Z",
+  "squintCommit": "3a3e336",
   "tableScores": {
     "files": {
       "passed": true,
@@ -55,6 +55,14 @@
       "passed": true,
       "expected": 11,
       "produced": 11,
+      "critical": 0,
+      "major": 0,
+      "minor": 0
+    },
+    "interaction_rubric": {
+      "passed": true,
+      "expected": 5,
+      "produced": 21,
       "critical": 0,
       "major": 0,
       "minor": 0
