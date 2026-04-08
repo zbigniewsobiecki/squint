@@ -22,5 +22,10 @@ export default defineConfig({
     hookTimeout: 60_000,
     // Run sequentially — multiple subprocesses fighting for the same fixture dir is bad.
     fileParallelism: false,
+    // Force-load .env with override BEFORE any test code is imported so the
+    // OPENROUTER_API_KEY (and similar) used by the in-process judge AND by
+    // spawned squint subprocesses always comes from the project-local .env
+    // file, never a stale shell-level env var.
+    setupFiles: ['./evals/setup.ts'],
   },
 });
