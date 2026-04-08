@@ -266,7 +266,9 @@ export const definitionMetadata: GroundTruthDefinitionMetadata[] = [
     'EventBus',
     'In-memory publish/subscribe bus that lets producers emit named events and consumers subscribe to handle them.'
   ),
-  domain('src/events/event-bus.ts', 'EventBus', VOC_EVENTS),
+  // The LLM occasionally classifies the bus by what it carries (task events) rather
+  // than by what it is (an event bus) — accept both vocabularies.
+  domain('src/events/event-bus.ts', 'EventBus', [...VOC_EVENTS, ...VOC_TASKS]),
   pure('src/events/event-bus.ts', 'EventBus', false), // mutable subscriber map
 
   purpose(
@@ -276,7 +278,9 @@ export const definitionMetadata: GroundTruthDefinitionMetadata[] = [
   ),
   // The LLM picks up the auditLogger.subscribe side-effect from the surrounding
   // module context and tags this with auditing/event-management vocabulary.
-  domain('src/events/event-bus.ts', 'eventBus', [...VOC_EVENTS, ...VOC_AUDIT, ...VOC_DI_INSTANCE]),
+  // VOC_TASKS is included because the LLM also reasons about the events the
+  // bus carries (task.created / task.completed) when classifying.
+  domain('src/events/event-bus.ts', 'eventBus', [...VOC_EVENTS, ...VOC_AUDIT, ...VOC_DI_INSTANCE, ...VOC_TASKS]),
   pure('src/events/event-bus.ts', 'eventBus', false),
 
   purpose(

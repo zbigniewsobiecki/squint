@@ -20,6 +20,7 @@ import {
   compareInteractions,
   compareModuleMembers,
   compareModules,
+  compareRelationshipAnnotations,
 } from './tables/index.js';
 
 export interface CompareOptions {
@@ -154,6 +155,7 @@ const COMPARATORS: Partial<Record<TableName, ComparatorFn>> = {
   interactions: (p, g) => compareInteractions(p, g),
   flows: (p, g) => compareFlows(p, g),
   definition_metadata: (p, g, j) => compareDefinitionMetadata(p, g, j),
+  relationship_annotations: (p, g, j) => compareRelationshipAnnotations(p, g, j),
 };
 
 async function runComparator(

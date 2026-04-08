@@ -16,6 +16,7 @@ import {
   compareInteractions,
   compareModuleMembers,
   compareModules,
+  compareRelationshipAnnotations,
 } from './tables/index.js';
 
 /**
@@ -999,6 +1000,425 @@ describe('per-table comparators', () => {
       const judge = stubJudge({ 'ref|cand': 0.74 });
       const diff = await compareDefinitionMetadata(producedDb, expectedGt, judge);
       expect(diff.proseChecks).toEqual({ passed: 0, failed: 1 });
+    });
+  });
+
+  // ============================================================
+  // relationship_annotations
+  // ============================================================
+  describe('compareRelationshipAnnotations', () => {
+    /** Stub judge keyed on `${reference}|${candidate}`. */
+    function stubJudge(scores: Record<string, number>): ProseJudgeFn {
+      return async (req) => {
+        const score = scores[`${req.reference}|${req.candidate}`] ?? 0;
+        return {
+          similarity: score,
+          passed: score >= req.minSimilarity,
+          reasoning: `stub score ${score}`,
+        };
+      };
+    }
+
+    /**
+     * Two-file fixture with one inheritance edge (TasksRepository → BaseRepository)
+     * and one "uses" edge (TasksService → tasksRepository). The shape mirrors the
+     * real todo-api relationships well enough to validate the comparator end-to-end.
+     */
+    const baseFixture: GroundTruth = {
+      fixtureName: 't',
+      files: [
+        { path: 'src/repo.ts', language: 'typescript' },
+        { path: 'src/svc.ts', language: 'typescript' },
+      ],
+      definitions: [
+        { file: 'src/repo.ts', name: 'BaseRepository', kind: 'class', isExported: true, line: 1 },
+        {
+          file: 'src/repo.ts',
+          name: 'TasksRepository',
+          kind: 'class',
+          isExported: true,
+          line: 5,
+          extendsName: 'BaseRepository',
+        },
+        { file: 'src/repo.ts', name: 'tasksRepository', kind: 'const', isExported: true, line: 10 },
+        { file: 'src/svc.ts', name: 'TasksService', kind: 'class', isExported: true, line: 1 },
+      ],
+    };
+
+    /**
+     * Build the produced DB with the given relationship rows. Each row's
+     * semanticReference is stored as the produced `semantic` value (the builder
+     * does no validation), so this is the easiest way to inject a
+     * 'PENDING_LLM_ANNOTATION' placeholder into a fake produced DB.
+     */
+    function buildWithRelationships(rows: GroundTruth['relationships']): void {
+      buildGroundTruthDb(producedDb, { ...baseFixture, relationships: rows });
+    }
+
+    it('passes when every GT relationship is present with matching type and approved prose', async () => {
+      buildWithRelationships([
+        {
+          fromDef: defKey('src/repo.ts', 'TasksRepository'),
+          toDef: defKey('src/repo.ts', 'BaseRepository'),
+          relationshipType: 'extends',
+          semanticReference: 'TasksRepository inherits from BaseRepository.',
+        },
+        {
+          fromDef: defKey('src/svc.ts', 'TasksService'),
+          toDef: defKey('src/repo.ts', 'tasksRepository'),
+          relationshipType: 'uses',
+          semanticReference: 'Calls the repository to read and write tasks.',
+        },
+      ]);
+
+      const judge = stubJudge({
+        'TasksRepository inherits from BaseRepository.|TasksRepository inherits from BaseRepository.': 0.95,
+        'Calls the repository to read and write tasks.|Calls the repository to read and write tasks.': 0.9,
+      });
+
+      const expectedGt: GroundTruth = {
+        ...baseFixture,
+        relationships: [
+          {
+            fromDef: defKey('src/repo.ts', 'TasksRepository'),
+            toDef: defKey('src/repo.ts', 'BaseRepository'),
+            relationshipType: 'extends',
+            semanticReference: 'TasksRepository inherits from BaseRepository.',
+          },
+          {
+            fromDef: defKey('src/svc.ts', 'TasksService'),
+            toDef: defKey('src/repo.ts', 'tasksRepository'),
+            relationshipType: 'uses',
+            semanticReference: 'Calls the repository to read and write tasks.',
+          },
+        ],
+      };
+
+      const diff = await compareRelationshipAnnotations(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+      expect(diff.proseChecks).toEqual({ passed: 2, failed: 0 });
+    });
+
+    it('reports critical when a GT relationship is missing in produced', async () => {
+      // Build only the inheritance edge — the "uses" edge is missing.
+      buildWithRelationships([
+        {
+          fromDef: defKey('src/repo.ts', 'TasksRepository'),
+          toDef: defKey('src/repo.ts', 'BaseRepository'),
+          relationshipType: 'extends',
+          semanticReference: 'inherits',
+        },
+      ]);
+
+      const expectedGt: GroundTruth = {
+        ...baseFixture,
+        relationships: [
+          {
+            fromDef: defKey('src/repo.ts', 'TasksRepository'),
+            toDef: defKey('src/repo.ts', 'BaseRepository'),
+            relationshipType: 'extends',
+            semanticReference: 'inherits',
+          },
+          {
+            fromDef: defKey('src/svc.ts', 'TasksService'),
+            toDef: defKey('src/repo.ts', 'tasksRepository'),
+            relationshipType: 'uses',
+            semanticReference: 'calls',
+          },
+        ],
+      };
+
+      const judge = stubJudge({ 'inherits|inherits': 0.95 });
+      const diff = await compareRelationshipAnnotations(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'missing',
+          severity: 'critical',
+          naturalKey: 'src/svc.ts::TasksService->src/repo.ts::tasksRepository',
+        }),
+      ]);
+    });
+
+    it('reports critical when GT references a definition that does not exist in produced', async () => {
+      buildWithRelationships([]);
+
+      const expectedGt: GroundTruth = {
+        ...baseFixture,
+        relationships: [
+          {
+            fromDef: defKey('src/missing.ts', 'Ghost'),
+            toDef: defKey('src/repo.ts', 'BaseRepository'),
+            relationshipType: 'extends',
+            semanticReference: 'should not match anything',
+          },
+        ],
+      };
+
+      const diff = await compareRelationshipAnnotations(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'missing',
+          severity: 'critical',
+          naturalKey: expect.stringContaining('src/missing.ts::Ghost'),
+        }),
+      ]);
+    });
+
+    it('reports major when relationship_type differs (extends vs uses)', async () => {
+      // Builder uses set() with 'uses', so we need to bypass the inheritance-stickiness
+      // by writing the row directly. Easiest path: build via the GT helper but
+      // pass relationshipType:'uses' so the produced row stores 'uses' for an
+      // edge GT expects to be 'extends'.
+      buildWithRelationships([
+        {
+          fromDef: defKey('src/repo.ts', 'TasksRepository'),
+          toDef: defKey('src/repo.ts', 'BaseRepository'),
+          relationshipType: 'uses', // ← wrong type
+          semanticReference: 'TasksRepository uses BaseRepository.',
+        },
+      ]);
+
+      const expectedGt: GroundTruth = {
+        ...baseFixture,
+        relationships: [
+          {
+            fromDef: defKey('src/repo.ts', 'TasksRepository'),
+            toDef: defKey('src/repo.ts', 'BaseRepository'),
+            relationshipType: 'extends', // ← GT says extends
+            semanticReference: 'TasksRepository inherits from BaseRepository.',
+          },
+        ],
+      };
+
+      const judge = stubJudge({
+        'TasksRepository inherits from BaseRepository.|TasksRepository uses BaseRepository.': 0.9,
+      });
+      const diff = await compareRelationshipAnnotations(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'mismatch',
+            severity: 'major',
+            naturalKey: 'src/repo.ts::TasksRepository->src/repo.ts::BaseRepository',
+            details: expect.stringContaining('relationship_type'),
+          }),
+        ])
+      );
+    });
+
+    it('reports major when produced semantic equals PENDING_LLM_ANNOTATION', async () => {
+      // The placeholder semantic is what parse-time inheritance edges start as
+      // before the relationships LLM stage replaces them. If the LLM drops the
+      // edge, the placeholder leaks through — this is exactly the bug class
+      // iteration 3 wants to catch.
+      buildWithRelationships([
+        {
+          fromDef: defKey('src/repo.ts', 'TasksRepository'),
+          toDef: defKey('src/repo.ts', 'BaseRepository'),
+          relationshipType: 'extends',
+          semanticReference: 'PENDING_LLM_ANNOTATION',
+        },
+      ]);
+
+      const expectedGt: GroundTruth = {
+        ...baseFixture,
+        relationships: [
+          {
+            fromDef: defKey('src/repo.ts', 'TasksRepository'),
+            toDef: defKey('src/repo.ts', 'BaseRepository'),
+            relationshipType: 'extends',
+            semanticReference: 'TasksRepository inherits from BaseRepository.',
+          },
+        ],
+      };
+
+      // Even if the judge would happily approve the placeholder, the comparator
+      // should refuse to forward to the judge and report a major diff first.
+      const generousJudge = stubJudge({
+        'TasksRepository inherits from BaseRepository.|PENDING_LLM_ANNOTATION': 1.0,
+      });
+      const diff = await compareRelationshipAnnotations(producedDb, expectedGt, generousJudge);
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'mismatch',
+          severity: 'major',
+          naturalKey: 'src/repo.ts::TasksRepository->src/repo.ts::BaseRepository',
+          details: expect.stringContaining('PENDING_LLM_ANNOTATION'),
+        }),
+      ]);
+      // The placeholder must NOT have been counted as a passed prose check.
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 0 });
+    });
+
+    it('records prose-drift minor diff when judge score < threshold', async () => {
+      buildWithRelationships([
+        {
+          fromDef: defKey('src/svc.ts', 'TasksService'),
+          toDef: defKey('src/repo.ts', 'tasksRepository'),
+          relationshipType: 'uses',
+          semanticReference: 'Sends marketing emails.',
+        },
+      ]);
+
+      const reference = 'Reads and writes tasks via the repository.';
+      const expectedGt: GroundTruth = {
+        ...baseFixture,
+        relationships: [
+          {
+            fromDef: defKey('src/svc.ts', 'TasksService'),
+            toDef: defKey('src/repo.ts', 'tasksRepository'),
+            relationshipType: 'uses',
+            semanticReference: reference,
+            minSimilarity: 0.75,
+          },
+        ],
+      };
+
+      const judge = stubJudge({ [`${reference}|Sends marketing emails.`]: 0.2 });
+      const diff = await compareRelationshipAnnotations(producedDb, expectedGt, judge);
+
+      expect(diff.passed).toBe(true); // minor only
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'prose-drift',
+          severity: 'minor',
+          naturalKey: 'src/svc.ts::TasksService->src/repo.ts::tasksRepository',
+        }),
+      ]);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 1 });
+    });
+
+    it('bumps proseChecks.passed when judge approves and produces no diff', async () => {
+      buildWithRelationships([
+        {
+          fromDef: defKey('src/svc.ts', 'TasksService'),
+          toDef: defKey('src/repo.ts', 'tasksRepository'),
+          relationshipType: 'uses',
+          semanticReference: 'Reads and writes tasks via the repository.',
+        },
+      ]);
+
+      const reference = 'Reads and writes tasks via the repository.';
+      const expectedGt: GroundTruth = {
+        ...baseFixture,
+        relationships: [
+          {
+            fromDef: defKey('src/svc.ts', 'TasksService'),
+            toDef: defKey('src/repo.ts', 'tasksRepository'),
+            relationshipType: 'uses',
+            semanticReference: reference,
+          },
+        ],
+      };
+
+      const judge = stubJudge({ [`${reference}|Reads and writes tasks via the repository.`]: 0.95 });
+      const diff = await compareRelationshipAnnotations(producedDb, expectedGt, judge);
+
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+      expect(diff.proseChecks).toEqual({ passed: 1, failed: 0 });
+    });
+
+    it('ignores extra produced relationships not declared in ground truth', async () => {
+      // Produced has an extra "uses" edge the GT does not enumerate. The eval
+      // should NOT flag this — the GT is an existence claim ("at least these
+      // edges exist"), not a strict-equality claim. Symbols stage routinely
+      // produces more edges than we manually catalog.
+      buildWithRelationships([
+        {
+          fromDef: defKey('src/repo.ts', 'TasksRepository'),
+          toDef: defKey('src/repo.ts', 'BaseRepository'),
+          relationshipType: 'extends',
+          semanticReference: 'inherits',
+        },
+        {
+          fromDef: defKey('src/svc.ts', 'TasksService'),
+          toDef: defKey('src/repo.ts', 'tasksRepository'),
+          relationshipType: 'uses',
+          semanticReference: 'extra-not-in-gt',
+        },
+      ]);
+
+      const expectedGt: GroundTruth = {
+        ...baseFixture,
+        relationships: [
+          {
+            fromDef: defKey('src/repo.ts', 'TasksRepository'),
+            toDef: defKey('src/repo.ts', 'BaseRepository'),
+            relationshipType: 'extends',
+            semanticReference: 'inherits',
+          },
+        ],
+      };
+
+      const judge = stubJudge({ 'inherits|inherits': 0.95 });
+      const diff = await compareRelationshipAnnotations(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+      // expectedCount counts the GT, producedCount counts everything in the table.
+      expect(diff.expectedCount).toBe(1);
+      expect(diff.producedCount).toBe(2);
+    });
+
+    it('uses default min similarity 0.75 when not specified', async () => {
+      buildWithRelationships([
+        {
+          fromDef: defKey('src/svc.ts', 'TasksService'),
+          toDef: defKey('src/repo.ts', 'tasksRepository'),
+          relationshipType: 'uses',
+          semanticReference: 'cand',
+        },
+      ]);
+      const expectedGt: GroundTruth = {
+        ...baseFixture,
+        relationships: [
+          {
+            fromDef: defKey('src/svc.ts', 'TasksService'),
+            toDef: defKey('src/repo.ts', 'tasksRepository'),
+            relationshipType: 'uses',
+            semanticReference: 'ref',
+            // no minSimilarity → default 0.75
+          },
+        ],
+      };
+      const judge = stubJudge({ 'ref|cand': 0.74 });
+      const diff = await compareRelationshipAnnotations(producedDb, expectedGt, judge);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 1 });
+    });
+
+    it('skips judge call when GT entry has no semanticReference (existence-only check)', async () => {
+      buildWithRelationships([
+        {
+          fromDef: defKey('src/repo.ts', 'TasksRepository'),
+          toDef: defKey('src/repo.ts', 'BaseRepository'),
+          relationshipType: 'extends',
+          semanticReference: 'whatever the LLM said',
+        },
+      ]);
+      const expectedGt: GroundTruth = {
+        ...baseFixture,
+        relationships: [
+          {
+            fromDef: defKey('src/repo.ts', 'TasksRepository'),
+            toDef: defKey('src/repo.ts', 'BaseRepository'),
+            relationshipType: 'extends',
+            // no semanticReference → existence + type only
+          },
+        ],
+      };
+      // A judge that throws if called — proves we never invoked it.
+      const judge: ProseJudgeFn = async () => {
+        throw new Error('judge should not be called when there is no semanticReference');
+      };
+      const diff = await compareRelationshipAnnotations(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 0 });
     });
   });
 });

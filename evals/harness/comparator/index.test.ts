@@ -135,6 +135,45 @@ describe('compare (top-level orchestrator)', () => {
     ).rejects.toThrow(/comparator.*symbols/i);
   });
 
+  it('dispatches relationship_annotations to its comparator (no throw)', async () => {
+    // Build a minimal fixture with one inheritance edge so the relationship_annotations
+    // table is non-empty when the dispatcher routes the call. The comparator must
+    // be wired into the COMPARATORS map for this not to throw "no comparator implemented".
+    const gt: GroundTruth = {
+      fixtureName: 'rel',
+      files: [{ path: 'src/r.ts', language: 'typescript' }],
+      definitions: [
+        { file: 'src/r.ts', name: 'BaseRepo', kind: 'class', isExported: true, line: 1 },
+        {
+          file: 'src/r.ts',
+          name: 'TaskRepo',
+          kind: 'class',
+          isExported: true,
+          line: 5,
+          extendsName: 'BaseRepo',
+        },
+      ],
+      relationships: [
+        {
+          fromDef: defKey('src/r.ts', 'TaskRepo'),
+          toDef: defKey('src/r.ts', 'BaseRepo'),
+          relationshipType: 'extends',
+          // No semanticReference → no prose check, stub judge is fine.
+        },
+      ],
+    };
+    buildGroundTruthDb(producedDb, gt);
+    const report = await compare({
+      produced: producedDb,
+      groundTruth: gt,
+      scope: ['relationship_annotations'],
+      judgeFn: makeStubJudge(),
+    });
+    expect(report.tables).toHaveLength(1);
+    expect(report.tables[0].table).toBe('relationship_annotations');
+    expect(report.passed).toBe(true);
+  });
+
   it('records the duration in milliseconds', async () => {
     buildGroundTruthDb(producedDb, baseGt);
     const report = await compare({

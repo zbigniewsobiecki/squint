@@ -22,3 +22,4 @@ export { compareImports } from './imports.js';
 export { compareInteractions } from './interactions.js';
 export { compareModuleMembers } from './module-members.js';
 export { compareModules } from './modules.js';
+export { compareRelationshipAnnotations } from './relationship-annotations.js';

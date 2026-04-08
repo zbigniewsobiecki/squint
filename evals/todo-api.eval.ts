@@ -32,4 +32,19 @@ describe('todo-api eval', () => {
       timeoutMs: 180_000,
     });
   }, 300_000);
+
+  it('iteration 3: relationships stage produces expected relationship_annotations', async () => {
+    await runIterationStep({
+      fixture: TODO_API,
+      groundTruth: todoApiGroundTruth,
+      label: 'relationships',
+      toStage: 'relationships',
+      // Scope includes definition_metadata as a regression check on iteration 2 —
+      // running --to-stage relationships also runs symbols, so any vocabulary
+      // drift in symbols would surface here too.
+      scope: ['files', 'definitions', 'imports', 'definition_metadata', 'relationship_annotations'],
+      judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
+      timeoutMs: 240_000,
+    });
+  }, 360_000);
 });
