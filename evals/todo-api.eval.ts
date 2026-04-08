@@ -170,4 +170,60 @@ describe('todo-api eval', () => {
       costBudgetUsd: 0.4,
     });
   }, 600_000);
+
+  it('iteration 6.5: interactions-validate stage preserves the rubric', async () => {
+    // Regression detector for interactions-validate. This is a deterministic
+    // post-LLM cleanup pass that scans LLM-inferred edges for hallucinations:
+    //   - REVERSED      (inferred A→B but AST shows B→A)
+    //   - DIRECTION_CONFUSED (inferred direction disagrees with static evidence)
+    //   - NO_IMPORTS    (inferred edge has no static evidence)
+    //
+    // For todo-api the validate pass typically deletes a handful of LLM-only
+    // edges. The interactionRubric defaults to acceptableSources excluding
+    // 'llm-inferred' anyway, so the rubric is unaffected.
+    await runIterationStep({
+      fixture: TODO_API,
+      groundTruth: todoApiGroundTruth,
+      label: 'interactions-validate',
+      toStage: 'interactions-validate',
+      scope: [
+        'files',
+        'definitions',
+        'imports',
+        'definition_metadata',
+        'relationship_annotations',
+        'module_cohesion',
+        'contracts',
+        'interaction_rubric',
+      ],
+      judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
+      timeoutMs: 480_000,
+      costBudgetUsd: 0.4,
+    });
+  }, 600_000);
+
+  it('iteration 6.6: interactions-verify stage preserves the rubric', async () => {
+    // Regression detector for interactions-verify. Phase 1 checks referential
+    // integrity and coverage; Phase 2 calls the LLM to auto-remediate any
+    // gaps. For a clean fixture this is a no-op on the rubric assertions.
+    await runIterationStep({
+      fixture: TODO_API,
+      groundTruth: todoApiGroundTruth,
+      label: 'interactions-verify',
+      toStage: 'interactions-verify',
+      scope: [
+        'files',
+        'definitions',
+        'imports',
+        'definition_metadata',
+        'relationship_annotations',
+        'module_cohesion',
+        'contracts',
+        'interaction_rubric',
+      ],
+      judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
+      timeoutMs: 540_000,
+      costBudgetUsd: 0.4,
+    });
+  }, 660_000);
 });
