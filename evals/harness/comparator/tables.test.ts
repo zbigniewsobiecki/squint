@@ -13,6 +13,7 @@ import {
   compareFiles,
   compareFlows,
   compareImports,
+  compareInteractionRubric,
   compareInteractions,
   compareModuleCohesion,
   compareModuleMembers,
@@ -584,7 +585,7 @@ describe('per-table comparators', () => {
       expect(diff.passed).toBe(true);
     });
 
-    it('reports critical missing contract', () => {
+    it('reports critical missing contract (required)', () => {
       buildGroundTruthDb(producedDb, { ...gt, contracts: [] });
       const diff = compareContracts(producedDb, gt);
       expect(diff.passed).toBe(false);
@@ -593,6 +594,57 @@ describe('per-table comparators', () => {
           kind: 'missing',
           severity: 'critical',
           naturalKey: 'http::POST /api/auth/login',
+        }),
+      ]);
+    });
+
+    it('reports MINOR missing for optional contracts (LLM may legitimately skip)', () => {
+      const optGt: GroundTruth = {
+        ...gt,
+        contracts: [
+          {
+            protocol: 'http',
+            normalizedKey: 'POST /api/auth/login',
+            participants: [{ defKey: defKey('src/auth.ts', 'login'), role: 'server' }],
+            optional: true,
+          },
+        ],
+      };
+      buildGroundTruthDb(producedDb, { ...gt, contracts: [] });
+      const diff = compareContracts(producedDb, optGt);
+      // Minor only — gate stays open
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'missing',
+          severity: 'minor',
+          naturalKey: 'http::POST /api/auth/login',
+          details: expect.stringContaining('optional'),
+        }),
+      ]);
+    });
+
+    it('reports MINOR (not major) for extra produced contracts', () => {
+      const extraGt: GroundTruth = {
+        ...gt,
+        contracts: [
+          ...gt.contracts!,
+          {
+            protocol: 'event',
+            normalizedKey: 'task.completed',
+            participants: [{ defKey: defKey('src/auth.ts', 'login'), role: 'producer' }],
+          },
+        ],
+      };
+      buildGroundTruthDb(producedDb, extraGt);
+      // Compare against the smaller GT — the event contract becomes "extra"
+      const diff = compareContracts(producedDb, gt);
+      expect(diff.passed).toBe(true); // minor only
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'extra',
+          severity: 'minor',
+          naturalKey: 'event::task.completed',
         }),
       ]);
     });
@@ -2108,6 +2160,305 @@ describe('per-table comparators', () => {
       const diff = await compareModuleCohesion(producedDb, expectedGt, judge);
       expect(diff.passed).toBe(true);
       expect(diff.proseChecks).toEqual({ passed: 1, failed: 0 });
+    });
+  });
+
+  // ============================================================
+  // interaction_rubric (Phase 2: anchor-based interactions verification)
+  // ============================================================
+  describe('compareInteractionRubric', () => {
+    /** Stub judge keyed on `${reference}|${candidate}`. */
+    function stubJudge(scores: Record<string, number>): ProseJudgeFn {
+      return async (req) => {
+        const score = scores[`${req.reference}|${req.candidate}`] ?? 0;
+        return {
+          similarity: score,
+          passed: score >= req.minSimilarity,
+          reasoning: `stub score ${score}`,
+        };
+      };
+    }
+
+    /**
+     * Build a fixture with two modules each containing one definition,
+     * connected by an interaction edge. Returns the GroundTruth used to
+     * build (so tests can pass it OR a different one for comparison).
+     */
+    function buildTwoModFixture(
+      interactionSource: 'ast' | 'ast-import' | 'llm-inferred' | 'contract-matched',
+      interactionSemantic: string | null
+    ): GroundTruth {
+      const buildGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/c.ts', language: 'typescript' },
+          { path: 'src/s.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/c.ts', name: 'AuthController', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/s.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+        ],
+        modules: [
+          { fullPath: 'project.api.auth', name: 'AuthAPI', members: [defKey('src/c.ts', 'AuthController')] },
+          { fullPath: 'project.services.auth', name: 'AuthService', members: [defKey('src/s.ts', 'AuthService')] },
+        ],
+        interactions: [
+          {
+            fromModulePath: 'project.api.auth',
+            toModulePath: 'project.services.auth',
+            pattern: 'business',
+            source: interactionSource,
+            ...(interactionSemantic !== null && { semanticReference: interactionSemantic }),
+          },
+        ],
+      };
+      buildGroundTruthDb(producedDb, buildGt);
+      // The builder doesn't write the semantic field for interactions; set it
+      // directly via raw SQL so tests can exercise the prose path.
+      if (interactionSemantic !== null) {
+        producedDb.getConnection().prepare('UPDATE interactions SET semantic = ?').run(interactionSemantic);
+      }
+      return buildGt;
+    }
+
+    it('passes when anchors resolve to modules connected by an acceptable interaction', async () => {
+      buildTwoModFixture('ast', null);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/c.ts', language: 'typescript' },
+          { path: 'src/s.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/c.ts', name: 'AuthController', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/s.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+        ],
+        interactionRubric: [
+          {
+            label: 'auth-controller-uses-auth-service',
+            fromAnchor: defKey('src/c.ts', 'AuthController'),
+            toAnchor: defKey('src/s.ts', 'AuthService'),
+          },
+        ],
+      };
+
+      const diff = await compareInteractionRubric(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+      expect(diff.expectedCount).toBe(1);
+    });
+
+    it('CRITICAL when an anchor def does not exist', async () => {
+      buildTwoModFixture('ast', null);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/c.ts', language: 'typescript' },
+          { path: 'src/s.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/c.ts', name: 'AuthController', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/s.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+        ],
+        interactionRubric: [
+          {
+            label: 'ghost',
+            fromAnchor: defKey('src/missing.ts', 'Ghost'),
+            toAnchor: defKey('src/s.ts', 'AuthService'),
+          },
+        ],
+      };
+
+      const diff = await compareInteractionRubric(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'missing',
+          severity: 'critical',
+          naturalKey: 'ghost',
+          details: expect.stringContaining('unknown FROM anchor'),
+        }),
+      ]);
+    });
+
+    it('MAJOR when no interaction edge exists between resolved modules', async () => {
+      // Build with a self-loop interaction (api.auth → api.auth) that doesn't
+      // match any cross-module rubric.
+      const buildGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/c.ts', language: 'typescript' },
+          { path: 'src/s.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/c.ts', name: 'AuthController', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/s.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+        ],
+        modules: [
+          { fullPath: 'project.api.auth', name: 'AuthAPI', members: [defKey('src/c.ts', 'AuthController')] },
+          { fullPath: 'project.services.auth', name: 'AuthService', members: [defKey('src/s.ts', 'AuthService')] },
+        ],
+        // Note: NO interactions
+      };
+      buildGroundTruthDb(producedDb, buildGt);
+
+      const expectedGt: GroundTruth = {
+        ...buildGt,
+        interactionRubric: [
+          {
+            label: 'auth-pair',
+            fromAnchor: defKey('src/c.ts', 'AuthController'),
+            toAnchor: defKey('src/s.ts', 'AuthService'),
+          },
+        ],
+      };
+
+      const diff = await compareInteractionRubric(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'missing',
+          severity: 'major',
+          naturalKey: 'auth-pair',
+          details: expect.stringContaining('no interaction edge'),
+        }),
+      ]);
+    });
+
+    it("MAJOR when interaction source isn't in the acceptable set", async () => {
+      buildTwoModFixture('llm-inferred', null);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/c.ts', language: 'typescript' },
+          { path: 'src/s.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/c.ts', name: 'AuthController', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/s.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+        ],
+        interactionRubric: [
+          {
+            label: 'auth-pair',
+            fromAnchor: defKey('src/c.ts', 'AuthController'),
+            toAnchor: defKey('src/s.ts', 'AuthService'),
+            // Default acceptableSources excludes 'llm-inferred'
+          },
+        ],
+      };
+
+      const diff = await compareInteractionRubric(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'mismatch',
+          severity: 'major',
+          naturalKey: 'auth-pair',
+          details: expect.stringContaining("source 'llm-inferred'"),
+        }),
+      ]);
+    });
+
+    it('passes when llm-inferred is in the acceptable set explicitly', async () => {
+      buildTwoModFixture('llm-inferred', null);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/c.ts', language: 'typescript' },
+          { path: 'src/s.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/c.ts', name: 'AuthController', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/s.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+        ],
+        interactionRubric: [
+          {
+            label: 'auth-pair',
+            fromAnchor: defKey('src/c.ts', 'AuthController'),
+            toAnchor: defKey('src/s.ts', 'AuthService'),
+            acceptableSources: ['ast', 'ast-import', 'llm-inferred', 'contract-matched'],
+          },
+        ],
+      };
+
+      const diff = await compareInteractionRubric(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(true);
+    });
+
+    it('semantic prose check passes when judge approves (theme mode)', async () => {
+      buildTwoModFixture('ast', 'authenticates user credentials before forwarding the request');
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/c.ts', language: 'typescript' },
+          { path: 'src/s.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/c.ts', name: 'AuthController', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/s.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+        ],
+        interactionRubric: [
+          {
+            label: 'auth-pair',
+            fromAnchor: defKey('src/c.ts', 'AuthController'),
+            toAnchor: defKey('src/s.ts', 'AuthService'),
+            semanticReference: 'authentication delegation from controller to service',
+          },
+        ],
+      };
+
+      const judge = stubJudge({
+        'authentication delegation from controller to service|authenticates user credentials before forwarding the request': 0.85,
+      });
+      const diff = await compareInteractionRubric(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true);
+      expect(diff.proseChecks).toEqual({ passed: 1, failed: 0 });
+    });
+
+    it('MAJOR when both anchors resolve to the same module (self-loop)', async () => {
+      const buildGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/c.ts', language: 'typescript' }],
+        definitions: [
+          { file: 'src/c.ts', name: 'A', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/c.ts', name: 'B', kind: 'class', isExported: true, line: 2 },
+        ],
+        modules: [
+          {
+            fullPath: 'project.module',
+            name: 'Module',
+            members: [defKey('src/c.ts', 'A'), defKey('src/c.ts', 'B')],
+          },
+        ],
+      };
+      buildGroundTruthDb(producedDb, buildGt);
+
+      const expectedGt: GroundTruth = {
+        ...buildGt,
+        interactionRubric: [
+          {
+            label: 'self-loop',
+            fromAnchor: defKey('src/c.ts', 'A'),
+            toAnchor: defKey('src/c.ts', 'B'),
+          },
+        ],
+      };
+
+      const diff = await compareInteractionRubric(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'mismatch',
+          severity: 'major',
+          naturalKey: 'self-loop',
+          details: expect.stringContaining('same module'),
+        }),
+      ]);
     });
   });
 });

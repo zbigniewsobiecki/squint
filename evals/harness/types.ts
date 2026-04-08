@@ -139,6 +139,38 @@ export interface GroundTruthModule {
 }
 
 /**
+ * Interaction rubric for the LLM-driven interactions stage.
+ *
+ * Replaces strict `(fromModulePath, toModulePath)` exact-match GT with a
+ * property-based assertion: "the module containing definition X should
+ * interact with the module containing definition Y, optionally with this
+ * source kind and this prose semantic". The comparator resolves anchor
+ * defs to their containing modules at compare time, so the GT is decoupled
+ * from iter 4's LLM-picked module names.
+ */
+export interface InteractionRubricEntry {
+  /** Stable label for diff reporting and cache stability. */
+  label: string;
+  /**
+   * One or more anchor definitions on the FROM side. The comparator
+   * resolves the FIRST anchor that has a module assignment.
+   */
+  fromAnchor: DefKey;
+  /** One or more anchor definitions on the TO side. */
+  toAnchor: DefKey;
+  /**
+   * Acceptable interaction sources — the LLM may pick any. Defaults to
+   * ['ast', 'ast-import', 'contract-matched'] (the deterministic ones).
+   * llm-inferred is excluded by default because it's the most variance-prone.
+   */
+  acceptableSources?: InteractionSource[];
+  /** Optional prose theme for the semantic field, judged in theme mode. */
+  semanticReference?: string;
+  /** Min similarity for the prose judge (default 0.6). */
+  minSimilarity?: number;
+}
+
+/**
  * Member-cohesion rubric for the LLM-driven modules stage.
  *
  * Replaces the strict `modules`/`module_members` exact-match GT with a
@@ -171,9 +203,18 @@ export interface ModuleCohesionGroup {
 }
 
 export interface GroundTruthContract {
-  protocol: string; // 'http' | 'events' | etc.
-  normalizedKey: string; // e.g. 'POST /api/auth/login' or 'task.completed'
+  protocol: string; // 'http' | 'event' | etc.
+  normalizedKey: string; // e.g. 'POST /auth/login' or 'task.completed'
   participants: GroundTruthContractParticipant[];
+  /**
+   * If true, this contract is "expected but not required" — the LLM may
+   * legitimately fail to extract it on some runs. Missing produces a MINOR
+   * warning instead of a CRITICAL gate failure.
+   *
+   * Use for contracts like in-process events where the boundary status is
+   * ambiguous and the LLM's detection is non-deterministic.
+   */
+  optional?: boolean;
 }
 
 export interface GroundTruthContractParticipant {
@@ -242,6 +283,12 @@ export interface GroundTruth {
   moduleCohesion?: ModuleCohesionGroup[];
   contracts?: GroundTruthContract[];
   interactions?: GroundTruthInteraction[];
+  /**
+   * Anchor-based GT for the LLM-driven interactions stage. When set, use
+   * the `interaction_rubric` virtual table in scope INSTEAD of `interactions`.
+   * See `InteractionRubricEntry` for the rationale.
+   */
+  interactionRubric?: InteractionRubricEntry[];
   flows?: GroundTruthFlow[];
   features?: GroundTruthFeature[];
 }
@@ -300,6 +347,12 @@ export type TableName =
    * `module_members` for LLM-driven module-stage iterations.
    */
   | 'module_cohesion'
+  /**
+   * Virtual table — `compareInteractionRubric` resolves anchor defs to
+   * their containing modules and verifies an interaction edge between them.
+   * Use this in scope INSTEAD of `interactions` for LLM-driven iterations.
+   */
+  | 'interaction_rubric'
   | 'contracts'
   | 'contract_participants'
   | 'interactions'
@@ -436,6 +489,7 @@ export const PROSE_REFERENCE_COUNTERS: Partial<Record<TableName, (gt: GroundTrut
   // Cohesion rubric ALWAYS makes a judge call per group (the role check),
   // so the count is the entire rubric length.
   module_cohesion: (gt) => (gt.moduleCohesion ?? []).length,
+  interaction_rubric: (gt) => (gt.interactionRubric ?? []).filter((i) => i.semanticReference != null).length,
   interactions: (gt) => (gt.interactions ?? []).filter((i) => i.semanticReference != null).length,
   flows: (gt) => (gt.flows ?? []).filter((f) => f.descriptionReference != null).length,
   features: (gt) => (gt.features ?? []).filter((f) => f.descriptionReference != null).length,

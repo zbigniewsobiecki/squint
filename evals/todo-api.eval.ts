@@ -109,4 +109,34 @@ describe('todo-api eval', () => {
       costBudgetUsd: 0.3,
     });
   }, 540_000);
+
+  it('iteration 5: contracts stage extracts expected HTTP routes and events', async () => {
+    // The contracts extract stage scans boundary-role definitions (controllers,
+    // handlers, clients) and produces a normalized list of cross-process
+    // protocols: HTTP routes, event topics, queue names, etc.
+    //
+    // Variance hot spots are mostly post-processed away by squint's normalization
+    // (HTTP method casing, route param placeholders). The natural key
+    // (protocol, normalized_key) is stable enough for strict matching. The
+    // 9 HTTP routes + 2 events for todo-api are hand-authored against the
+    // controller and client source.
+    await runIterationStep({
+      fixture: TODO_API,
+      groundTruth: todoApiGroundTruth,
+      label: 'contracts',
+      toStage: 'contracts',
+      scope: [
+        'files',
+        'definitions',
+        'imports',
+        'definition_metadata',
+        'relationship_annotations',
+        'module_cohesion',
+        'contracts',
+      ],
+      judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
+      timeoutMs: 420_000,
+      costBudgetUsd: 0.3,
+    });
+  }, 540_000);
 });

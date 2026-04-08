@@ -5,8 +5,16 @@ import { tableDiffPassed } from '../severity.js';
 /**
  * Compare the `contracts` table.
  *
- * Natural key: `(protocol, normalized_key)`. Missing = critical. Extra = major.
- * (Contract participants are not yet checked; they're a separate table.)
+ * Natural key: `(protocol, normalized_key)`.
+ *
+ * Severity matrix:
+ *   - Missing GT contract (required) → CRITICAL
+ *   - Missing GT contract (optional)  → MINOR (LLM legitimately misses some)
+ *   - Extra produced contract         → MINOR (the LLM may detect more than
+ *                                       we enumerate; the GT is an existence
+ *                                       claim, not strict equality)
+ *
+ * Contract participants are not yet checked; they're a separate concern.
  */
 export function compareContracts(produced: IndexDatabase, gt: GroundTruth): TableDiff {
   const conn = produced.getConnection();
@@ -16,24 +24,29 @@ export function compareContracts(produced: IndexDatabase, gt: GroundTruth): Tabl
   }>;
   const producedKeys = new Set(producedRows.map((r) => `${r.protocol}::${r.normalizedKey}`));
   const expected = gt.contracts ?? [];
-  const expectedKeys = new Set(expected.map((c) => `${c.protocol}::${c.normalizedKey}`));
+
+  // Build map keyed on natural key → optional flag
+  const expectedMap = new Map<string, { optional: boolean }>();
+  for (const c of expected) {
+    expectedMap.set(`${c.protocol}::${c.normalizedKey}`, { optional: c.optional === true });
+  }
 
   const diffs: RowDiff[] = [];
-  for (const e of expectedKeys) {
-    if (!producedKeys.has(e)) {
+  for (const [key, meta] of expectedMap) {
+    if (!producedKeys.has(key)) {
       diffs.push({
         kind: 'missing',
-        severity: 'critical',
-        naturalKey: e,
-        details: `Contract '${e}' is in ground truth but missing from produced DB`,
+        severity: meta.optional ? 'minor' : 'critical',
+        naturalKey: key,
+        details: `Contract '${key}' is in ground truth but missing from produced DB${meta.optional ? ' (optional)' : ''}`,
       });
     }
   }
   for (const p of producedKeys) {
-    if (!expectedKeys.has(p)) {
+    if (!expectedMap.has(p)) {
       diffs.push({
         kind: 'extra',
-        severity: 'major',
+        severity: 'minor',
         naturalKey: p,
         details: `Produced DB has contract '${p}' not declared in ground truth`,
       });

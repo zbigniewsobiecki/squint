@@ -19,6 +19,7 @@ export { compareDefinitions } from './definitions.js';
 export { compareFiles } from './files.js';
 export { compareFlows } from './flows.js';
 export { compareImports } from './imports.js';
+export { compareInteractionRubric } from './interaction-rubric.js';
 export { compareInteractions } from './interactions.js';
 export { compareModuleCohesion } from './module-cohesion.js';
 export { compareModuleMembers } from './module-members.js';

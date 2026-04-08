@@ -1,7 +1,7 @@
 {
   "fixture": "todo-api",
-  "lastRun": "2026-04-08T18:10:36.699Z",
-  "squintCommit": "d18dc6a",
+  "lastRun": "2026-04-08T19:32:28.465Z",
+  "squintCommit": "50d440a",
   "tableScores": {
     "files": {
       "passed": true,
@@ -30,7 +30,7 @@
     "definition_metadata": {
       "passed": true,
       "expected": 122,
-      "produced": 150,
+      "produced": 161,
       "critical": 0,
       "major": 0,
       "minor": 0
@@ -47,6 +47,14 @@
       "passed": true,
       "expected": 12,
       "produced": 50,
+      "critical": 0,
+      "major": 0,
+      "minor": 0
+    },
+    "contracts": {
+      "passed": true,
+      "expected": 11,
+      "produced": 11,
       "critical": 0,
       "major": 0,
       "minor": 0
