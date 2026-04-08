@@ -71,8 +71,9 @@ export interface GroundTruthDefinitionMetadata {
   defKey: DefKey; // natural key for the definition
   key: string; // 'purpose' | 'domain' | 'role' | 'pure' | etc.
   /**
-   * EXACTLY ONE of `exactValue`, `proseReference`, or `acceptableSet` must be set.
-   * The comparator picks its strategy based on which field is present.
+   * EXACTLY ONE of `exactValue`, `proseReference`, `acceptableSet`, or
+   * `themeReference` must be set. The comparator picks its strategy based on
+   * which field is present.
    */
   /** Byte-for-byte string match. Use for booleans like 'pure': "true"/"false". Mismatch is **major**. */
   exactValue?: string;
@@ -85,13 +86,34 @@ export interface GroundTruthDefinitionMetadata {
    *  (a) non-empty (LLM did pick some tags), AND
    *  (b) a subset of `acceptableSet` (every produced tag appears in the GT vocabulary).
    *
-   * This is more useful than strict set equality because the LLM legitimately
-   * varies which tags it picks from a fixed vocabulary. Declare `acceptableSet`
-   * as a SUPERSET of what you expect; any outlier tags trigger a minor diff.
+   * Largely superseded by `themeReference` for noisy LLM-generated tag fields —
+   * `acceptableSet` requires hand-maintaining vocabulary lists, which becomes a
+   * treadmill as the LLM picks new synonyms. Prefer `themeReference` for those.
+   * Keep `acceptableSet` for cases where the vocabulary really is closed and
+   * exhaustive (e.g., a small enum-like field).
+   *
    * Mismatch is **minor** (vocabulary drift expected).
    */
   acceptableSet?: string[];
-  /** Min similarity for prose judge (default 0.75). Only used with proseReference. */
+  /**
+   * LLM-judged semantic theme for tag arrays. Use for noisy LLM-generated tag
+   * fields like 'domain' where the vocabulary the LLM picks varies legitimately.
+   *
+   * Semantics: the comparator parses the produced value as a JSON string array,
+   * formats it as readable prose ("tags: a, b, c"), and asks the prose judge to
+   * score similarity against `themeReference`. Below threshold = MINOR prose-drift.
+   *
+   * Replaces the `acceptableSet` whack-a-mole — write a one-sentence description
+   * of what tags should reflect, and let the judge handle synonyms.
+   */
+  themeReference?: string;
+  /**
+   * Deterministic floor for `themeReference` and `acceptableSet`: the produced
+   * tag array must contain at least this many tags. Default 1.
+   * Below the floor → MINOR mismatch (the LLM gave up and produced an empty array).
+   */
+  minTagsRequired?: number;
+  /** Min similarity for prose judge (default 0.75 for proseReference, 0.6 for themeReference). */
   minSimilarity?: number;
 }
 
@@ -114,6 +136,38 @@ export interface GroundTruthModule {
   /** Optional reference text for the prose `description` field. */
   descriptionReference?: string;
   minSimilarity?: number;
+}
+
+/**
+ * Member-cohesion rubric for the LLM-driven modules stage.
+ *
+ * Replaces the strict `modules`/`module_members` exact-match GT with a
+ * property-based assertion: "these definitions should live in the same
+ * module, and that module should play this role". This is robust to
+ * LLM tree-shape variation (different slugs, different depths, different
+ * groupings) because it tests the *semantic* property, not the spelling.
+ *
+ * The companion comparator is `compareModuleCohesion` (virtual table
+ * `module_cohesion`), which JOINs `modules` + `module_members` and verifies
+ * each group via cohesion + an LLM judge call against `expectedRole`.
+ */
+export interface ModuleCohesionGroup {
+  /** Stable label for diff reporting and cache stability. */
+  label: string;
+  /** Definitions that should share a module. */
+  members: DefKey[];
+  /** Prose describing what role the containing module should play. */
+  expectedRole: string;
+  /**
+   * Cohesion mode:
+   * - 'strict' (default): every member must be in the same module
+   * - 'majority': >50% of members must share a single module (the rest count
+   *   as drift, not failure — useful when one base class might land in the
+   *   parent module while subclasses land in the leaf)
+   */
+  cohesion?: 'strict' | 'majority';
+  /** Minimum similarity for the role judge. Default 0.6. */
+  minRoleSimilarity?: number;
 }
 
 export interface GroundTruthContract {
@@ -180,6 +234,12 @@ export interface GroundTruth {
   definitionMetadata?: GroundTruthDefinitionMetadata[];
   relationships?: GroundTruthRelationship[];
   modules?: GroundTruthModule[];
+  /**
+   * Cohesion-based GT for the LLM-driven modules stage. When set, use the
+   * `module_cohesion` virtual table in scope (NOT `modules`/`module_members`).
+   * See `ModuleCohesionGroup` for the rationale.
+   */
+  moduleCohesion?: ModuleCohesionGroup[];
   contracts?: GroundTruthContract[];
   interactions?: GroundTruthInteraction[];
   flows?: GroundTruthFlow[];
@@ -233,6 +293,13 @@ export type TableName =
   | 'relationship_annotations'
   | 'modules'
   | 'module_members'
+  /**
+   * Virtual table — not a real DB table. The `compareModuleCohesion`
+   * comparator joins `modules` + `module_members` and verifies the
+   * `gt.moduleCohesion` rubric. Use this in scope INSTEAD of `modules` /
+   * `module_members` for LLM-driven module-stage iterations.
+   */
+  | 'module_cohesion'
   | 'contracts'
   | 'contract_participants'
   | 'interactions'
@@ -346,9 +413,13 @@ export function makeStubJudge(): ProseJudgeFn {
  * countDeclaredProseReferences). The set is now derived from the keys.
  */
 export const PROSE_REFERENCE_COUNTERS: Partial<Record<TableName, (gt: GroundTruth) => number>> = {
-  definition_metadata: (gt) => (gt.definitionMetadata ?? []).filter((m) => m.proseReference != null).length,
+  definition_metadata: (gt) =>
+    (gt.definitionMetadata ?? []).filter((m) => m.proseReference != null || m.themeReference != null).length,
   relationship_annotations: (gt) => (gt.relationships ?? []).filter((r) => r.semanticReference != null).length,
   modules: (gt) => (gt.modules ?? []).filter((m) => m.descriptionReference != null).length,
+  // Cohesion rubric ALWAYS makes a judge call per group (the role check),
+  // so the count is the entire rubric length.
+  module_cohesion: (gt) => (gt.moduleCohesion ?? []).length,
   interactions: (gt) => (gt.interactions ?? []).filter((i) => i.semanticReference != null).length,
   flows: (gt) => (gt.flows ?? []).filter((f) => f.descriptionReference != null).length,
   features: (gt) => (gt.features ?? []).filter((f) => f.descriptionReference != null).length,

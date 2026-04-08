@@ -14,6 +14,7 @@ import {
   compareFlows,
   compareImports,
   compareInteractions,
+  compareModuleCohesion,
   compareModuleMembers,
   compareModules,
   compareRelationshipAnnotations,
@@ -1159,6 +1160,154 @@ describe('per-table comparators', () => {
       const diff = await compareDefinitionMetadata(producedDb, expectedGt, judge);
       expect(diff.proseChecks).toEqual({ passed: 0, failed: 1 });
     });
+
+    // --- themeReference strategy (Phase 1: replaces acceptableSet vocab spaghetti) ---
+
+    it('themeReference: passes when judge approves the produced tag list', async () => {
+      buildWithMetadata([{ key: 'domain', value: '["security","user-management"]' }]);
+
+      const themeRef = 'tags should reflect that this function hashes a password during user registration';
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'domain',
+            themeReference: themeRef,
+          },
+        ],
+      };
+
+      // The candidate is formatted as readable prose: "tags: security, user-management"
+      const judge = stubJudge({ [`${themeRef}|tags: security, user-management`]: 0.85 });
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+      expect(diff.proseChecks).toEqual({ passed: 1, failed: 0 });
+    });
+
+    it('themeReference: minor prose-drift when judge score below threshold', async () => {
+      buildWithMetadata([{ key: 'domain', value: '["unrelated","off-topic"]' }]);
+
+      const themeRef = 'tags should reflect a password hashing function';
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'domain',
+            themeReference: themeRef,
+          },
+        ],
+      };
+
+      const judge = stubJudge({ [`${themeRef}|tags: unrelated, off-topic`]: 0.2 });
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true); // minor only — gate not flipped
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'prose-drift',
+          severity: 'minor',
+          naturalKey: expect.stringContaining('domain'),
+        }),
+      ]);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 1 });
+    });
+
+    it('themeReference: minor mismatch when produced array is below minTagsRequired floor', async () => {
+      buildWithMetadata([{ key: 'domain', value: '[]' }]); // empty array
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'domain',
+            themeReference: 'tags should reflect anything',
+            minTagsRequired: 1, // floor
+          },
+        ],
+      };
+
+      // The judge should NOT be called when the floor fails — throw if it is.
+      const failingJudge: ProseJudgeFn = async () => {
+        throw new Error('judge must not be called when produced tags fail the floor check');
+      };
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, failingJudge);
+      expect(diff.passed).toBe(true); // minor only
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'mismatch',
+          severity: 'minor',
+          details: expect.stringContaining('minTagsRequired'),
+        }),
+      ]);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 0 });
+    });
+
+    it('themeReference: default min similarity is 0.6 (not 0.75)', async () => {
+      buildWithMetadata([{ key: 'domain', value: '["a"]' }]);
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'domain',
+            themeReference: 'ref',
+            // no minSimilarity → default 0.6 for theme refs
+          },
+        ],
+      };
+
+      // 0.59 < 0.6 → fail
+      const failJudge = stubJudge({ 'ref|tags: a': 0.59 });
+      const diffFail = await compareDefinitionMetadata(producedDb, expectedGt, failJudge);
+      expect(diffFail.proseChecks).toEqual({ passed: 0, failed: 1 });
+
+      // 0.6 == 0.6 → pass (boundary inclusive)
+      const passJudge = stubJudge({ 'ref|tags: a': 0.6 });
+      const diffPass = await compareDefinitionMetadata(producedDb, expectedGt, passJudge);
+      expect(diffPass.proseChecks).toEqual({ passed: 1, failed: 0 });
+    });
+
+    it('themeReference: minor mismatch when produced value is not a JSON array', async () => {
+      buildWithMetadata([{ key: 'domain', value: 'not-json' }]); // builder writes the literal string
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [{ path: 'src/foo.ts', language: 'typescript' }],
+        definitions: [{ file: 'src/foo.ts', name: 'login', kind: 'function', isExported: true, line: 1 }],
+        definitionMetadata: [
+          {
+            defKey: defKey('src/foo.ts', 'login'),
+            key: 'domain',
+            themeReference: 'ref',
+          },
+        ],
+      };
+
+      const noJudgeCalls: ProseJudgeFn = async () => {
+        throw new Error('judge must not be called when produced value is not a JSON array');
+      };
+      const diff = await compareDefinitionMetadata(producedDb, expectedGt, noJudgeCalls);
+      expect(diff.passed).toBe(true); // minor only
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'mismatch',
+          severity: 'minor',
+          details: expect.stringMatching(/JSON.*array|themeReference|parse/i),
+        }),
+      ]);
+    });
   });
 
   // ============================================================
@@ -1577,6 +1726,388 @@ describe('per-table comparators', () => {
       expect(diff.passed).toBe(true);
       expect(diff.diffs).toHaveLength(0);
       expect(diff.proseChecks).toEqual({ passed: 0, failed: 0 });
+    });
+  });
+
+  // ============================================================
+  // module_cohesion (Phase 1: rubric-based modules verification)
+  // ============================================================
+  describe('compareModuleCohesion', () => {
+    /** Stub judge keyed on `${reference}|${candidate}`. */
+    function stubJudge(scores: Record<string, number>): ProseJudgeFn {
+      return async (req) => {
+        const score = scores[`${req.reference}|${req.candidate}`] ?? 0;
+        return {
+          similarity: score,
+          passed: score >= req.minSimilarity,
+          reasoning: `stub score ${score}`,
+        };
+      };
+    }
+
+    /**
+     * Build a small fixture with two modules and four definitions, where the
+     * builder assigns the definitions to specific modules. We then compare
+     * against a different ground truth that uses moduleCohesion claims.
+     */
+    function buildTwoModuleFixture(
+      defAssignments: Array<{ defName: string; moduleFullPath: string }>,
+      moduleDescriptions: Record<string, string>
+    ): void {
+      const buildGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/auth.ts', language: 'typescript' },
+          { path: 'src/tasks.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/auth.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/auth.ts', name: 'authService', kind: 'const', isExported: true, line: 2 },
+          { file: 'src/tasks.ts', name: 'TasksService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/tasks.ts', name: 'tasksService', kind: 'const', isExported: true, line: 2 },
+        ],
+        modules: [],
+      };
+      // Build modules implied by the assignments
+      const modulePaths = Array.from(new Set(defAssignments.map((a) => a.moduleFullPath)));
+      buildGt.modules = modulePaths.map((p) => ({
+        fullPath: p,
+        name: p.split('.').pop() ?? p,
+        members: defAssignments
+          .filter((a) => a.moduleFullPath === p)
+          .map((a) => {
+            const file = a.defName === 'AuthService' || a.defName === 'authService' ? 'src/auth.ts' : 'src/tasks.ts';
+            return defKey(file, a.defName);
+          }),
+      }));
+      buildGroundTruthDb(producedDb, buildGt);
+
+      // Set descriptions on the produced modules (the builder writes undefined)
+      const conn = producedDb.getConnection();
+      for (const [path, desc] of Object.entries(moduleDescriptions)) {
+        conn.prepare('UPDATE modules SET description = ? WHERE full_path = ?').run(desc, path);
+      }
+    }
+
+    it('strict cohesion passes when all members are in one module and the role judge approves', async () => {
+      buildTwoModuleFixture(
+        [
+          { defName: 'AuthService', moduleFullPath: 'project.services.auth' },
+          { defName: 'authService', moduleFullPath: 'project.services.auth' },
+        ],
+        { 'project.services.auth': 'Authentication service' }
+      );
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/auth.ts', language: 'typescript' },
+          { path: 'src/tasks.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/auth.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/auth.ts', name: 'authService', kind: 'const', isExported: true, line: 2 },
+          { file: 'src/tasks.ts', name: 'TasksService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/tasks.ts', name: 'tasksService', kind: 'const', isExported: true, line: 2 },
+        ],
+        moduleCohesion: [
+          {
+            label: 'auth-service-bundle',
+            members: [defKey('src/auth.ts', 'AuthService'), defKey('src/auth.ts', 'authService')],
+            expectedRole: 'authentication service module',
+          },
+        ],
+      };
+
+      const judge = stubJudge({ 'authentication service module|auth: Authentication service': 0.9 });
+      const diff = await compareModuleCohesion(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+      expect(diff.expectedCount).toBe(1);
+      expect(diff.proseChecks).toEqual({ passed: 1, failed: 0 });
+    });
+
+    it('strict cohesion: MAJOR when members are scattered across modules', async () => {
+      buildTwoModuleFixture(
+        [
+          { defName: 'AuthService', moduleFullPath: 'project.services.auth' },
+          { defName: 'authService', moduleFullPath: 'project.services.tasks' }, // wrong!
+        ],
+        {}
+      );
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/auth.ts', language: 'typescript' },
+          { path: 'src/tasks.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/auth.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/auth.ts', name: 'authService', kind: 'const', isExported: true, line: 2 },
+          { file: 'src/tasks.ts', name: 'TasksService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/tasks.ts', name: 'tasksService', kind: 'const', isExported: true, line: 2 },
+        ],
+        moduleCohesion: [
+          {
+            label: 'auth-bundle',
+            members: [defKey('src/auth.ts', 'AuthService'), defKey('src/auth.ts', 'authService')],
+            expectedRole: 'auth service',
+            cohesion: 'strict',
+          },
+        ],
+      };
+
+      const diff = await compareModuleCohesion(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'mismatch',
+          severity: 'major',
+          naturalKey: 'auth-bundle',
+          details: expect.stringContaining('cohesion'),
+        }),
+      ]);
+    });
+
+    it('majority cohesion passes when >50% share a module (minority drift allowed)', async () => {
+      buildTwoModuleFixture(
+        [
+          { defName: 'AuthService', moduleFullPath: 'project.services.auth' },
+          { defName: 'authService', moduleFullPath: 'project.services.auth' },
+          { defName: 'TasksService', moduleFullPath: 'project.services.tasks' }, // odd one out
+        ],
+        { 'project.services.auth': 'Authentication service' }
+      );
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/auth.ts', language: 'typescript' },
+          { path: 'src/tasks.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/auth.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/auth.ts', name: 'authService', kind: 'const', isExported: true, line: 2 },
+          { file: 'src/tasks.ts', name: 'TasksService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/tasks.ts', name: 'tasksService', kind: 'const', isExported: true, line: 2 },
+        ],
+        moduleCohesion: [
+          {
+            label: 'auth-bundle',
+            members: [
+              defKey('src/auth.ts', 'AuthService'),
+              defKey('src/auth.ts', 'authService'),
+              defKey('src/tasks.ts', 'TasksService'),
+            ],
+            expectedRole: 'auth service module',
+            cohesion: 'majority', // 2/3 in one module is OK
+          },
+        ],
+      };
+
+      const judge = stubJudge({ 'auth service module|auth: Authentication service': 0.9 });
+      const diff = await compareModuleCohesion(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true);
+    });
+
+    it('CRITICAL when a member is unassigned to any module', async () => {
+      // Build with only one of the two members assigned
+      buildTwoModuleFixture([{ defName: 'AuthService', moduleFullPath: 'project.services.auth' }], {
+        'project.services.auth': 'Authentication service',
+      });
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/auth.ts', language: 'typescript' },
+          { path: 'src/tasks.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/auth.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/auth.ts', name: 'authService', kind: 'const', isExported: true, line: 2 },
+          { file: 'src/tasks.ts', name: 'TasksService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/tasks.ts', name: 'tasksService', kind: 'const', isExported: true, line: 2 },
+        ],
+        moduleCohesion: [
+          {
+            label: 'auth-bundle',
+            members: [defKey('src/auth.ts', 'AuthService'), defKey('src/auth.ts', 'authService')],
+            expectedRole: 'auth service',
+          },
+        ],
+      };
+
+      const diff = await compareModuleCohesion(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'missing',
+          severity: 'critical',
+          naturalKey: 'auth-bundle',
+          details: expect.stringContaining('unassigned'),
+        }),
+      ]);
+    });
+
+    it('CRITICAL when GT references a definition that does not exist in produced', async () => {
+      buildTwoModuleFixture([{ defName: 'AuthService', moduleFullPath: 'project.services.auth' }], {
+        'project.services.auth': 'Authentication service',
+      });
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/auth.ts', language: 'typescript' },
+          { path: 'src/tasks.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/auth.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/auth.ts', name: 'authService', kind: 'const', isExported: true, line: 2 },
+          { file: 'src/tasks.ts', name: 'TasksService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/tasks.ts', name: 'tasksService', kind: 'const', isExported: true, line: 2 },
+        ],
+        moduleCohesion: [
+          {
+            label: 'ghost-group',
+            members: [defKey('src/missing.ts', 'Ghost')],
+            expectedRole: 'something',
+          },
+        ],
+      };
+
+      const diff = await compareModuleCohesion(producedDb, expectedGt, stubJudge({}));
+      expect(diff.passed).toBe(false);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'missing',
+          severity: 'critical',
+          naturalKey: 'ghost-group',
+          details: expect.stringContaining('unknown definition'),
+        }),
+      ]);
+    });
+
+    it('role judge fail produces MINOR prose-drift, gate stays open', async () => {
+      buildTwoModuleFixture(
+        [
+          { defName: 'AuthService', moduleFullPath: 'project.misc' },
+          { defName: 'authService', moduleFullPath: 'project.misc' },
+        ],
+        { 'project.misc': 'Miscellaneous stuff' }
+      );
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/auth.ts', language: 'typescript' },
+          { path: 'src/tasks.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/auth.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/auth.ts', name: 'authService', kind: 'const', isExported: true, line: 2 },
+          { file: 'src/tasks.ts', name: 'TasksService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/tasks.ts', name: 'tasksService', kind: 'const', isExported: true, line: 2 },
+        ],
+        moduleCohesion: [
+          {
+            label: 'auth-bundle',
+            members: [defKey('src/auth.ts', 'AuthService'), defKey('src/auth.ts', 'authService')],
+            expectedRole: 'authentication service module',
+          },
+        ],
+      };
+
+      const judge = stubJudge({ 'authentication service module|misc: Miscellaneous stuff': 0.2 });
+      const diff = await compareModuleCohesion(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true); // minor only
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'prose-drift',
+          severity: 'minor',
+          naturalKey: 'auth-bundle',
+        }),
+      ]);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 1 });
+    });
+
+    it('default minRoleSimilarity is 0.6', async () => {
+      buildTwoModuleFixture(
+        [
+          { defName: 'AuthService', moduleFullPath: 'project.services.auth' },
+          { defName: 'authService', moduleFullPath: 'project.services.auth' },
+        ],
+        { 'project.services.auth': 'cand' }
+      );
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/auth.ts', language: 'typescript' },
+          { path: 'src/tasks.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/auth.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/auth.ts', name: 'authService', kind: 'const', isExported: true, line: 2 },
+          { file: 'src/tasks.ts', name: 'TasksService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/tasks.ts', name: 'tasksService', kind: 'const', isExported: true, line: 2 },
+        ],
+        moduleCohesion: [
+          {
+            label: 'auth-bundle',
+            members: [defKey('src/auth.ts', 'AuthService'), defKey('src/auth.ts', 'authService')],
+            expectedRole: 'ref',
+            // no minRoleSimilarity → default 0.6
+          },
+        ],
+      };
+
+      // 0.59 < 0.6 → fail
+      const failJudge = stubJudge({ 'ref|auth: cand': 0.59 });
+      const diffFail = await compareModuleCohesion(producedDb, expectedGt, failJudge);
+      expect(diffFail.proseChecks).toEqual({ passed: 0, failed: 1 });
+
+      // 0.6 == 0.6 → pass
+      const passJudge = stubJudge({ 'ref|auth: cand': 0.6 });
+      const diffPass = await compareModuleCohesion(producedDb, expectedGt, passJudge);
+      expect(diffPass.proseChecks).toEqual({ passed: 1, failed: 0 });
+    });
+
+    it('handles a winner module with NULL description gracefully', async () => {
+      buildTwoModuleFixture(
+        [
+          { defName: 'AuthService', moduleFullPath: 'project.services.auth' },
+          { defName: 'authService', moduleFullPath: 'project.services.auth' },
+        ],
+        {} // no description set
+      );
+
+      const expectedGt: GroundTruth = {
+        fixtureName: 't',
+        files: [
+          { path: 'src/auth.ts', language: 'typescript' },
+          { path: 'src/tasks.ts', language: 'typescript' },
+        ],
+        definitions: [
+          { file: 'src/auth.ts', name: 'AuthService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/auth.ts', name: 'authService', kind: 'const', isExported: true, line: 2 },
+          { file: 'src/tasks.ts', name: 'TasksService', kind: 'class', isExported: true, line: 1 },
+          { file: 'src/tasks.ts', name: 'tasksService', kind: 'const', isExported: true, line: 2 },
+        ],
+        moduleCohesion: [
+          {
+            label: 'auth-bundle',
+            members: [defKey('src/auth.ts', 'AuthService'), defKey('src/auth.ts', 'authService')],
+            expectedRole: 'auth service',
+          },
+        ],
+      };
+
+      // The candidate format should fall back to "(no description)" when description is null
+      const judge = stubJudge({ 'auth service|auth: (no description)': 0.7 });
+      const diff = await compareModuleCohesion(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true);
+      expect(diff.proseChecks).toEqual({ passed: 1, failed: 0 });
     });
   });
 });

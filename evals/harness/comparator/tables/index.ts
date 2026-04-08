@@ -20,6 +20,7 @@ export { compareFiles } from './files.js';
 export { compareFlows } from './flows.js';
 export { compareImports } from './imports.js';
 export { compareInteractions } from './interactions.js';
+export { compareModuleCohesion } from './module-cohesion.js';
 export { compareModuleMembers } from './module-members.js';
 export { compareModules } from './modules.js';
 export { compareRelationshipAnnotations } from './relationship-annotations.js';

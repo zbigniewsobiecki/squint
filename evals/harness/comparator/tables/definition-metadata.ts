@@ -105,9 +105,24 @@ export async function compareDefinitionMetadata(
         naturalKey: `${defKey}.${entry.key}`,
         details: `${entry.key}: expected set [${result.expected.join(', ')}], produced [${result.actual.join(', ')}]`,
       });
-    } else if (result.kind === 'prose') {
+    } else if (result.kind === 'tags-floor-fail') {
+      diffs.push({
+        kind: 'mismatch',
+        severity: 'minor',
+        naturalKey: `${defKey}.${entry.key}`,
+        details: `${entry.key}: produced ${result.actualLength} tag(s), but minTagsRequired=${result.required}`,
+      });
+    } else if (result.kind === 'tags-parse-fail') {
+      diffs.push({
+        kind: 'mismatch',
+        severity: 'minor',
+        naturalKey: `${defKey}.${entry.key}`,
+        details: `${entry.key}: themeReference set but produced value is not a JSON string array (got ${truncate(actualValue, 60)})`,
+      });
+    } else if (result.kind === 'prose' || result.kind === 'theme') {
       // Async judge call
-      const minSim = entry.minSimilarity ?? DEFAULT_PROSE_MIN_SIMILARITY;
+      const defaultMinSim = result.kind === 'theme' ? DEFAULT_THEME_MIN_SIMILARITY : DEFAULT_PROSE_MIN_SIMILARITY;
+      const minSim = entry.minSimilarity ?? defaultMinSim;
       const judgment = await judgeFn({
         field: `definition_metadata.${entry.key} for ${defKey}`,
         reference: result.reference,
@@ -139,16 +154,31 @@ export async function compareDefinitionMetadata(
   };
 }
 
+/**
+ * Default minimum similarity for `themeReference` tag-array judging.
+ * Lower than the prose default (0.75) because the candidate is a short
+ * comma-separated tag list rather than a full sentence — the judge has
+ * less surface area to score against.
+ */
+const DEFAULT_THEME_MIN_SIMILARITY = 0.6;
+
 type SingleEntryResult =
   | { kind: 'exact-match' }
   | { kind: 'exact-mismatch'; expected: string; actual: string }
   | { kind: 'set-match' }
   | { kind: 'set-mismatch'; expected: string[]; actual: string[] }
-  | { kind: 'prose'; reference: string; candidate: string };
+  | { kind: 'prose'; reference: string; candidate: string }
+  | { kind: 'theme'; reference: string; candidate: string }
+  | { kind: 'tags-floor-fail'; actualLength: number; required: number }
+  | { kind: 'tags-parse-fail' };
 
 /**
  * Apply the right comparison strategy for a single GT metadata entry.
  * Pure synchronous function — the async judge call happens in the caller.
+ *
+ * Strategy precedence (first match wins): exactValue → acceptableSet →
+ * themeReference → proseReference. The GT type encourages exactly one to be
+ * set, but defining a precedence keeps the function total.
  */
 function compareSingleMetadataEntry(entry: GroundTruthDefinitionMetadata, actualValue: string): SingleEntryResult {
   if (entry.exactValue !== undefined) {
@@ -174,11 +204,31 @@ function compareSingleMetadataEntry(entry: GroundTruthDefinitionMetadata, actual
       actual: [...actualSet].sort(),
     };
   }
+  if (entry.themeReference !== undefined) {
+    const tags = parseJsonStringArray(actualValue);
+    if (tags === null) {
+      return { kind: 'tags-parse-fail' };
+    }
+    const floor = entry.minTagsRequired ?? 1;
+    if (tags.length < floor) {
+      return { kind: 'tags-floor-fail', actualLength: tags.length, required: floor };
+    }
+    // Format candidate as readable prose for the judge: "tags: a, b, c"
+    return {
+      kind: 'theme',
+      reference: entry.themeReference,
+      candidate: `tags: ${tags.join(', ')}`,
+    };
+  }
   if (entry.proseReference !== undefined) {
     return { kind: 'prose', reference: entry.proseReference, candidate: actualValue };
   }
   // None of the strategy fields set — programmer error.
   throw new Error(
-    `Ground truth metadata entry for ${entry.defKey}.${entry.key} has none of exactValue/acceptableSet/proseReference set`
+    `Ground truth metadata entry for ${entry.defKey}.${entry.key} has none of exactValue/acceptableSet/themeReference/proseReference set`
   );
+}
+
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : `${s.slice(0, n - 1)}…`;
 }

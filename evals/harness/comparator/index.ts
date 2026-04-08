@@ -18,6 +18,7 @@ import {
   compareFlows,
   compareImports,
   compareInteractions,
+  compareModuleCohesion,
   compareModuleMembers,
   compareModules,
   compareRelationshipAnnotations,
@@ -156,6 +157,7 @@ const COMPARATORS: Partial<Record<TableName, ComparatorFn>> = {
   flows: (p, g) => compareFlows(p, g),
   definition_metadata: (p, g, j) => compareDefinitionMetadata(p, g, j),
   relationship_annotations: (p, g, j) => compareRelationshipAnnotations(p, g, j),
+  module_cohesion: (p, g, j) => compareModuleCohesion(p, g, j),
 };
 
 async function runComparator(
