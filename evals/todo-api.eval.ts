@@ -226,4 +226,43 @@ describe('todo-api eval', () => {
       costBudgetUsd: 0.4,
     });
   }, 660_000);
+
+  it('iteration 7: flows stage produces expected user journeys', async () => {
+    // The flows stage runs entry-point classification (LLM), then traces
+    // definition-level paths through interactions, then calls the enhancer
+    // (LLM) to assign stakeholder + name + description, then calls the
+    // gap generator (LLM) to fill uncovered interactions.
+    //
+    // Uses the theme-search flowRubric — entry paths and slugs are LLM-
+    // picked and unstable, so the rubric finds the best-matching flow
+    // by description theme alone. Asserts at least one user-stakeholder
+    // flow per concept area (auth, tasks). Extra flows are fine.
+    await runIterationStep({
+      fixture: TODO_API,
+      groundTruth: todoApiGroundTruth,
+      label: 'flows',
+      toStage: 'flows',
+      scope: [
+        'files',
+        'definitions',
+        'imports',
+        'definition_metadata',
+        'relationship_annotations',
+        'module_cohesion',
+        'contracts',
+        'interaction_rubric',
+        'flow_rubric',
+      ],
+      judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
+      timeoutMs: 600_000,
+      costBudgetUsd: 0.5,
+    });
+  }, 720_000);
+
+  // Iteration 7.5 (flows-verify regression detector) is intentionally
+  // DEFERRED. squint's flows-verify stage currently throws a SyntaxError
+  // when it tries to JSON.parse a class name ("BaseController") somewhere
+  // in its quality-check pipeline. The verify stage is unusable until that
+  // squint bug is fixed. The flowRubric framework is in place — once
+  // squint fixes the parse bug, iter 7.5 becomes a 25-line addition.
 });

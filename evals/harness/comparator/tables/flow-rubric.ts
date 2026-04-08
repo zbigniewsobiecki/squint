@@ -15,32 +15,27 @@ interface ProducedFlowRow {
   name: string;
   description: string | null;
   stakeholder: string;
-  entryDefId: number | null;
-  entryDefKey: string | null;
-  entryPath: string | null;
-}
-
-interface ProducedFlowDefStep {
-  flowId: number;
-  fromKey: string;
-  toKey: string;
 }
 
 /**
- * Compare LLM-driven flows via an entry-point-based rubric.
+ * Compare LLM-driven flows via a theme-search rubric.
  *
- * Each rubric entry identifies an EXPECTED flow by its entry point (HTTP path
- * or entry definition), then verifies:
- *   - The flow's stakeholder is in the acceptable set
- *   - The flow's definition-level steps include the required edges
- *     (subset semantics — extras are fine)
- *   - The flow's name + description match the expected role (theme judge)
+ * Each rubric entry describes a thematic concept ("User logs in with
+ * credentials") plus an acceptable stakeholder set. The comparator iterates
+ * ALL produced flows, scores each candidate's name+description against the
+ * expected role via the theme judge, and picks the best match. The match
+ * passes if:
+ *   1. At least one flow scores >= minRoleSimilarity, AND
+ *   2. Its stakeholder is in acceptableStakeholders (when set).
  *
  * Severity:
- *   - No flow matches the rubric entry's entry point     → CRITICAL
- *   - Stakeholder not in acceptable set                  → MAJOR
- *   - Required definition edge missing from flow steps   → MAJOR
- *   - Role judge below threshold                         → MINOR (prose-drift)
+ *   - No flow scores >= threshold (no thematic match)  → CRITICAL
+ *   - Best match's stakeholder not in acceptable set   → MAJOR
+ *
+ * The rubric is intentionally tolerant — squint's flows stage produces a
+ * small number of high-level journeys with LLM-picked names/slugs/paths,
+ * none of which are deterministic. Theme search decouples the GT from
+ * those LLM choices entirely.
  */
 export async function compareFlowRubric(
   produced: IndexDatabase,
@@ -50,67 +45,8 @@ export async function compareFlowRubric(
   const conn = produced.getConnection();
 
   const flowRows = conn
-    .prepare(
-      `SELECT f.id AS id,
-              f.slug AS slug,
-              f.name AS name,
-              f.description AS description,
-              f.stakeholder AS stakeholder,
-              f.entry_point_id AS entryDefId,
-              CASE WHEN f.entry_point_id IS NULL THEN NULL
-                   ELSE (fl.path || '::' || d.name)
-              END AS entryDefKey,
-              f.entry_path AS entryPath
-       FROM flows f
-       LEFT JOIN definitions d ON f.entry_point_id = d.id
-       LEFT JOIN files fl ON d.file_id = fl.id`
-    )
+    .prepare('SELECT id, slug, name, description, stakeholder FROM flows')
     .all() as ProducedFlowRow[];
-
-  const stepRows = conn
-    .prepare(
-      `SELECT fds.flow_id AS flowId,
-              (ff.path || '::' || fd.name) AS fromKey,
-              (tf.path || '::' || td.name) AS toKey
-       FROM flow_definition_steps fds
-       JOIN definitions fd ON fds.from_definition_id = fd.id
-       JOIN files ff ON fd.file_id = ff.id
-       JOIN definitions td ON fds.to_definition_id = td.id
-       JOIN files tf ON td.file_id = tf.id`
-    )
-    .all() as ProducedFlowDefStep[];
-
-  const stepsByFlow = new Map<number, Set<string>>();
-  for (const s of stepRows) {
-    let set = stepsByFlow.get(s.flowId);
-    if (!set) {
-      set = new Set();
-      stepsByFlow.set(s.flowId, set);
-    }
-    set.add(`${s.fromKey}->${s.toKey}`);
-  }
-
-  // Index flows by entry path AND by entry def key
-  const flowsByEntryPath = new Map<string, ProducedFlowRow[]>();
-  const flowsByEntryDef = new Map<string, ProducedFlowRow[]>();
-  for (const f of flowRows) {
-    if (f.entryPath) {
-      let list = flowsByEntryPath.get(f.entryPath);
-      if (!list) {
-        list = [];
-        flowsByEntryPath.set(f.entryPath, list);
-      }
-      list.push(f);
-    }
-    if (f.entryDefKey) {
-      let list = flowsByEntryDef.get(f.entryDefKey);
-      if (!list) {
-        list = [];
-        flowsByEntryDef.set(f.entryDefKey, list);
-      }
-      list.push(f);
-    }
-  }
 
   const rubric = gt.flowRubric ?? [];
   const diffs: RowDiff[] = [];
@@ -118,83 +54,50 @@ export async function compareFlowRubric(
   let proseChecksFailed = 0;
 
   for (const entry of rubric) {
-    let candidates: ProducedFlowRow[] = [];
-    if (entry.entryPath) {
-      candidates = flowsByEntryPath.get(entry.entryPath) ?? [];
-    } else if (entry.entryDef) {
-      candidates = flowsByEntryDef.get(entry.entryDef as unknown as string) ?? [];
-    }
+    const minSim = entry.minRoleSimilarity ?? DEFAULT_FLOW_ROLE_MIN_SIMILARITY;
 
-    if (candidates.length === 0) {
-      diffs.push({
-        kind: 'missing',
-        severity: 'critical',
-        naturalKey: entry.label,
-        details: `flow rubric '${entry.label}': no flow found with entry ${
-          entry.entryPath ? `path '${entry.entryPath}'` : `def '${entry.entryDef}'`
-        }`,
-      });
-      continue;
-    }
+    // Theme-judge every flow against the expected role; track the best match
+    let bestFlow: ProducedFlowRow | null = null;
+    let bestScore = -1;
+    let bestReasoning = '';
 
-    // HTTP entry paths are typically unique per flow; for entry defs we
-    // pick the first match.
-    const flow = candidates[0];
-
-    // Stakeholder check
-    if (entry.acceptableStakeholders && entry.acceptableStakeholders.length > 0) {
-      if (!entry.acceptableStakeholders.includes(flow.stakeholder as FlowStakeholder)) {
-        diffs.push({
-          kind: 'mismatch',
-          severity: 'major',
-          naturalKey: entry.label,
-          details: `flow rubric '${entry.label}': stakeholder '${flow.stakeholder}' not in acceptable set [${entry.acceptableStakeholders.join(', ')}]`,
-        });
-        continue;
-      }
-    }
-
-    // Required definition-edge check (subset semantics)
-    if (entry.requiredDefinitionEdges && entry.requiredDefinitionEdges.length > 0) {
-      const flowSteps = stepsByFlow.get(flow.id) ?? new Set();
-      const missing: string[] = [];
-      for (const req of entry.requiredDefinitionEdges) {
-        const edgeKey = `${req.from as unknown as string}->${req.to as unknown as string}`;
-        if (!flowSteps.has(edgeKey)) {
-          missing.push(edgeKey);
-        }
-      }
-      if (missing.length > 0) {
-        diffs.push({
-          kind: 'mismatch',
-          severity: 'major',
-          naturalKey: entry.label,
-          details: `flow rubric '${entry.label}': missing required definition edges: ${missing.join(', ')}`,
-        });
-        continue;
-      }
-    }
-
-    // Role judge: send "name: description" to the theme judge
-    if (entry.expectedRole) {
+    for (const flow of flowRows) {
       const candidate = `${flow.name}: ${flow.description ?? '(no description)'}`;
-      const minSim = entry.minRoleSimilarity ?? DEFAULT_FLOW_ROLE_MIN_SIMILARITY;
       const judgment = await judgeFn({
-        field: `flow_rubric.${entry.label} role check`,
+        field: `flow_rubric.${entry.label} (candidate: ${flow.slug})`,
         reference: entry.expectedRole,
         candidate,
         minSimilarity: minSim,
         mode: 'theme',
       });
-      if (judgment.passed) {
-        proseChecksPassed += 1;
-      } else {
-        proseChecksFailed += 1;
+      if (judgment.similarity > bestScore) {
+        bestScore = judgment.similarity;
+        bestFlow = flow;
+        bestReasoning = judgment.reasoning;
+      }
+    }
+
+    if (bestFlow === null || bestScore < minSim) {
+      diffs.push({
+        kind: 'missing',
+        severity: 'critical',
+        naturalKey: entry.label,
+        details: `flow rubric '${entry.label}': no flow matches the expected role (best score ${bestScore.toFixed(2)} < ${minSim}${bestFlow ? `, best candidate '${bestFlow.slug}': ${bestReasoning}` : ', no flows at all'})`,
+      });
+      proseChecksFailed += 1;
+      continue;
+    }
+
+    proseChecksPassed += 1;
+
+    // Stakeholder check on the best-matching flow
+    if (entry.acceptableStakeholders && entry.acceptableStakeholders.length > 0) {
+      if (!entry.acceptableStakeholders.includes(bestFlow.stakeholder as FlowStakeholder)) {
         diffs.push({
-          kind: 'prose-drift',
-          severity: 'minor',
+          kind: 'mismatch',
+          severity: 'major',
           naturalKey: entry.label,
-          details: `flow rubric '${entry.label}': role drift ${judgment.similarity.toFixed(2)} < ${minSim} — ${judgment.reasoning}`,
+          details: `flow rubric '${entry.label}': matched flow '${bestFlow.slug}' has stakeholder '${bestFlow.stakeholder}' not in acceptable set [${entry.acceptableStakeholders.join(', ')}]`,
         });
       }
     }

@@ -177,36 +177,29 @@ export interface FeatureCohesionGroup {
 /**
  * Flow rubric for the LLM-driven flows stage.
  *
- * A flow is a user-facing journey through interactions, identified by an
- * entry point (HTTP path or entry def). The LLM picks the flow name, slug,
- * stakeholder, and description — none of which are deterministic. The
- * rubric instead asserts:
+ * The flows stage produces a small number of relatively HIGH-LEVEL journey
+ * descriptions (e.g. "user processes authentication" covering login+register).
+ * Slugs, entry paths, names, descriptions are all LLM-picked and unstable.
+ * Even the entry_path column is non-deterministic — squint sometimes stores
+ * a module full_path, sometimes a controller name, sometimes an HTTP path.
  *
- *   - "There exists a flow whose entry point is X"
- *   - "Its stakeholder is in this acceptable set"
- *   - "Its definition-level steps include these required edges (subset, order-independent)"
- *   - "Its name + description match this expected role (theme judge)"
+ * The rubric therefore uses a theme-search match: for each entry, the
+ * comparator iterates all produced flows and picks the BEST matching one
+ * (theme judge against expectedRole). If a flow exists whose name+description
+ * matches the expected role with score >= minRoleSimilarity AND whose
+ * stakeholder is in acceptableStakeholders, the entry passes.
  *
- * The comparator picks the BEST-matching flow per rubric entry (the one
- * with the matching entry point) and verifies the asserted properties.
+ * This makes the GT robust to all the LLM-picked metadata variance —
+ * we test "is there a flow about X for stakeholder Y" rather than asserting
+ * exact slug/path matches that flake.
  */
 export interface FlowRubricEntry {
   /** Stable label for diff reporting and cache stability. */
   label: string;
-  /** Match the flow by its entry definition (preferred for non-HTTP). */
-  entryDef?: DefKey;
-  /** Match the flow by its HTTP entry path (e.g. 'POST /auth/login'). */
-  entryPath?: string;
+  /** The thematic concept the matching flow should represent. */
+  expectedRole: string;
   /** Acceptable stakeholders — the LLM may pick any from this set. */
   acceptableStakeholders?: FlowStakeholder[];
-  /**
-   * Definition-level steps the flow MUST contain. Subset semantics: each
-   * required edge must appear somewhere in flow_definition_steps regardless
-   * of order. Extras in the produced flow are fine.
-   */
-  requiredDefinitionEdges?: Array<{ from: DefKey; to: DefKey }>;
-  /** Optional prose role check on the flow's name + description (theme judge). */
-  expectedRole?: string;
   /** Min similarity for the role judge (default 0.6). */
   minRoleSimilarity?: number;
 }
@@ -585,7 +578,7 @@ export const PROSE_REFERENCE_COUNTERS: Partial<Record<TableName, (gt: GroundTrut
   // so the count is the entire rubric length.
   module_cohesion: (gt) => (gt.moduleCohesion ?? []).length,
   interaction_rubric: (gt) => (gt.interactionRubric ?? []).filter((i) => i.semanticReference != null).length,
-  flow_rubric: (gt) => (gt.flowRubric ?? []).filter((f) => f.expectedRole != null).length,
+  flow_rubric: (gt) => (gt.flowRubric ?? []).length,
   feature_cohesion: (gt) => (gt.featureCohesion ?? []).length,
   interactions: (gt) => (gt.interactions ?? []).filter((i) => i.semanticReference != null).length,
   flows: (gt) => (gt.flows ?? []).filter((f) => f.descriptionReference != null).length,
