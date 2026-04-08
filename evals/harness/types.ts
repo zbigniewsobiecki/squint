@@ -139,37 +139,28 @@ export interface GroundTruthModule {
 }
 
 /**
- * Cohesion rubric for the LLM-driven features stage.
+ * Theme-search rubric for the LLM-driven features stage.
  *
  * The features stage groups flows into product-level features. The LLM picks
- * the feature names + slugs + descriptions, none of which are deterministic.
- * The rubric instead asserts:
+ * the feature names + slugs + descriptions AND which flows belong where.
+ * Both the feature metadata and the flow→feature assignment are non-
+ * deterministic, so we use a theme-search match instead of trying to
+ * anchor on specific flows:
  *
- *   - "These flows (identified by entry path or entry def) should belong
- *     to the same feature"
- *   - "That feature's name + description should match this expected role"
+ *   For each rubric entry, the comparator iterates ALL produced features
+ *   and theme-judges each name+description against the expected role.
+ *   The entry passes if at least one feature scores above the threshold.
  *
- * Mirror of `ModuleCohesionGroup` but for flows-into-features. The
- * comparator joins `features` + `feature_flows` + `flows`, identifies the
- * feature(s) containing each rubric flow, and verifies cohesion + role.
+ * This is intentionally tolerant — squint produces a small number of
+ * features (1-3 for todo-api) and the LLM picks names like "Authentication"
+ * vs "User Auth" vs "Identity Management" all of which describe the same
+ * concept. Theme search handles the synonym variance.
  */
 export interface FeatureCohesionGroup {
   /** Stable label for diff reporting and cache stability. */
   label: string;
-  /**
-   * Flows that should land in the same feature. Each is identified by
-   * deterministic anchors — entry path (HTTP) or entry def — NOT by the
-   * LLM-picked flow slug.
-   */
-  flows: Array<{ entryPath?: string; entryDef?: DefKey }>;
-  /** What role the containing feature should play. */
+  /** A feature whose name+description matches this MUST exist. */
   expectedRole: string;
-  /**
-   * Cohesion mode:
-   * - 'strict' (default): all flows must be in the same feature
-   * - 'majority': >=50% of flows in the same feature
-   */
-  cohesion?: 'strict' | 'majority';
   /** Min similarity for the role judge (default 0.6). */
   minRoleSimilarity?: number;
 }

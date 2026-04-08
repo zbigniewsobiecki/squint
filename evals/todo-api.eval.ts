@@ -265,4 +265,34 @@ describe('todo-api eval', () => {
   // in its quality-check pipeline. The verify stage is unusable until that
   // squint bug is fixed. The flowRubric framework is in place — once
   // squint fixes the parse bug, iter 7.5 becomes a 25-line addition.
+
+  // Iteration 8 (features stage) is intentionally SKIPPED for the same
+  // reason as iter 7.5: --to-stage features runs flows-verify upstream,
+  // which currently throws a SyntaxError on "BaseController" → JSON.parse.
+  // The featureCohesion framework + theme-search rubric are in place
+  // and unit-tested; once the squint flows-verify bug is fixed, this
+  // becomes a 25-line .it() addition.
+  it.skip('iteration 8: features stage groups flows into expected product features (BLOCKED on squint flows-verify bug)', async () => {
+    await runIterationStep({
+      fixture: TODO_API,
+      groundTruth: todoApiGroundTruth,
+      label: 'features',
+      toStage: 'features',
+      scope: [
+        'files',
+        'definitions',
+        'imports',
+        'definition_metadata',
+        'relationship_annotations',
+        'module_cohesion',
+        'contracts',
+        'interaction_rubric',
+        'flow_rubric',
+        'feature_cohesion',
+      ],
+      judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
+      timeoutMs: 720_000,
+      costBudgetUsd: 0.5,
+    });
+  }, 840_000);
 });
