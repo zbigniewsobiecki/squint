@@ -338,6 +338,26 @@ describe('per-table comparators', () => {
   // modules + module_members
   // ============================================================
   describe('compareModules + compareModuleMembers', () => {
+    /** Stub judge keyed on `${reference}|${candidate}`. */
+    function stubJudge(scores: Record<string, number>): ProseJudgeFn {
+      return async (req) => {
+        const score = scores[`${req.reference}|${req.candidate}`] ?? 0;
+        return {
+          similarity: score,
+          passed: score >= req.minSimilarity,
+          reasoning: `stub score ${score}`,
+        };
+      };
+    }
+
+    /** Set the description column for a module in the produced DB (post-build). */
+    function setProducedDescription(fullPath: string, description: string): void {
+      producedDb
+        .getConnection()
+        .prepare('UPDATE modules SET description = ? WHERE full_path = ?')
+        .run(description, fullPath);
+    }
+
     const gt: GroundTruth = {
       fixtureName: 't',
       files: [{ path: 'src/auth.ts', language: 'typescript' }],
@@ -351,15 +371,15 @@ describe('per-table comparators', () => {
       ],
     };
 
-    it('compareModules passes on exact tree match (ignoring auto-created ancestors)', () => {
+    it('compareModules passes on exact tree match (ignoring auto-created ancestors)', async () => {
       buildGroundTruthDb(producedDb, gt);
-      const diff = compareModules(producedDb, gt);
+      const diff = await compareModules(producedDb, gt, stubJudge({}));
       expect(diff.passed).toBe(true);
     });
 
-    it('compareModules reports missing module', () => {
+    it('compareModules reports missing module', async () => {
       buildGroundTruthDb(producedDb, { ...gt, modules: [] });
-      const diff = compareModules(producedDb, gt);
+      const diff = await compareModules(producedDb, gt, stubJudge({}));
       expect(diff.passed).toBe(false);
       expect(diff.diffs).toEqual([
         expect.objectContaining({
@@ -399,6 +419,144 @@ describe('per-table comparators', () => {
           details: expect.stringContaining('project.services.auth'),
         }),
       ]);
+    });
+
+    // --- description prose check (new in iteration 4) ---
+
+    it('compareModules passes prose check when judge approves the description', async () => {
+      buildGroundTruthDb(producedDb, gt);
+      setProducedDescription('project.services.auth', 'Authentication services for users.');
+
+      const expectedGt: GroundTruth = {
+        ...gt,
+        modules: [
+          {
+            fullPath: 'project.services.auth',
+            name: 'Auth',
+            members: [defKey('src/auth.ts', 'AuthService')],
+            descriptionReference: 'Authentication services for users.',
+          },
+        ],
+      };
+      const judge = stubJudge({
+        'Authentication services for users.|Authentication services for users.': 0.95,
+      });
+
+      const diff = await compareModules(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+      expect(diff.proseChecks).toEqual({ passed: 1, failed: 0 });
+    });
+
+    it('compareModules records prose-drift minor when judge score is below threshold', async () => {
+      buildGroundTruthDb(producedDb, gt);
+      setProducedDescription('project.services.auth', 'Sends email newsletters.');
+
+      const expectedGt: GroundTruth = {
+        ...gt,
+        modules: [
+          {
+            fullPath: 'project.services.auth',
+            name: 'Auth',
+            members: [defKey('src/auth.ts', 'AuthService')],
+            descriptionReference: 'Authentication services for users.',
+            minSimilarity: 0.6,
+          },
+        ],
+      };
+      const judge = stubJudge({
+        'Authentication services for users.|Sends email newsletters.': 0.2,
+      });
+
+      const diff = await compareModules(producedDb, expectedGt, judge);
+      // Minor only — table still passes (no critical/major)
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'prose-drift',
+          severity: 'minor',
+          naturalKey: 'project.services.auth',
+        }),
+      ]);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 1 });
+    });
+
+    it('compareModules skips judge call when GT entry has no descriptionReference', async () => {
+      buildGroundTruthDb(producedDb, gt);
+      setProducedDescription('project.services.auth', 'whatever the LLM said');
+
+      // GT module has no descriptionReference → existence-only check
+      const judge: ProseJudgeFn = async () => {
+        throw new Error('judge should not be called when there is no descriptionReference');
+      };
+
+      const diff = await compareModules(producedDb, gt, judge);
+      expect(diff.passed).toBe(true);
+      expect(diff.diffs).toHaveLength(0);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 0 });
+    });
+
+    it('compareModules uses default min similarity 0.6 when not specified', async () => {
+      buildGroundTruthDb(producedDb, gt);
+      setProducedDescription('project.services.auth', 'cand');
+
+      const expectedGt: GroundTruth = {
+        ...gt,
+        modules: [
+          {
+            fullPath: 'project.services.auth',
+            name: 'Auth',
+            members: [defKey('src/auth.ts', 'AuthService')],
+            descriptionReference: 'ref',
+            // no minSimilarity → default 0.6
+          },
+        ],
+      };
+      // 0.59 < 0.6 → fail
+      const judge = stubJudge({ 'ref|cand': 0.59 });
+      const diff = await compareModules(producedDb, expectedGt, judge);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 1 });
+
+      // 0.6 == 0.6 → pass (boundary)
+      const judge2 = stubJudge({ 'ref|cand': 0.6 });
+      const diff2 = await compareModules(producedDb, expectedGt, judge2);
+      expect(diff2.proseChecks).toEqual({ passed: 1, failed: 0 });
+    });
+
+    it('compareModules treats NULL produced description as a failed prose check', async () => {
+      // Builder writes description=NULL by default; if GT declares a reference,
+      // the LLM is expected to have produced something. NULL = drop = fail.
+      buildGroundTruthDb(producedDb, gt);
+      // intentionally NOT setting a description — it stays NULL
+
+      const expectedGt: GroundTruth = {
+        ...gt,
+        modules: [
+          {
+            fullPath: 'project.services.auth',
+            name: 'Auth',
+            members: [defKey('src/auth.ts', 'AuthService')],
+            descriptionReference: 'Authentication services for users.',
+          },
+        ],
+      };
+      // The judge will never be called because the description is null;
+      // throw if it is.
+      const judge: ProseJudgeFn = async () => {
+        throw new Error('judge must not be called when produced description is NULL');
+      };
+
+      const diff = await compareModules(producedDb, expectedGt, judge);
+      expect(diff.passed).toBe(true); // minor only, gate not flipped
+      expect(diff.diffs).toEqual([
+        expect.objectContaining({
+          kind: 'prose-drift',
+          severity: 'minor',
+          naturalKey: 'project.services.auth',
+          details: expect.stringContaining('null'),
+        }),
+      ]);
+      expect(diff.proseChecks).toEqual({ passed: 0, failed: 1 });
     });
   });
 

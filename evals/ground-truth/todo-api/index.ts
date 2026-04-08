@@ -3,6 +3,7 @@ import { definitionMetadata } from './definition-metadata.js';
 import { definitions } from './definitions.js';
 import { files } from './files.js';
 import { imports } from './imports.js';
+import { modules } from './modules.js';
 import { relationships } from './relationships.js';
 
 /**
@@ -11,9 +12,9 @@ import { relationships } from './relationships.js';
  * Iteration 1 (parse stage): files, definitions, imports
  * Iteration 2 (symbols stage): + definitionMetadata (purpose/domain/pure)
  * Iteration 3 (relationships stage): + relationships (extends/implements/uses + semantic)
+ * Iteration 4 (modules stage): + modules (tree) + members (assignment) + descriptions
  *
- * Add new tables (modules, contracts, interactions, flows, ...) as
- * iterations advance.
+ * Add new tables (contracts, interactions, flows, ...) as iterations advance.
  */
 export const todoApiGroundTruth: GroundTruth = {
   fixtureName: 'todo-api',
@@ -22,4 +23,5 @@ export const todoApiGroundTruth: GroundTruth = {
   imports,
   definitionMetadata,
   relationships,
+  modules,
 };

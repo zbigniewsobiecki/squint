@@ -95,7 +95,9 @@ export function updateBaseline(filePath: string, report: DiffReport): BaselineUp
     }
   }
 
-  fs.writeFileSync(filePath, JSON.stringify(next, null, 2));
+  // Trailing newline keeps biome's default JSON formatter happy on every
+  // commit (it would otherwise re-flag the auto-updated baseline forever).
+  fs.writeFileSync(filePath, `${JSON.stringify(next, null, 2)}\n`);
 
   return { improvements, regressions, baseline: next };
 }

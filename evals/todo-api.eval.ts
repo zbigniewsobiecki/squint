@@ -47,4 +47,25 @@ describe('todo-api eval', () => {
       timeoutMs: 240_000,
     });
   }, 360_000);
+
+  it('iteration 4: modules stage produces expected modules + module_members', async () => {
+    await runIterationStep({
+      fixture: TODO_API,
+      groundTruth: todoApiGroundTruth,
+      label: 'modules',
+      toStage: 'modules',
+      scope: [
+        'files',
+        'definitions',
+        'imports',
+        'definition_metadata',
+        'relationship_annotations',
+        'modules',
+        'module_members',
+      ],
+      judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
+      timeoutMs: 360_000,
+      costBudgetUsd: 0.2,
+    });
+  }, 480_000);
 });
