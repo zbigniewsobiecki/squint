@@ -48,6 +48,30 @@ describe('todo-api eval', () => {
     });
   }, 360_000);
 
+  it('iteration 3.5: relationships-verify stage preserves relationship_annotations', async () => {
+    // Regression detector for the relationships-verify stage. Mirrors iter 4.5
+    // for modules-verify. Phase 1 (deterministic) checks ghost rows, type
+    // mismatches, stale files, and PENDING_LLM_ANNOTATION leaks — all empty
+    // for the well-formed iter-3 state on todo-api. Phase 2 (LLM coherence
+    // verifier) re-annotates only edges flagged "wrong"; for a clean DB
+    // it should mark every edge correct and write nothing.
+    //
+    // Iter 3's GT works unchanged here — we already proved iter 3 → iter 4
+    // is byte-equivalent in `relationship_annotations` for this fixture.
+    // If a future squint change makes relationships-verify start moving
+    // things around, this iteration will go red and force a triage decision.
+    await runIterationStep({
+      fixture: TODO_API,
+      groundTruth: todoApiGroundTruth,
+      label: 'relationships-verify',
+      toStage: 'relationships-verify',
+      scope: ['files', 'definitions', 'imports', 'definition_metadata', 'relationship_annotations'],
+      judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
+      timeoutMs: 300_000,
+      costBudgetUsd: 0.2,
+    });
+  }, 420_000);
+
   it('iteration 4: modules stage produces expected module cohesion', async () => {
     // Uses the cohesion rubric (`module_cohesion` virtual table) instead of
     // strict `modules`/`module_members` exact matching. The rubric verifies
