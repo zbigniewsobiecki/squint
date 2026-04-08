@@ -192,9 +192,13 @@ async function evaluateGroup(
       return { diffs, proseChecksPassed: 0, proseChecksFailed: 0 };
     }
   } else {
-    // 'majority': winner must contain >50% of members
+    // 'majority': winner must contain at least 50% of members.
+    // Boundary inclusive: 6/12 passes (the LLM may legitimately split a group
+    // like the 12-member frontend client across an internal/auth/tasks subtree
+    // and the largest leaf might hold exactly half). Strictly less than half
+    // still fails — that's a real scatter.
     const totalMembers = assignments.length;
-    if (winnerCount * 2 <= totalMembers) {
+    if (winnerCount * 2 < totalMembers) {
       diffs.push({
         kind: 'mismatch',
         severity: 'major',

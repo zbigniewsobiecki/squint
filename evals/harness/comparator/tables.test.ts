@@ -1870,7 +1870,7 @@ describe('per-table comparators', () => {
       ]);
     });
 
-    it('majority cohesion passes when >50% share a module (minority drift allowed)', async () => {
+    it('majority cohesion passes when >=50% share a module (boundary inclusive)', async () => {
       buildTwoModuleFixture(
         [
           { defName: 'AuthService', moduleFullPath: 'project.services.auth' },
