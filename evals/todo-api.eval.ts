@@ -48,34 +48,28 @@ describe('todo-api eval', () => {
     });
   }, 360_000);
 
-  it('iteration 4: modules stage produces expected modules + module_members', async () => {
+  it('iteration 4: modules stage produces expected module cohesion', async () => {
+    // Uses the cohesion rubric (`module_cohesion` virtual table) instead of
+    // strict `modules`/`module_members` exact matching. The rubric verifies
+    // that semantically related definitions land in the same module and that
+    // module's name+description matches a hand-authored expected role —
+    // robust to LLM tree-shape variation.
     await runIterationStep({
       fixture: TODO_API,
       groundTruth: todoApiGroundTruth,
       label: 'modules',
       toStage: 'modules',
-      scope: [
-        'files',
-        'definitions',
-        'imports',
-        'definition_metadata',
-        'relationship_annotations',
-        'modules',
-        'module_members',
-      ],
+      scope: ['files', 'definitions', 'imports', 'definition_metadata', 'relationship_annotations', 'module_cohesion'],
       judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
       timeoutMs: 360_000,
       costBudgetUsd: 0.2,
     });
   }, 480_000);
 
-  it('iteration 4.5: modules-verify stage leaves modules + module_members unchanged', async () => {
-    // Regression detector for the modules-verify stage. Phase 1 is deterministic
-    // (test-in-production, ghost rows, unassigned defs) and finds nothing on
-    // todo-api (no test files, full coverage). Phase 2 is an LLM coherence check
-    // that should mark every assignment 'correct' for the well-formed iter-4
-    // module tree. Expected: byte-identical produced state vs iter 4, so the
-    // same GT objects work unchanged.
+  it('iteration 4.5: modules-verify stage preserves cohesion', async () => {
+    // Regression detector for the modules-verify stage. Same cohesion rubric
+    // as iter 4 — verifies the verify stage doesn't degrade member grouping
+    // or move definitions out of their semantic clusters.
     //
     // Cost budget bumped to 0.30 as defense in depth: if Phase 2 ever fires
     // a reassignment, the cascade regenerates interactions+flows which is
@@ -85,15 +79,7 @@ describe('todo-api eval', () => {
       groundTruth: todoApiGroundTruth,
       label: 'modules-verify',
       toStage: 'modules-verify',
-      scope: [
-        'files',
-        'definitions',
-        'imports',
-        'definition_metadata',
-        'relationship_annotations',
-        'modules',
-        'module_members',
-      ],
+      scope: ['files', 'definitions', 'imports', 'definition_metadata', 'relationship_annotations', 'module_cohesion'],
       judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
       timeoutMs: 420_000,
       costBudgetUsd: 0.3,

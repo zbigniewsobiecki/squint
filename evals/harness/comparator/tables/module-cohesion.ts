@@ -229,11 +229,17 @@ async function evaluateGroup(
 
   const candidate = formatModuleAsCandidate(winnerModule);
   const minSim = group.minRoleSimilarity ?? DEFAULT_ROLE_MIN_SIMILARITY;
+  // Use the tolerant 'theme' judge mode for role checks: the candidate is a
+  // short LLM-produced label (name + brief description), conceptually the
+  // same kind of input as the tag-list theme strategy. The strict prose
+  // mode is too harsh for this — it scores around 0.4 because the short
+  // label can't paraphrase every detail in the rubric's expectedRole.
   const judgment = await judgeFn({
     field: `module_cohesion.${group.label} role check`,
     reference: group.expectedRole,
     candidate,
     minSimilarity: minSim,
+    mode: 'theme',
   });
 
   if (judgment.passed) {

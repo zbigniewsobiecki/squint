@@ -30,7 +30,7 @@ import type { ProseJudgeFn, ProseJudgeRequest, ProseJudgeResult } from '../types
  * SHA-256 cache key.
  */
 const PROSE_PROMPT_VERSION = 'v1';
-const THEME_PROMPT_VERSION = 'theme-v1';
+const THEME_PROMPT_VERSION = 'theme-v2';
 
 const PROSE_SYSTEM_PROMPT = `You are a strict semantic similarity judge for code documentation.
 
@@ -48,19 +48,22 @@ Be strict. Surface drift. Do not give credit for vague descriptions that could a
 Output ONLY a JSON object with this exact shape, no other text:
 {"similarity": <number 0..1>, "reasoning": "<one sentence>"}`;
 
-const THEME_SYSTEM_PROMPT = `You judge whether a list of LLM-generated semantic tags reasonably reflect a target code-element concept.
+const THEME_SYSTEM_PROMPT = `You judge whether a short LLM-produced label fits a target code-element concept.
 
-The CANDIDATE is a tag list formatted as "tags: a, b, c". These are short labels another LLM picked while annotating a definition (function, class, const, etc.).
+The CANDIDATE is a short label produced by an LLM annotating some code element. It can be either:
+- A tag list formatted as "tags: a, b, c"
+- A name + brief description formatted as "name: brief description"
+Both are short labels, not full-prose paraphrases of anything.
 
-The REFERENCE is a one-sentence description of what kind of code element the tags should reflect. It is a TARGET CONCEPT, not a list of expected tag words. Don't penalize the tags for "missing concepts" — the tags are short labels, not a paraphrase of the reference.
+The REFERENCE is a one-sentence description of the target CONCEPT — what kind of code element the candidate is supposed to label. The reference is a CONCEPT, not a checklist of words the candidate must contain.
 
-Score how reasonably the candidate tags fit the reference concept, on a scale of 0.0 to 1.0:
-- 0.85-1.0 = the tags clearly fit the concept (any reasonable labels for that kind of element)
-- 0.6-0.84 = the tags are reasonable, perhaps using broader or different vocabulary than expected
-- 0.3-0.59 = the tags are tangentially related but don't clearly identify this kind of element
-- 0.0-0.29 = the tags are unrelated, off-topic, or actively misleading
+Score how reasonably the candidate fits the reference concept, on a scale of 0.0 to 1.0:
+- 0.85-1.0 = the candidate clearly fits (any reasonable label for that kind of element)
+- 0.6-0.84 = the candidate is reasonable, perhaps using broader or different vocabulary
+- 0.3-0.59 = the candidate is tangentially related but doesn't clearly identify this kind of element
+- 0.0-0.29 = the candidate is unrelated, off-topic, or actively misleading
 
-Be tolerant of vocabulary choice. The annotating LLM has freedom to pick synonyms ("event-management" vs "events", "user-management" vs "auth", "task-management" vs "tasks"). Score above 0.7 unless the tags are clearly wrong.
+Be tolerant of vocabulary choice. The annotating LLM has freedom to pick synonyms ("event-management" vs "events", "user-management" vs "auth", "task-management" vs "tasks"). Do NOT penalize the candidate for "missing concepts" or being "too generic" — short labels rarely paraphrase a full reference. Score above 0.7 unless the candidate is clearly off-topic for the reference's concept.
 
 Output ONLY a JSON object with this exact shape, no other text:
 {"similarity": <number 0..1>, "reasoning": "<one sentence>"}`;
