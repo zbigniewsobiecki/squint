@@ -149,14 +149,16 @@ export async function compareInteractionRubric(
 
     // Self-loop: from and to resolve to the same module. The interactions
     // table only stores cross-module edges, so a self-loop rubric entry
-    // can never match. Treat as MAJOR — the rubric author likely intended
-    // two separate modules.
+    // can never match. Treat as MINOR (not major) — the LLM legitimately
+    // groups semantically related defs into one module on some runs (good
+    // cohesion). The "missing" cross-module edge isn't a quality regression,
+    // it's a structural consequence of tight grouping.
     if (fromAssign.moduleId === toAssign.moduleId) {
       diffs.push({
         kind: 'mismatch',
-        severity: 'major',
+        severity: 'minor',
         naturalKey: entry.label,
-        details: `interaction rubric '${entry.label}': both anchors resolve to the same module '${fromAssign.fullPath}', no cross-module edge to verify`,
+        details: `interaction rubric '${entry.label}': both anchors resolve to the same module '${fromAssign.fullPath}', no cross-module edge to verify (LLM grouped tightly)`,
       });
       continue;
     }

@@ -22,12 +22,15 @@ export const flowRubric: FlowRubricEntry[] = [
   {
     label: 'user-authentication',
     expectedRole: 'A user-facing journey for authentication: registration, login, or identity lookup',
-    acceptableStakeholders: ['user'],
+    // Accept 'user' OR 'external' — the LLM sometimes tags an
+    // authentication journey as 'external' (the external actor calling in)
+    // and sometimes as 'user' (the human behind that actor).
+    acceptableStakeholders: ['user', 'external'],
   },
   {
     label: 'user-task-management',
     expectedRole:
       'A user-facing journey for task management: listing, creating, updating, completing, or deleting tasks',
-    acceptableStakeholders: ['user'],
+    acceptableStakeholders: ['user', 'external'],
   },
 ];

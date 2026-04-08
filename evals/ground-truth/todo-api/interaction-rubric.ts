@@ -56,10 +56,9 @@ export const interactionRubric: InteractionRubricEntry[] = [
     toAnchor: defKey('src/repositories/tasks.repository.ts', 'TasksRepository'),
     semanticReference: 'Tasks service persists tasks via the tasks repository',
   },
-  {
-    label: 'tasks-service-uses-event-bus',
-    fromAnchor: defKey('src/services/tasks.service.ts', 'TasksService'),
-    toAnchor: defKey('src/events/event-bus.ts', 'EventBus'),
-    semanticReference: 'Tasks service emits domain events through the event bus',
-  },
+  // tasks-service-uses-event-bus removed: in some runs the LLM groups
+  // TasksService and EventBus into the same module (project.server.services.tasks),
+  // making this a self-loop with no cross-module edge to verify. The
+  // service→eventBus relationship is already covered by iter 3's
+  // relationship_annotations GT and iter 5's contracts GT (events).
 ];

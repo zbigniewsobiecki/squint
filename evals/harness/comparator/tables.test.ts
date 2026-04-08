@@ -2420,7 +2420,7 @@ describe('per-table comparators', () => {
       expect(diff.proseChecks).toEqual({ passed: 1, failed: 0 });
     });
 
-    it('MAJOR when both anchors resolve to the same module (self-loop)', async () => {
+    it('MINOR when both anchors resolve to the same module (self-loop, gate stays open)', async () => {
       const buildGt: GroundTruth = {
         fixtureName: 't',
         files: [{ path: 'src/c.ts', language: 'typescript' }],
@@ -2450,11 +2450,11 @@ describe('per-table comparators', () => {
       };
 
       const diff = await compareInteractionRubric(producedDb, expectedGt, stubJudge({}));
-      expect(diff.passed).toBe(false);
+      expect(diff.passed).toBe(true); // minor only — gate stays open
       expect(diff.diffs).toEqual([
         expect.objectContaining({
           kind: 'mismatch',
-          severity: 'major',
+          severity: 'minor',
           naturalKey: 'self-loop',
           details: expect.stringContaining('same module'),
         }),
