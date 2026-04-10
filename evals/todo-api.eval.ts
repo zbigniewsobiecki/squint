@@ -259,20 +259,38 @@ describe('todo-api eval', () => {
     });
   }, 720_000);
 
-  // Iteration 7.5 (flows-verify regression detector) is intentionally
-  // DEFERRED. squint's flows-verify stage currently throws a SyntaxError
-  // when it tries to JSON.parse a class name ("BaseController") somewhere
-  // in its quality-check pipeline. The verify stage is unusable until that
-  // squint bug is fixed. The flowRubric framework is in place — once
-  // squint fixes the parse bug, iter 7.5 becomes a 25-line addition.
+  it('iteration 7.5: flows-verify stage preserves the flow rubric', async () => {
+    // Regression detector for flows-verify. Phase 1 checks referential
+    // integrity (every flow step references a valid interaction); Phase 2
+    // calls the LLM to evaluate flow quality (coherence, completeness).
+    //
+    // Previously blocked by a squint bug — syncInheritanceInteractions
+    // wrote bare GROUP_CONCAT strings into the symbols column, which
+    // crashed parseSymbols (JSON.parse("BaseController")). Fixed in
+    // commit 4d7ac1b: now uses JSON_GROUP_ARRAY + defensive try/catch.
+    await runIterationStep({
+      fixture: TODO_API,
+      groundTruth: todoApiGroundTruth,
+      label: 'flows-verify',
+      toStage: 'flows-verify',
+      scope: [
+        'files',
+        'definitions',
+        'imports',
+        'definition_metadata',
+        'relationship_annotations',
+        'module_cohesion',
+        'contracts',
+        'interaction_rubric',
+        'flow_rubric',
+      ],
+      judgeFn: makeLlmProseJudge({ cachePath: TODO_API.judgeCachePath }),
+      timeoutMs: 660_000,
+      costBudgetUsd: 0.5,
+    });
+  }, 780_000);
 
-  // Iteration 8 (features stage) is intentionally SKIPPED for the same
-  // reason as iter 7.5: --to-stage features runs flows-verify upstream,
-  // which currently throws a SyntaxError on "BaseController" → JSON.parse.
-  // The featureCohesion framework + theme-search rubric are in place
-  // and unit-tested; once the squint flows-verify bug is fixed, this
-  // becomes a 25-line .it() addition.
-  it.skip('iteration 8: features stage groups flows into expected product features (BLOCKED on squint flows-verify bug)', async () => {
+  it('iteration 8: features stage groups flows into expected product features', async () => {
     await runIterationStep({
       fixture: TODO_API,
       groundTruth: todoApiGroundTruth,
