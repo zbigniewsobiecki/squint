@@ -67,7 +67,14 @@ const INTERACTION_WITH_PATHS_SELECT = `
 
 function parseSymbols(row: Interaction): Interaction {
   if (row.symbols) {
-    row.symbols = JSON.parse(row.symbols as unknown as string);
+    try {
+      row.symbols = JSON.parse(row.symbols as unknown as string);
+    } catch {
+      // Malformed symbols column — drop the bad value rather than crash
+      // the entire flows-verify pipeline. The interaction row itself remains
+      // valid; only its symbols list is unavailable.
+      row.symbols = null;
+    }
   }
   return row;
 }

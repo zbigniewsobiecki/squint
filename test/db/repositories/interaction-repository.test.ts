@@ -164,6 +164,27 @@ describe('InteractionRepository', () => {
 
       expect(interaction!.symbols).toEqual(['a', 'b', 'c']);
     });
+
+    it('does not crash when symbols column contains a malformed (non-JSON) value', () => {
+      // Regression: a buggy backfill in syncInheritanceInteractions used to write
+      // raw GROUP_CONCAT output (a bare comma-separated string like "BaseController")
+      // into the symbols column instead of a JSON array. parseSymbols then crashed
+      // the entire flows-verify pipeline with `SyntaxError: Unexpected token 'B'`.
+      // The backfill is fixed (it now uses JSON_GROUP_ARRAY) but parseSymbols also
+      // wraps JSON.parse in try/catch as defense-in-depth: any other writer that
+      // ever produces malformed data should degrade gracefully, not crash.
+      const id = repo.insert(moduleId1, moduleId2);
+      // Manually inject a bare-string symbols value, bypassing the repository's
+      // JSON.stringify guard.
+      db.prepare('UPDATE interactions SET symbols = ? WHERE id = ?').run('BaseController', id);
+
+      // The call must NOT throw.
+      const interaction = repo.getById(id);
+
+      expect(interaction).not.toBeNull();
+      // Malformed symbols are dropped (set to null, not preserved as the bare string).
+      expect(interaction!.symbols).toBeNull();
+    });
   });
 
   describe('getByModules', () => {
@@ -620,6 +641,69 @@ describe('InteractionRepository', () => {
 
       // Second run should not create any new interactions
       expect(result2.created).toBe(0);
+    });
+
+    it('backfills symbols column as a valid JSON array (regression: was bare CSV)', () => {
+      // Regression: the backfill UPDATE used to write raw GROUP_CONCAT(DISTINCT d.name)
+      // into interactions.symbols, producing a bare string like "ApiHandler" instead of
+      // a JSON array. Downstream parseSymbols then crashed flows-verify with
+      // `SyntaxError: Unexpected token 'A', "ApiHandler" is not valid JSON`.
+      // The fix uses JSON_GROUP_ARRAY so the column always round-trips through JSON.parse.
+      relationshipRepo.set(defId1, defId2, 'Auth extends Api', 'extends');
+
+      interactionAnalysis.syncInheritanceInteractions();
+
+      // Read the raw symbols column directly to verify the on-disk format.
+      const row = db
+        .prepare(
+          `SELECT symbols FROM interactions
+           WHERE from_module_id = ? AND to_module_id = ? AND pattern = 'inheritance'`
+        )
+        .get(moduleId1, moduleId2) as { symbols: string | null };
+
+      expect(row).toBeDefined();
+      expect(row.symbols).not.toBeNull();
+      // Must parse as a JSON array (not throw).
+      const parsed = JSON.parse(row.symbols!);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed).toContain('ApiHandler');
+
+      // And the repository's high-level getter must return symbols as a string array.
+      const interaction = repo.getByModules(moduleId1, moduleId2);
+      expect(interaction).not.toBeNull();
+      expect(interaction!.symbols).toEqual(['ApiHandler']);
+    });
+
+    it('backfilled symbols deduplicates target def names', () => {
+      // Two extends edges from different defs in module1 → same def in module2.
+      // GROUP_CONCAT(DISTINCT) used to dedup; JSON_GROUP_ARRAY does not, so the
+      // fix wraps the inner SELECT in DISTINCT to preserve dedup behavior.
+      const fileId = fileRepo.insert({
+        path: '/test/file2.ts',
+        language: 'typescript',
+        contentHash: 'def456',
+        sizeBytes: 100,
+        modifiedAt: '2024-01-01T00:00:00.000Z',
+      });
+      const defId4 = fileRepo.insertDefinition(fileId, {
+        name: 'AuthService2',
+        kind: 'class',
+        isExported: true,
+        isDefault: false,
+        position: { row: 0, column: 0 },
+        endPosition: { row: 5, column: 1 },
+      });
+      moduleRepo.assignSymbol(defId4, moduleId1);
+      // Both defId1 and defId4 (in module1) extend defId2 (in module2)
+      relationshipRepo.set(defId1, defId2, 'Auth extends Api', 'extends');
+      relationshipRepo.set(defId4, defId2, 'Auth2 extends Api', 'extends');
+
+      interactionAnalysis.syncInheritanceInteractions();
+
+      const interaction = repo.getByModules(moduleId1, moduleId2);
+      expect(interaction).not.toBeNull();
+      // Both edges target ApiHandler, so the deduplicated array contains it exactly once.
+      expect(interaction!.symbols).toEqual(['ApiHandler']);
     });
   });
 
