@@ -11,7 +11,16 @@
 // Ground truth declarative records (input to the builder)
 // ============================================================
 
-export type DefinitionKind = 'function' | 'class' | 'variable' | 'const' | 'type' | 'interface' | 'enum';
+export type DefinitionKind =
+  | 'function'
+  | 'class'
+  | 'variable'
+  | 'const'
+  | 'type'
+  | 'interface'
+  | 'enum'
+  | 'method'
+  | 'module';
 export type ImportType = 'import' | 'dynamic-import' | 'require' | 're-export' | 'export-all';
 export type SymbolKind = 'named' | 'default' | 'namespace' | 'side-effect';
 export type RelationshipType = 'uses' | 'extends' | 'implements';

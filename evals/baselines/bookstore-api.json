@@ -1,52 +1,52 @@
 {
-  "fixture": "todo-api",
-  "lastRun": "2026-04-10T17:44:42.211Z",
+  "fixture": "bookstore-api",
+  "lastRun": "2026-04-10T21:01:25.337Z",
   "squintCommit": "8b7ad46",
   "tableScores": {
     "files": {
       "passed": true,
-      "expected": 14,
-      "produced": 14,
+      "expected": 18,
+      "produced": 18,
       "critical": 0,
       "major": 0,
       "minor": 0
     },
     "definitions": {
       "passed": true,
-      "expected": 50,
-      "produced": 50,
+      "expected": 97,
+      "produced": 97,
       "critical": 0,
       "major": 0,
       "minor": 0
     },
     "imports": {
       "passed": true,
-      "expected": 25,
-      "produced": 25,
+      "expected": 0,
+      "produced": 0,
       "critical": 0,
       "major": 0,
       "minor": 0
     },
     "definition_metadata": {
       "passed": true,
-      "expected": 122,
-      "produced": 161,
+      "expected": 97,
+      "produced": 305,
       "critical": 0,
       "major": 0,
       "minor": 0
     },
     "relationship_annotations": {
       "passed": true,
-      "expected": 35,
-      "produced": 69,
+      "expected": 9,
+      "produced": 45,
       "critical": 0,
       "major": 0,
       "minor": 0
     },
     "module_cohesion": {
       "passed": true,
-      "expected": 12,
-      "produced": 50,
+      "expected": 11,
+      "produced": 97,
       "critical": 0,
       "major": 0,
       "minor": 0
@@ -55,30 +55,6 @@
       "passed": true,
       "expected": 11,
       "produced": 11,
-      "critical": 0,
-      "major": 0,
-      "minor": 0
-    },
-    "interaction_rubric": {
-      "passed": true,
-      "expected": 4,
-      "produced": 25,
-      "critical": 0,
-      "major": 0,
-      "minor": 0
-    },
-    "flow_rubric": {
-      "passed": true,
-      "expected": 2,
-      "produced": 14,
-      "critical": 0,
-      "major": 0,
-      "minor": 0
-    },
-    "feature_cohesion": {
-      "passed": true,
-      "expected": 2,
-      "produced": 4,
       "critical": 0,
       "major": 0,
       "minor": 0
