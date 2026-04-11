@@ -102,6 +102,11 @@ function findProjectRoot(filePath: string, knownFiles: Set<string>): string {
 }
 
 /** Check if any file in knownFiles starts with the given directory prefix. */
+/**
+ * Check if any file in knownFiles lives under the given directory.
+ * O(N) linear scan — acceptable for typical projects (hundreds of files).
+ * For large monorepos, a sorted array with binary search would be better.
+ */
 function hasKnownFileUnder(dirPath: string, knownFiles: Set<string>): boolean {
   const prefix = dirPath + path.sep;
   for (const f of knownFiles) {
@@ -323,6 +328,11 @@ export function extractRubyReferences(
             const resolvedPath = resolveConstantViaAutoloading(constantName, projectRoot, knownFiles);
             const isExternal = !resolvedPath;
 
+            // Mark this constant as handled so the post-walk constant-receiver
+            // loop doesn't create a duplicate reference for the same name.
+            // Use `null` resolvedPath sentinel to indicate "already emitted".
+            constantUsages.set(constantName, { resolvedPath: '', usages: [] });
+
             references.push({
               type: 'import',
               source: constantName,
@@ -388,7 +398,9 @@ export function extractRubyReferences(
 
   // Create references from collected constant-receiver data (one per constant,
   // with all call-site usages attached for call-graph integration).
+  // Skip constants already emitted by include/extend/prepend (resolvedPath = '' sentinel).
   for (const [constantName, { resolvedPath, usages }] of constantUsages) {
+    if (!resolvedPath) continue;
     references.push({
       type: 'import',
       source: constantName,

@@ -508,4 +508,51 @@ end`;
     const resolvedImports = refs.filter((r) => !r.isExternal && r.type === 'import');
     expect(resolvedImports).toHaveLength(0);
   });
+
+  it('does not duplicate references when include and constant-receiver call both appear', () => {
+    const code = `
+class Book < ApplicationRecord
+  include Searchable
+  def search
+    Searchable.reindex(self)
+  end
+end`;
+    const projectRoot = '/project';
+    const knownFiles = new Set([
+      path.join(projectRoot, 'Gemfile'),
+      path.join(projectRoot, 'app/models/book.rb'),
+      path.join(projectRoot, 'app/models/searchable.rb'),
+    ]);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/book.rb'), knownFiles);
+
+    // Should produce exactly one reference for Searchable (from include), not two
+    const searchableRefs = refs.filter((r) => r.source === 'Searchable' && !r.isExternal);
+    expect(searchableRefs).toHaveLength(1);
+  });
+
+  it('handles scope_resolution receivers (namespaced constants)', () => {
+    const code = `
+class OrdersController
+  def create
+    result = Admin::AuditService.log(current_user, 'order_created')
+  end
+end`;
+    const projectRoot = '/project';
+    const knownFiles = new Set([
+      path.join(projectRoot, 'Gemfile'),
+      path.join(projectRoot, 'app/controllers/orders_controller.rb'),
+      path.join(projectRoot, 'app/services/admin/audit_service.rb'),
+    ]);
+    const refs = extractRubyReferences(
+      parse(code),
+      path.join(projectRoot, 'app/controllers/orders_controller.rb'),
+      knownFiles
+    );
+
+    const auditRef = refs.find((r) => r.source === 'Admin::AuditService');
+    expect(auditRef).toBeDefined();
+    expect(auditRef!.resolvedPath).toBe(path.join(projectRoot, 'app/services/admin/audit_service.rb'));
+    expect(auditRef!.imports[0].usages).toHaveLength(1);
+    expect(auditRef!.imports[0].usages[0].callsite?.receiverName).toBe('Admin::AuditService');
+  });
 });

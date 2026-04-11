@@ -52,7 +52,7 @@ export function flowKeyOfRow(row: { slug: string }): string {
  * Returns null if not found (used by comparators to detect "missing" rows).
  */
 export function definitionIdByKey(db: IndexDatabase, key: DefKey): number | null {
-  const idx = key.indexOf('::');
+  const idx = key.lastIndexOf('::');
   if (idx === -1) return null;
   const filePath = key.slice(0, idx);
   const name = key.slice(idx + 2);
@@ -84,7 +84,7 @@ export function moduleIdByKey(db: IndexDatabase, fullPath: string): number | nul
  * Resolve a natural contract key (protocol::normalized_key) to its DB id.
  */
 export function contractIdByKey(db: IndexDatabase, key: ContractKey): number | null {
-  const idx = key.indexOf('::');
+  const idx = key.lastIndexOf('::');
   if (idx === -1) return null;
   const protocol = key.slice(0, idx);
   const normalizedKey = key.slice(idx + 2);
