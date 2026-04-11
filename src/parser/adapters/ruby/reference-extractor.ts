@@ -180,6 +180,20 @@ function getConstantText(node: SyntaxNode): string {
 }
 
 /**
+ * Count the number of arguments in a Ruby argument_list node.
+ */
+function countCallArgs(argsNode: SyntaxNode): number {
+  let count = 0;
+  for (let i = 0; i < argsNode.childCount; i++) {
+    const child = argsNode.child(i);
+    if (child && child.type !== ',' && child.type !== '(' && child.type !== ')') {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
  * Create a side-effect import symbol (for require/require_relative without destructuring).
  */
 function sideEffectImport(): ImportedSymbol[] {
@@ -221,7 +235,7 @@ export function extractRubyReferences(
   knownFiles: Set<string>
 ): FileReference[] {
   const references: FileReference[] = [];
-  const seenConstants = new Set<string>();
+  const constantUsages = new Map<string, { resolvedPath: string; usages: SymbolUsage[] }>();
   const projectRoot = findProjectRoot(filePath, knownFiles);
 
   function walk(node: SyntaxNode): void {
@@ -327,27 +341,38 @@ export function extractRubyReferences(
 
       // Constant-receiver calls: BookSerializer.new(book), User.authenticate(...)
       // In Zeitwerk apps these are implicit cross-file dependencies. Resolve the
-      // constant via Rails autoloading and emit a synthetic import reference.
+      // constant via Rails autoloading and collect call-site usages so the
+      // call-graph service can build proper source:'ast' interaction edges.
       const receiverNode = node.childForFieldName('receiver');
       if (receiverNode && (receiverNode.type === 'constant' || receiverNode.type === 'scope_resolution')) {
         const constantName = getConstantText(receiverNode);
-        if (!seenConstants.has(constantName)) {
+
+        if (!constantUsages.has(constantName)) {
           const resolvedPath = resolveConstantViaAutoloading(constantName, projectRoot, knownFiles);
           if (resolvedPath) {
-            seenConstants.add(constantName);
-            references.push({
-              type: 'import',
-              source: constantName,
-              resolvedPath,
-              isExternal: false,
-              isTypeOnly: false,
-              imports: moduleRefImport(constantName),
-              position: {
-                row: receiverNode.startPosition.row,
-                column: receiverNode.startPosition.column,
-              },
-            });
+            constantUsages.set(constantName, { resolvedPath, usages: [] });
           }
+        }
+
+        const entry = constantUsages.get(constantName);
+        if (entry) {
+          const callMethodNode = node.childForFieldName('method');
+          const argsNode = node.childForFieldName('arguments');
+          const callMethodName = callMethodNode?.text ?? '';
+
+          entry.usages.push({
+            position: {
+              row: receiverNode.startPosition.row,
+              column: receiverNode.startPosition.column,
+            },
+            context: 'call',
+            callsite: {
+              argumentCount: argsNode ? countCallArgs(argsNode) : 0,
+              isMethodCall: true,
+              isConstructorCall: callMethodName === 'new',
+              receiverName: constantName,
+            },
+          });
         }
       }
     }
@@ -360,6 +385,28 @@ export function extractRubyReferences(
   }
 
   walk(rootNode);
+
+  // Create references from collected constant-receiver data (one per constant,
+  // with all call-site usages attached for call-graph integration).
+  for (const [constantName, { resolvedPath, usages }] of constantUsages) {
+    references.push({
+      type: 'import',
+      source: constantName,
+      resolvedPath,
+      isExternal: false,
+      isTypeOnly: false,
+      imports: [
+        {
+          name: constantName,
+          localName: constantName,
+          kind: 'named',
+          usages,
+        },
+      ],
+      position: usages[0] ? { row: usages[0].position.row, column: usages[0].position.column } : { row: 0, column: 0 },
+    });
+  }
+
   return references;
 }
 

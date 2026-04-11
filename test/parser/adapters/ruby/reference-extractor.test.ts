@@ -426,9 +426,17 @@ end`;
     expect(bookSerializerRef!.isExternal).toBe(false);
     expect(bookSerializerRef!.type).toBe('import');
 
+    // Usages must be populated for call-graph integration
+    const bsUsages = bookSerializerRef!.imports[0].usages;
+    expect(bsUsages.length).toBeGreaterThanOrEqual(1);
+    expect(bsUsages[0].context).toBe('call');
+    expect(bsUsages[0].callsite?.isConstructorCall).toBe(true);
+    expect(bsUsages[0].callsite?.receiverName).toBe('BookSerializer');
+
     const bookRef = refs.find((r) => r.source === 'Book');
     expect(bookRef).toBeDefined();
     expect(bookRef!.resolvedPath).toBe(path.join(projectRoot, 'app/models/book.rb'));
+    expect(bookRef!.imports[0].usages.length).toBeGreaterThanOrEqual(1);
   });
 
   it('handles class method calls: User.authenticate(...)', () => {
@@ -479,6 +487,11 @@ end`;
 
     const orderSerializerRefs = refs.filter((r) => r.source === 'OrderSerializer');
     expect(orderSerializerRefs).toHaveLength(1);
+
+    // Both call sites should be captured as usages on the single reference
+    const usages = orderSerializerRefs[0].imports[0].usages;
+    expect(usages).toHaveLength(2);
+    expect(usages.every((u) => u.context === 'call')).toBe(true);
   });
 
   it('ignores unresolvable constants (framework classes, external gems)', () => {

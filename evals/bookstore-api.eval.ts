@@ -168,15 +168,7 @@ describe('bookstore-api eval', () => {
     });
   }, 660_000);
 
-  // Iterations 7-8 are SKIPPED: the flows stage requires richer interaction
-  // semantics (from call-graph edges) to trace meaningful user journeys.
-  // The bookstore fixture's interactions are all ast-import (import-only,
-  // no call-graph context) so the LLM only generates inheritance flows,
-  // not the user-facing CRUD flows the rubric expects. Iters 1-6.6 (10
-  // iterations) cover the full pipeline through interactions-verify and
-  // are stable. Flows/features will unblock when squint's Ruby call-graph
-  // support is enhanced to track cross-file method invocations.
-  it.skip('iteration 7: flows stage produces expected user journeys (SKIPPED: import-only interactions lack call-graph context for flow tracing)', async () => {
+  it('iteration 7: flows stage produces expected user journeys', async () => {
     await runIterationStep({
       fixture: BOOKSTORE,
       groundTruth: bookstoreApiGroundTruth,
@@ -199,7 +191,7 @@ describe('bookstore-api eval', () => {
     });
   }, 720_000);
 
-  it.skip('iteration 7.5: flows-verify stage preserves the flow rubric (SKIPPED: same as iter 7)', async () => {
+  it('iteration 7.5: flows-verify stage preserves the flow rubric', async () => {
     await runIterationStep({
       fixture: BOOKSTORE,
       groundTruth: bookstoreApiGroundTruth,
@@ -222,7 +214,7 @@ describe('bookstore-api eval', () => {
     });
   }, 780_000);
 
-  it.skip('iteration 8: features stage groups flows into expected product features (SKIPPED: depends on flows)', async () => {
+  it('iteration 8: features stage groups flows into expected product features', async () => {
     await runIterationStep({
       fixture: BOOKSTORE,
       groundTruth: bookstoreApiGroundTruth,

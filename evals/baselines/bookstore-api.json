@@ -1,7 +1,7 @@
 {
   "fixture": "bookstore-api",
-  "lastRun": "2026-04-11T10:59:17.092Z",
-  "squintCommit": "90da3d1",
+  "lastRun": "2026-04-11T12:04:05.560Z",
+  "squintCommit": "b8e0f70",
   "tableScores": {
     "files": {
       "passed": true,
@@ -29,8 +29,8 @@
     },
     "definition_metadata": {
       "passed": true,
-      "expected": 97,
-      "produced": 291,
+      "expected": 95,
+      "produced": 305,
       "critical": 0,
       "major": 0,
       "minor": 0
@@ -38,7 +38,47 @@
     "relationship_annotations": {
       "passed": true,
       "expected": 9,
-      "produced": 45,
+      "produced": 89,
+      "critical": 0,
+      "major": 0,
+      "minor": 0
+    },
+    "module_cohesion": {
+      "passed": true,
+      "expected": 11,
+      "produced": 97,
+      "critical": 0,
+      "major": 0,
+      "minor": 0
+    },
+    "contracts": {
+      "passed": true,
+      "expected": 11,
+      "produced": 11,
+      "critical": 0,
+      "major": 0,
+      "minor": 0
+    },
+    "interaction_rubric": {
+      "passed": true,
+      "expected": 5,
+      "produced": 24,
+      "critical": 0,
+      "major": 0,
+      "minor": 1
+    },
+    "flow_rubric": {
+      "passed": true,
+      "expected": 2,
+      "produced": 19,
+      "critical": 0,
+      "major": 0,
+      "minor": 0
+    },
+    "feature_cohesion": {
+      "passed": true,
+      "expected": 2,
+      "produced": 5,
       "critical": 0,
       "major": 0,
       "minor": 0

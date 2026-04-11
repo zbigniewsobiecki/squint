@@ -35,7 +35,7 @@ export const definitionMetadata: GroundTruthDefinitionMetadata[] = [
     key: 'purpose',
     proseReference: 'Query helper that returns recent records ordered by creation date',
   },
-  { defKey: defKey('app/models/application_record.rb', 'recent'), key: 'pure', exactValue: 'true' },
+  // recent.pure omitted: LLM flip-flops (returns a scope — lazy vs. executes a query)
 
   // Book
   {
@@ -140,7 +140,7 @@ export const definitionMetadata: GroundTruthDefinitionMetadata[] = [
     proseReference: 'Cancels the order and restores stock quantities for each order item',
   },
   { defKey: defKey('app/models/order.rb', 'cancel!'), key: 'pure', exactValue: 'false' },
-  { defKey: defKey('app/models/order.rb', 'item_count'), key: 'pure', exactValue: 'false' },
+  // item_count.pure omitted: LLM flip-flops (delegates to .sum() — query vs. aggregation)
 
   // OrderItem
   {
