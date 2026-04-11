@@ -1,6 +1,7 @@
 /**
  * Prompt templates for LLM annotation.
  */
+import { describeFileLayer } from './file-layer.js';
 
 export interface CoverageInfo {
   aspect: string;
@@ -37,7 +38,11 @@ const ASPECT_DESCRIPTIONS: Record<string, string> = {
   - Use consistent naming: always plural OR singular (not both), no abbreviations (use "authentication" not "auth")
   - Avoid overly generic tags like "utility", "types", "configuration" unless the symbol is truly generic
   - Each symbol's domains should reflect ITS OWN context — do not copy domains from other symbols in this batch
-  - A well-scoped project typically has 15-40 total domains. Prefer broad, reusable domain names over narrow, symbol-specific ones`,
+  - A well-scoped project typically has 15-40 total domains. Prefer broad, reusable domain names over narrow, symbol-specific ones
+  - **Identity, not context**: Tag the symbol's IDENTITY (what it IS), not its CONTEXT (what consumers do with it). The same primitive can be used in many contexts; tag what it IS, not where it's used today.
+    - A WeatherFetcher that calls a forecast API should be tagged ["weather", "http-client"], NOT ["weather-management"] (identity = http client, context = weather)
+    - A CompressionWriter that writes gzip-encoded streams should be tagged ["compression", "stream-io"], NOT ["log-storage"] (identity = compression, context = where the streams happen to go)
+    - An LRUEvictionPolicy that manages cache eviction order should be tagged ["cache-eviction", "policies"], NOT ["session-storage"] (identity = eviction policy, context = whatever the cache holds)`,
   role: 'The architectural role (e.g., "controller", "utility", "model", "service", "factory", "adapter").',
   pure: `"true" only if purely functional (deterministic, no side effects). "false" if it: creates objects with mutable state, returns closures with internal state, uses vi.fn()/mock factories, or performs I/O. Most factory functions are NOT pure.
   - Functions returning \`new CustomClass(...)\` create new mutable instance identities each call → impure
@@ -198,6 +203,16 @@ ${pureGuidelines}
 
 /**
  * Build user prompt with enhanced dependency context (multiple aspects).
+ *
+ * PR4/2: restructured to surface structural context more prominently:
+ *   - File path is followed by an optional `Layer:` line derived from
+ *     the file path (e.g. `app/models/` → `Rails ActiveRecord model layer`).
+ *   - Dependencies with >2 entries are rendered as a markdown pipe table
+ *     instead of a bullet list, so the LLM can scan domains/role/purpose
+ *     across siblings at a glance.
+ *   - The structured context block (file/layer/dependencies/relationships/
+ *     incoming/exports) is now grouped BEFORE the source code so the LLM
+ *     reads the architectural context first and the implementation last.
  */
 export function buildUserPromptEnhanced(
   symbols: SymbolContextEnhanced[],
@@ -239,12 +254,22 @@ export function buildUserPromptEnhanced(
   for (const symbol of symbols) {
     parts.push(`### #${symbol.id}: ${symbol.name} (${symbol.kind})`);
 
-    // File location
+    // File location + PR4/2 layer hint
     const lineRange = symbol.line === symbol.endLine ? `${symbol.line}` : `${symbol.line}-${symbol.endLine}`;
     parts.push(`File: ${symbol.filePath}:${lineRange}`);
+    const layer = describeFileLayer(symbol.filePath);
+    if (layer) parts.push(`Layer: ${layer}`);
     parts.push('');
 
-    // Dependencies with all their annotations (already annotated)
+    // Dependencies with all their annotations (already annotated).
+    //
+    // PR4/2 EXPERIMENT REVERTED: tried rendering as a markdown pipe table
+    // when count > 2 to make domains scannable. RESULT: the LLM treated
+    // the table as a "use these tags" template and copied generic domains
+    // (`data-access`, `user-management`) from dependencies onto every
+    // symbol, REGRESSING bookstore from 1 minor to 11. The bullet list
+    // is actually less prescriptive — the LLM doesn't pattern-match it
+    // as a tag dictionary. We keep the bullet list for all sizes.
     if (symbol.dependencies.length === 0) {
       parts.push('Dependencies (already annotated): none');
     } else {
@@ -265,7 +290,8 @@ export function buildUserPromptEnhanced(
         }
 
         const annotationStr = annotations.length > 0 ? annotations.join(' ') : '(not yet annotated)';
-        parts.push(`- ${dep.name} (#${dep.id}): ${annotationStr}`);
+        const associationSuffix = dep.associationKind ? ` [${dep.associationKind}]` : '';
+        parts.push(`- ${dep.name} (#${dep.id})${associationSuffix}: ${annotationStr}`);
       }
     }
     parts.push('');
@@ -279,15 +305,9 @@ export function buildUserPromptEnhanced(
       parts.push('');
     }
 
-    // Source code
-    const codeFenceLang = language === 'ruby' ? 'ruby' : 'typescript';
-    parts.push('Source Code:');
-    parts.push(`\`\`\`${codeFenceLang}`);
-    parts.push(symbol.sourceCode);
-    parts.push('```');
-    parts.push('');
-
-    // Incoming dependencies (who uses this symbol)
+    // Incoming dependencies (who uses this symbol). PR4/2: moved BEFORE
+    // the source code so all structured context appears together, with
+    // the source as the last thing the LLM reads before answering.
     if (symbol.incomingDependencyCount > 0) {
       const shownCount = symbol.incomingDependencies.length;
       const totalCount = symbol.incomingDependencyCount;
@@ -302,8 +322,16 @@ export function buildUserPromptEnhanced(
       parts.push('');
     }
 
-    // Export status
+    // Export status (also part of structured context, before source code)
     parts.push(`Symbol is exported: ${symbol.isExported ? 'yes' : 'no'}`);
+    parts.push('');
+
+    // Source code — last so the LLM reads architectural context first.
+    const codeFenceLang = language === 'ruby' ? 'ruby' : 'typescript';
+    parts.push('Source Code:');
+    parts.push(`\`\`\`${codeFenceLang}`);
+    parts.push(symbol.sourceCode);
+    parts.push('```');
     parts.push('');
   }
 
@@ -324,6 +352,13 @@ export interface DependencyContextEnhanced {
   domains: string[] | null;
   role: string | null;
   pure: boolean | null;
+  /**
+   * PR4/2: optional structural relationship hint, e.g. `has_many :books`
+   * for a Ruby ActiveRecord association. When present, rendered next to
+   * the dependency name in the user prompt so the LLM treats the
+   * dependency as part of the symbol's structural identity.
+   */
+  associationKind?: string;
 }
 
 export interface IncomingDependencyContext {

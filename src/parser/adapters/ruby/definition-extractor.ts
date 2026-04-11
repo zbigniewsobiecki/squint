@@ -2,6 +2,66 @@ import type { SyntaxNode } from 'tree-sitter';
 import type { Definition } from '../../definition-extractor.js';
 
 /**
+ * Returns true iff the given `module` node is a pure namespace wrapper:
+ * its body contains at least one class declaration AND no own state
+ * (no methods, constants, includes, or other top-level statements).
+ *
+ * Nested namespace-only modules count as classes for the purposes of
+ * the outer module's check (so `module Outer; module Inner; class C; end; end; end`
+ * marks Outer as namespace-only too).
+ *
+ * Empty modules (`module Foo; end`) are NOT namespace-only — they have no
+ * wrapped class for the symbols stage's LLM to mis-describe, so emitting
+ * them as definitions is harmless.
+ */
+function isNamespaceOnlyModule(moduleNode: SyntaxNode): boolean {
+  let hasClass = false;
+  let disqualified = false;
+
+  function inspect(child: SyntaxNode): void {
+    if (disqualified) return;
+    if (!child.isNamed) return;
+    if (child.type === 'name' || child.type === 'constant') return;
+
+    // tree-sitter-ruby may wrap module bodies in a body_statement node
+    if (child.type === 'body_statement') {
+      for (let i = 0; i < child.childCount; i++) {
+        const grand = child.child(i);
+        if (grand) inspect(grand);
+        if (disqualified) return;
+      }
+      return;
+    }
+
+    if (child.type === 'class') {
+      hasClass = true;
+      return;
+    }
+
+    if (child.type === 'module') {
+      if (isNamespaceOnlyModule(child)) {
+        hasClass = true;
+      } else {
+        disqualified = true;
+      }
+      return;
+    }
+
+    // Any other named node (method, singleton_method, assignment, call,
+    // identifier, ...) is own state and disqualifies the module.
+    disqualified = true;
+  }
+
+  for (let i = 0; i < moduleNode.childCount; i++) {
+    const child = moduleNode.child(i);
+    if (child) inspect(child);
+    if (disqualified) break;
+  }
+
+  return hasClass && !disqualified;
+}
+
+/**
  * Ruby-specific definition extractor.
  * Handles classes, modules, methods, constants, and attr_* macros.
  */
@@ -56,7 +116,15 @@ export function extractRubyDefinitions(rootNode: SyntaxNode): Definition[] {
 
       case 'module': {
         const nameNode = node.childForFieldName('name');
-        if (nameNode) {
+        // Namespace-only modules (`module Api ... end` whose body is purely
+        // class declarations) are not emitted as their own definitions because
+        // the symbols stage cannot meaningfully describe them — its prompt feeds
+        // the full module source, which contains the wrapped class, and the LLM
+        // ends up describing the class instead of the namespace. The contained
+        // classes are still emitted via the recursive walk below. Empty modules
+        // are kept because they don't trigger the bug (there's no class for the
+        // LLM to mis-describe).
+        if (nameNode && !isNamespaceOnlyModule(node)) {
           definitions.push({
             name: nameNode.text,
             kind: 'module',

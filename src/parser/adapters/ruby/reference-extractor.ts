@@ -2,6 +2,34 @@ import path from 'node:path';
 import type { SyntaxNode } from 'tree-sitter';
 import type { Definition } from '../../definition-extractor.js';
 import type { FileReference, ImportedSymbol, InternalSymbolUsage, SymbolUsage } from '../../reference-extractor.js';
+import { type AssociationKind, inferAssociationClass } from './inflector.js';
+
+/**
+ * ActiveRecord association DSLs that PR3 captures as structural references.
+ * `delegate`, polymorphic associations, and `through:` transitive resolution
+ * are deferred to a follow-up PR — see docs/plan/PR3.md "Out of Scope".
+ */
+const ASSOCIATION_METHOD_NAMES = new Set<string>(['has_many', 'has_one', 'belongs_to', 'has_and_belongs_to_many']);
+
+/**
+ * Tree-sitter-ruby node types that introduce a nested scope. When we walk a
+ * class body looking for associations, we must NOT descend into these — a
+ * `has_many :foo` call inside a method body is NOT an ActiveRecord association.
+ */
+const NESTED_SCOPE_NODE_TYPES = new Set<string>([
+  'method',
+  'singleton_method',
+  'do_block',
+  'block',
+  'lambda',
+  'if',
+  'unless',
+  'while',
+  'until',
+  'for',
+  'case',
+  'begin',
+]);
 
 // Ruby file extensions to try when resolving
 const RUBY_EXTENSIONS_TO_TRY = ['.rb'];
@@ -244,6 +272,17 @@ export function extractRubyReferences(
   const projectRoot = findProjectRoot(filePath, knownFiles);
 
   function walk(node: SyntaxNode): void {
+    // PR3: when entering a class node, walk only its IMMEDIATE body for
+    // ActiveRecord association DSLs (`has_many :books` etc.). This populates
+    // constantUsages with structural Author→Book / Order→User edges that the
+    // call-graph builder picks up downstream. Recursive descent into method
+    // bodies is handled by the main walk below; the association extractor
+    // deliberately skips nested scopes so a `has_many :foo` inside a method
+    // body isn't misclassified as an association.
+    if (node.type === 'class') {
+      extractClassBodyAssociations(node, projectRoot, knownFiles, constantUsages);
+    }
+
     if (node.type === 'call') {
       const methodNode = node.childForFieldName('method');
       // For top-level calls, the method identifier is a direct child named 'method'
@@ -420,6 +459,177 @@ export function extractRubyReferences(
   }
 
   return references;
+}
+
+/**
+ * PR3: Walk the immediate body of a Ruby `class` node looking for ActiveRecord
+ * association DSL calls (`has_many :books`, `belongs_to :author`, etc.). For
+ * each match, resolve the symbol argument to a target class name (honoring
+ * the `class_name:` option override) and add it to constantUsages with a
+ * usage entry pointing at the call site so the call-graph builder treats it
+ * as a structural edge.
+ *
+ * Only the IMMEDIATE body is inspected — anything inside a method, block,
+ * conditional, etc. is intentionally skipped (those are handled by the main
+ * walk and don't represent class-level associations).
+ *
+ * What this captures: has_many, has_one, belongs_to, has_and_belongs_to_many
+ * with simple-symbol first arg and optional class_name: option.
+ *
+ * What this does NOT capture (deferred to follow-up PRs):
+ *   - delegate :method, to: :association
+ *   - polymorphic associations (belongs_to :commentable, polymorphic: true)
+ *   - through: transitive resolution (has_many :orders, through: :order_items)
+ *   - Mongoid-style embeds_many/embeds_one
+ *   - Custom association libraries
+ */
+function extractClassBodyAssociations(
+  classNode: SyntaxNode,
+  projectRoot: string,
+  knownFiles: Set<string>,
+  constantUsages: Map<string, { resolvedPath: string; usages: SymbolUsage[] }>
+): void {
+  // tree-sitter-ruby wraps class bodies in a `body_statement` node. Older
+  // grammar versions may emit children directly under the class node, so we
+  // accept either shape: try to find body_statement first, fall back to
+  // walking the class's direct children.
+  const bodyChildren: SyntaxNode[] = [];
+  const bodyStatement = findFirstChildOfType(classNode, 'body_statement');
+  if (bodyStatement) {
+    for (let i = 0; i < bodyStatement.childCount; i++) {
+      const c = bodyStatement.child(i);
+      if (c) bodyChildren.push(c);
+    }
+  } else {
+    // Fall back: scan direct class children, skipping the class declaration
+    // boilerplate (name, superclass, keywords).
+    for (let i = 0; i < classNode.childCount; i++) {
+      const c = classNode.child(i);
+      if (c && c.type !== 'constant' && c.type !== 'superclass' && c.type !== 'name') {
+        bodyChildren.push(c);
+      }
+    }
+  }
+
+  for (const child of bodyChildren) {
+    if (NESTED_SCOPE_NODE_TYPES.has(child.type)) continue;
+    if (child.type !== 'call') continue;
+
+    processAssociationCall(child, projectRoot, knownFiles, constantUsages);
+  }
+}
+
+/**
+ * Process a single `call` node that may be an ActiveRecord association DSL.
+ * Extracts the symbol argument, resolves the target class, and registers
+ * a usage in constantUsages.
+ */
+function processAssociationCall(
+  callNode: SyntaxNode,
+  projectRoot: string,
+  knownFiles: Set<string>,
+  constantUsages: Map<string, { resolvedPath: string; usages: SymbolUsage[] }>
+): void {
+  // Find the method name. tree-sitter-ruby uses the `method` field for the
+  // identifier in `has_many :books` style calls.
+  const methodNode = callNode.childForFieldName('method');
+  const methodName = methodNode?.text;
+  if (!methodName || !ASSOCIATION_METHOD_NAMES.has(methodName)) return;
+
+  const argumentsNode = callNode.childForFieldName('arguments');
+  if (!argumentsNode) return;
+
+  // Find the first argument — must be a `simple_symbol` literal like `:books`.
+  const firstSymbolArg = findFirstChildOfType(argumentsNode, 'simple_symbol');
+  if (!firstSymbolArg) return;
+
+  // simple_symbol text includes the leading colon (`:books`); strip it.
+  const symbolName = firstSymbolArg.text.replace(/^:/, '');
+  if (symbolName.length === 0) return;
+
+  // Look for an optional `class_name:` keyword argument that overrides the
+  // inferred class name. tree-sitter-ruby represents `class_name: 'Foo'` as
+  // a `pair` node with a hash_key_symbol child whose text is `class_name:`.
+  const classNameOverride = findClassNameOverride(argumentsNode);
+
+  const targetClassName = classNameOverride ?? inferAssociationClass(symbolName, methodName as AssociationKind);
+
+  // Resolve to a file via Rails autoloading.
+  const resolvedPath = resolveConstantViaAutoloading(targetClassName, projectRoot, knownFiles);
+
+  // Register or look up the constantUsages entry. Mirror the existing
+  // constant-receiver call branch in walk().
+  if (!constantUsages.has(targetClassName)) {
+    if (!resolvedPath) return;
+    constantUsages.set(targetClassName, { resolvedPath, usages: [] });
+  }
+  const entry = constantUsages.get(targetClassName);
+  if (!entry || !entry.resolvedPath) return;
+
+  entry.usages.push({
+    position: {
+      row: callNode.startPosition.row,
+      column: callNode.startPosition.column,
+    },
+    context: 'call',
+    callsite: {
+      argumentCount: 1,
+      isMethodCall: true,
+      isConstructorCall: false,
+      receiverName: targetClassName,
+    },
+  });
+}
+
+/**
+ * Find the first direct child of `parent` whose type matches `type`. Returns
+ * null if no such child exists.
+ */
+function findFirstChildOfType(parent: SyntaxNode, type: string): SyntaxNode | null {
+  for (let i = 0; i < parent.childCount; i++) {
+    const child = parent.child(i);
+    if (child?.type === type) return child;
+  }
+  return null;
+}
+
+/**
+ * Look for a `class_name:` keyword argument inside an argument_list and return
+ * its string value, or undefined if not present or not a string literal.
+ *
+ * Handles tree-sitter-ruby's `pair` node format:
+ *   pair
+ *   ├── hash_key_symbol "class_name:"  (text includes trailing colon)
+ *   └── string "Author"                (or other string node type)
+ */
+function findClassNameOverride(argumentsNode: SyntaxNode): string | undefined {
+  for (let i = 0; i < argumentsNode.childCount; i++) {
+    const child = argumentsNode.child(i);
+    if (!child || child.type !== 'pair') continue;
+
+    // The pair's first named child is the key, second is the value.
+    let key: SyntaxNode | null = null;
+    let value: SyntaxNode | null = null;
+    for (let j = 0; j < child.childCount; j++) {
+      const c = child.child(j);
+      if (!c?.isNamed) continue;
+      if (key === null) key = c;
+      else if (value === null) {
+        value = c;
+        break;
+      }
+    }
+    if (!key || !value) continue;
+
+    // Normalize the key text — hash_key_symbol may have a trailing colon.
+    const keyText = key.text.replace(/:$/, '').replace(/^:/, '');
+    if (keyText !== 'class_name') continue;
+
+    if (value.type === 'string') {
+      return extractStringContent(value) ?? undefined;
+    }
+  }
+  return undefined;
 }
 
 /**

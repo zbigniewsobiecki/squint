@@ -1,403 +1,349 @@
-import { type GroundTruthDefinitionMetadata, defKey } from '../../harness/types.js';
+import type { GroundTruthDefinitionMetadata } from '../../harness/types.js';
+import { assertedDomain, assertedPurpose, exactPure } from '../_shared/assertion-builders.js';
 
 /**
  * Ground truth for the `definition_metadata` table after running
  * `squint ingest --to-stage symbols` against the bookstore-api fixture.
  *
+ * PR4: migrated from prose-similarity grading to property-based assertions.
+ * Each entry asserts factual properties about the produced output (does it
+ * mention the right concepts; does it ban the wrong ones) instead of trying
+ * to paraphrase the LLM's exact phrasing. This catches the Author→user-management
+ * bug class while letting any defensible LLM phrasing pass.
+ *
  * Three metadata aspects per definition:
- *   - purpose: LLM-generated description (proseReference, minor drift)
- *   - domain: LLM-generated tags (themeReference, minor drift)
- *   - pure: deterministic boolean (exactValue, major mismatch)
+ *   - purpose: assertedPurpose with `mentions`/`anyOf`/`forbids`
+ *   - domain:  assertedDomain with `anyOf`/`noneOf`
+ *   - pure:    exactPure with a boolean
  *
  * Only class-level and significant method-level definitions get full
- * coverage. Minor utility methods (format_price, normalize_name) are
- * included for completeness but with looser thresholds.
+ * coverage. Minor utility methods get purpose-only.
  */
 export const definitionMetadata: GroundTruthDefinitionMetadata[] = [
   // ============================================================
-  // Models
+  // Models — ApplicationRecord
   // ============================================================
-
-  // ApplicationRecord
-  {
-    defKey: defKey('app/models/application_record.rb', 'ApplicationRecord'),
-    key: 'purpose',
-    proseReference: 'Abstract base class for all ActiveRecord models with shared query helpers',
-  },
-  {
-    defKey: defKey('app/models/application_record.rb', 'ApplicationRecord'),
-    key: 'domain',
-    themeReference: 'tags should reflect a database or persistence base class',
-  },
-  { defKey: defKey('app/models/application_record.rb', 'ApplicationRecord'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/models/application_record.rb', 'recent'),
-    key: 'purpose',
-    proseReference: 'Query helper that returns recent records ordered by creation date',
-  },
+  assertedPurpose('app/models/application_record.rb', 'ApplicationRecord', {
+    anyOf: ['base', 'abstract', 'parent'],
+    mentions: ['active'], // ActiveRecord-specific
+    forbids: ['concrete instance', 'specific entity'],
+  }),
+  assertedDomain('app/models/application_record.rb', 'ApplicationRecord', {
+    anyOf: ['persistence', 'database', 'base', 'orm', 'active'],
+    noneOf: ['catalog', 'order', 'auth', 'session', 'controller'],
+  }),
+  exactPure('app/models/application_record.rb', 'ApplicationRecord', false),
+  assertedPurpose('app/models/application_record.rb', 'recent', {
+    anyOf: ['recent', 'newest', 'order', 'created', 'date'],
+  }),
   // recent.pure omitted: LLM flip-flops (returns a scope — lazy vs. executes a query)
 
-  // Book
-  {
-    defKey: defKey('app/models/book.rb', 'Book'),
-    key: 'purpose',
-    proseReference: 'ActiveRecord model for books with title, ISBN, pricing, stock tracking, and author association',
-  },
-  {
-    defKey: defKey('app/models/book.rb', 'Book'),
-    key: 'domain',
-    themeReference: 'tags should reflect a catalog or inventory model for books in a bookstore',
-  },
-  { defKey: defKey('app/models/book.rb', 'Book'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/models/book.rb', 'price'),
-    key: 'purpose',
-    proseReference: 'Converts price from cents to decimal dollars',
-  },
-  { defKey: defKey('app/models/book.rb', 'price'), key: 'pure', exactValue: 'true' },
-  {
-    defKey: defKey('app/models/book.rb', 'in_stock?'),
-    key: 'purpose',
-    proseReference: 'Returns whether the book has available stock',
-  },
-  { defKey: defKey('app/models/book.rb', 'in_stock?'), key: 'pure', exactValue: 'true' },
-  {
-    defKey: defKey('app/models/book.rb', 'reserve_stock!'),
-    key: 'purpose',
-    proseReference: 'Decrements stock count by a given quantity, raising an error if insufficient stock',
-  },
-  { defKey: defKey('app/models/book.rb', 'reserve_stock!'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/models/book.rb', 'InsufficientStockError'),
-    key: 'purpose',
-    proseReference: 'Custom error class raised when trying to reserve more stock than available',
-  },
-  { defKey: defKey('app/models/book.rb', 'InsufficientStockError'), key: 'pure', exactValue: 'false' },
+  // ============================================================
+  // Models — Book
+  // ============================================================
+  assertedPurpose('app/models/book.rb', 'Book', {
+    mentions: ['book'],
+    anyOf: ['catalog', 'inventory', 'stock', 'isbn', 'title', 'price'],
+    forbids: ['user account', 'authentication'],
+  }),
+  assertedDomain('app/models/book.rb', 'Book', {
+    anyOf: ['catalog', 'inventory', 'book', 'product', 'bookstore'],
+    noneOf: ['user', 'auth', 'session', 'identity', 'profile', 'account'],
+  }),
+  exactPure('app/models/book.rb', 'Book', false),
+  assertedPurpose('app/models/book.rb', 'price', {
+    anyOf: ['price', 'cents', 'dollar', 'currency', 'amount'],
+  }),
+  exactPure('app/models/book.rb', 'price', true),
+  assertedPurpose('app/models/book.rb', 'in_stock?', {
+    anyOf: ['stock', 'available', 'in stock', 'inventory'],
+  }),
+  exactPure('app/models/book.rb', 'in_stock?', true),
+  assertedPurpose('app/models/book.rb', 'reserve_stock!', {
+    anyOf: ['stock', 'reserve', 'decrement', 'reduce', 'inventory'],
+  }),
+  exactPure('app/models/book.rb', 'reserve_stock!', false),
+  assertedPurpose('app/models/book.rb', 'InsufficientStockError', {
+    anyOf: ['error', 'stock', 'insufficient', 'exception', 'raised'],
+  }),
+  exactPure('app/models/book.rb', 'InsufficientStockError', false),
 
-  // Author
-  {
-    defKey: defKey('app/models/author.rb', 'Author'),
-    key: 'purpose',
-    proseReference: 'ActiveRecord model for book authors with name, bio, and association to books',
-  },
-  {
-    defKey: defKey('app/models/author.rb', 'Author'),
-    key: 'domain',
-    themeReference: 'tags should reflect a catalog or author model for a bookstore',
-  },
-  { defKey: defKey('app/models/author.rb', 'Author'), key: 'pure', exactValue: 'false' },
-  { defKey: defKey('app/models/author.rb', 'book_count'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/models/author.rb', 'full_display_name'),
-    key: 'purpose',
-    proseReference: 'Returns a formatted display name combining the author name and truncated bio',
-  },
-  { defKey: defKey('app/models/author.rb', 'full_display_name'), key: 'pure', exactValue: 'true' },
+  // ============================================================
+  // Models — Author (the canonical PR4 motivating case)
+  // ============================================================
+  assertedPurpose('app/models/author.rb', 'Author', {
+    mentions: ['author'],
+    anyOf: ['book', 'name', 'bio', 'catalog'],
+    forbids: ['user account', 'authentication', 'login', 'password'],
+  }),
+  // The PR4 canary: the LLM keeps tagging Author as ['database-models',
+  // 'user-management']. We accept ANY defensible tag (concept-specific OR
+  // type-specific), and ban the specific phrases the LLM uses incorrectly.
+  // - 'user-management' is wrong (Author isn't a user)
+  // - 'database-models' is fine (Author IS an AR model)
+  assertedDomain('app/models/author.rb', 'Author', {
+    anyOf: [
+      'author',
+      'catalog',
+      'book',
+      'bookstore',
+      'library',
+      'model',
+      'persistence',
+      'database',
+      'active-record',
+      'entity',
+      'storage',
+    ],
+    noneOf: ['user-management', 'authentication', 'login', 'password', 'session-management'],
+  }),
+  exactPure('app/models/author.rb', 'Author', false),
+  // book_count.pure omitted: LLM flip-flops (calls `books.count` — AR scope query vs. plain count)
+  assertedPurpose('app/models/author.rb', 'full_display_name', {
+    anyOf: ['name', 'display', 'format', 'bio', 'truncate'],
+  }),
+  exactPure('app/models/author.rb', 'full_display_name', true),
 
-  // User
-  {
-    defKey: defKey('app/models/user.rb', 'User'),
-    key: 'purpose',
-    proseReference: 'ActiveRecord model for user accounts with password authentication and order associations',
-  },
-  {
-    defKey: defKey('app/models/user.rb', 'User'),
-    key: 'domain',
-    themeReference: 'tags should reflect user authentication or identity',
-  },
-  { defKey: defKey('app/models/user.rb', 'User'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/models/user.rb', 'authenticate'),
-    key: 'purpose',
-    proseReference: 'Class method that looks up a user by email and verifies the password, returning the user or nil',
-  },
-  { defKey: defKey('app/models/user.rb', 'authenticate'), key: 'pure', exactValue: 'false' },
-  { defKey: defKey('app/models/user.rb', 'total_spent'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/models/user.rb', 'admin?'),
-    key: 'purpose',
-    proseReference: 'Checks whether the user has the admin role',
-  },
-  { defKey: defKey('app/models/user.rb', 'admin?'), key: 'pure', exactValue: 'true' },
+  // ============================================================
+  // Models — User (the inverse case for any-of/none-of)
+  // ============================================================
+  assertedPurpose('app/models/user.rb', 'User', {
+    mentions: ['user'],
+    anyOf: ['account', 'authentication', 'password', 'order'],
+  }),
+  assertedDomain('app/models/user.rb', 'User', {
+    anyOf: ['user', 'auth', 'identity', 'account', 'authentication'],
+    noneOf: ['catalog', 'inventory', 'book'],
+  }),
+  exactPure('app/models/user.rb', 'User', false),
+  assertedPurpose('app/models/user.rb', 'authenticate', {
+    mentions: ['user'],
+    anyOf: ['authenticate', 'password', 'verify', 'lookup', 'email'],
+  }),
+  exactPure('app/models/user.rb', 'authenticate', false),
+  // total_spent.pure omitted: LLM flip-flops (calls `orders.where(...).sum(...)` — AR query vs. aggregation)
+  assertedPurpose('app/models/user.rb', 'admin?', {
+    anyOf: ['admin', 'role', 'check'],
+  }),
+  exactPure('app/models/user.rb', 'admin?', true),
 
-  // Order
-  {
-    defKey: defKey('app/models/order.rb', 'Order'),
-    key: 'purpose',
-    proseReference:
-      'ActiveRecord model for purchase orders with status management, item associations, and post-creation hooks for email and inventory checks',
-  },
-  {
-    defKey: defKey('app/models/order.rb', 'Order'),
-    key: 'domain',
-    themeReference: 'tags should reflect order management or e-commerce purchasing',
-  },
-  { defKey: defKey('app/models/order.rb', 'Order'), key: 'pure', exactValue: 'false' },
-  { defKey: defKey('app/models/order.rb', 'confirm!'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/models/order.rb', 'cancel!'),
-    key: 'purpose',
-    proseReference: 'Cancels the order and restores stock quantities for each order item',
-  },
-  { defKey: defKey('app/models/order.rb', 'cancel!'), key: 'pure', exactValue: 'false' },
+  // ============================================================
+  // Models — Order
+  // ============================================================
+  assertedPurpose('app/models/order.rb', 'Order', {
+    mentions: ['order'],
+    anyOf: ['purchase', 'status', 'item', 'checkout'],
+  }),
+  assertedDomain('app/models/order.rb', 'Order', {
+    anyOf: ['order', 'purchase', 'commerce', 'shopping', 'checkout'],
+    noneOf: ['user-management', 'session', 'identity', 'auth'],
+  }),
+  exactPure('app/models/order.rb', 'Order', false),
+  exactPure('app/models/order.rb', 'confirm!', false),
+  assertedPurpose('app/models/order.rb', 'cancel!', {
+    anyOf: ['cancel', 'restore', 'rollback', 'order'],
+  }),
+  exactPure('app/models/order.rb', 'cancel!', false),
   // item_count.pure omitted: LLM flip-flops (delegates to .sum() — query vs. aggregation)
 
-  // OrderItem
-  {
-    defKey: defKey('app/models/order_item.rb', 'OrderItem'),
-    key: 'purpose',
-    proseReference: 'ActiveRecord join model between orders and books with quantity and unit price tracking',
-  },
-  {
-    defKey: defKey('app/models/order_item.rb', 'OrderItem'),
-    key: 'domain',
-    themeReference: 'tags should reflect order line items or cart items in a purchase',
-  },
-  { defKey: defKey('app/models/order_item.rb', 'OrderItem'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/models/order_item.rb', 'subtotal_cents'),
-    key: 'purpose',
-    proseReference: 'Computes the subtotal by multiplying quantity by unit price',
-  },
-  { defKey: defKey('app/models/order_item.rb', 'subtotal_cents'), key: 'pure', exactValue: 'true' },
+  // ============================================================
+  // Models — OrderItem
+  // ============================================================
+  assertedPurpose('app/models/order_item.rb', 'OrderItem', {
+    anyOf: ['order', 'item', 'line', 'join', 'quantity'],
+  }),
+  assertedDomain('app/models/order_item.rb', 'OrderItem', {
+    anyOf: ['order', 'item', 'line', 'cart', 'commerce', 'purchase'],
+    noneOf: ['user', 'auth', 'session', 'identity'],
+  }),
+  exactPure('app/models/order_item.rb', 'OrderItem', false),
+  assertedPurpose('app/models/order_item.rb', 'subtotal_cents', {
+    anyOf: ['subtotal', 'multiply', 'quantity', 'price', 'cents'],
+  }),
+  exactPure('app/models/order_item.rb', 'subtotal_cents', true),
 
   // ============================================================
-  // Controllers
+  // Controllers — ApplicationController
   // ============================================================
-
-  // ApplicationController
-  {
-    defKey: defKey('app/controllers/application_controller.rb', 'ApplicationController'),
-    key: 'purpose',
-    proseReference: 'Base API controller with authentication helpers and request ID tracking',
-  },
-  {
-    defKey: defKey('app/controllers/application_controller.rb', 'ApplicationController'),
-    key: 'domain',
-    themeReference: 'tags should reflect HTTP or API base controller infrastructure',
-  },
-  {
-    defKey: defKey('app/controllers/application_controller.rb', 'ApplicationController'),
-    key: 'pure',
-    exactValue: 'false',
-  },
-  {
-    defKey: defKey('app/controllers/application_controller.rb', 'authenticate!'),
-    key: 'purpose',
-    proseReference: 'Before-action filter that rejects unauthenticated requests with 401',
-  },
-  { defKey: defKey('app/controllers/application_controller.rb', 'authenticate!'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/controllers/application_controller.rb', 'current_user'),
-    key: 'purpose',
-    proseReference: 'Extracts and memoizes the authenticated user from the Authorization header token',
-  },
-  { defKey: defKey('app/controllers/application_controller.rb', 'current_user'), key: 'pure', exactValue: 'false' },
-
-  // Api::BaseController
-  {
-    defKey: defKey('app/controllers/api/base_controller.rb', 'BaseController'),
-    key: 'purpose',
-    proseReference: 'Namespaced API base controller with shared JSON response helpers and pagination',
-  },
-  {
-    defKey: defKey('app/controllers/api/base_controller.rb', 'BaseController'),
-    key: 'domain',
-    themeReference: 'tags should reflect API controller infrastructure or HTTP response helpers',
-  },
-  { defKey: defKey('app/controllers/api/base_controller.rb', 'BaseController'), key: 'pure', exactValue: 'false' },
-
-  // Api::BooksController
-  {
-    defKey: defKey('app/controllers/api/books_controller.rb', 'BooksController'),
-    key: 'purpose',
-    proseReference: 'REST controller for book catalog CRUD endpoints with admin authorization and serialization',
-  },
-  {
-    defKey: defKey('app/controllers/api/books_controller.rb', 'BooksController'),
-    key: 'domain',
-    themeReference: 'tags should reflect book catalog management or API endpoints',
-  },
-  { defKey: defKey('app/controllers/api/books_controller.rb', 'BooksController'), key: 'pure', exactValue: 'false' },
-
-  // Api::OrdersController
-  {
-    defKey: defKey('app/controllers/api/orders_controller.rb', 'OrdersController'),
-    key: 'purpose',
-    proseReference: 'REST controller for order endpoints that delegates checkout to the CheckoutService',
-  },
-  {
-    defKey: defKey('app/controllers/api/orders_controller.rb', 'OrdersController'),
-    key: 'domain',
-    themeReference: 'tags should reflect order management or purchasing API',
-  },
-  { defKey: defKey('app/controllers/api/orders_controller.rb', 'OrdersController'), key: 'pure', exactValue: 'false' },
-
-  // Api::SessionsController
-  {
-    defKey: defKey('app/controllers/api/sessions_controller.rb', 'SessionsController'),
-    key: 'purpose',
-    proseReference: 'REST controller for authentication sessions: login with email/password and logout',
-  },
-  {
-    defKey: defKey('app/controllers/api/sessions_controller.rb', 'SessionsController'),
-    key: 'domain',
-    themeReference: 'tags should reflect authentication or session management',
-  },
-  {
-    defKey: defKey('app/controllers/api/sessions_controller.rb', 'SessionsController'),
-    key: 'pure',
-    exactValue: 'false',
-  },
+  assertedPurpose('app/controllers/application_controller.rb', 'ApplicationController', {
+    mentions: ['controller'],
+    anyOf: ['base', 'authentication', 'request', 'api'],
+  }),
+  assertedDomain('app/controllers/application_controller.rb', 'ApplicationController', {
+    anyOf: ['controller', 'http', 'api', 'base', 'request'],
+    noneOf: ['catalog', 'inventory', 'order', 'cart'],
+  }),
+  exactPure('app/controllers/application_controller.rb', 'ApplicationController', false),
+  assertedPurpose('app/controllers/application_controller.rb', 'authenticate!', {
+    anyOf: ['authenticate', 'reject', '401', 'unauthorized', 'before_action', 'before action', 'filter'],
+  }),
+  exactPure('app/controllers/application_controller.rb', 'authenticate!', false),
+  assertedPurpose('app/controllers/application_controller.rb', 'current_user', {
+    mentions: ['user'],
+    anyOf: ['authenticated', 'token', 'authorization', 'header', 'memoiz'],
+  }),
+  exactPure('app/controllers/application_controller.rb', 'current_user', false),
 
   // ============================================================
-  // Services
+  // Controllers — Api::BaseController
   // ============================================================
+  assertedPurpose('app/controllers/api/base_controller.rb', 'BaseController', {
+    mentions: ['controller'],
+    anyOf: ['base', 'shared', 'api', 'json', 'response', 'helper'],
+  }),
+  assertedDomain('app/controllers/api/base_controller.rb', 'BaseController', {
+    anyOf: ['controller', 'api', 'http', 'base', 'response'],
+    noneOf: ['catalog', 'order', 'cart', 'auth-only'],
+  }),
+  exactPure('app/controllers/api/base_controller.rb', 'BaseController', false),
 
-  // CheckoutService
-  {
-    defKey: defKey('app/services/checkout_service.rb', 'CheckoutService'),
-    key: 'purpose',
-    proseReference:
-      'Service object that orchestrates checkout: validates stock, creates order with items, reserves inventory, and triggers async side effects',
-  },
-  {
-    defKey: defKey('app/services/checkout_service.rb', 'CheckoutService'),
-    key: 'domain',
-    themeReference: 'tags should reflect checkout or order processing business logic',
-  },
-  { defKey: defKey('app/services/checkout_service.rb', 'CheckoutService'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/services/checkout_service.rb', 'call'),
-    key: 'purpose',
-    proseReference:
-      'Executes the checkout flow: loads books, checks stock, creates order and items, confirms the order',
-  },
-  { defKey: defKey('app/services/checkout_service.rb', 'call'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/services/checkout_service.rb', 'success?'),
-    key: 'purpose',
-    proseReference: 'Returns whether the checkout completed without errors',
-  },
-  { defKey: defKey('app/services/checkout_service.rb', 'success?'), key: 'pure', exactValue: 'true' },
+  // ============================================================
+  // Controllers — Api::BooksController
+  // ============================================================
+  assertedPurpose('app/controllers/api/books_controller.rb', 'BooksController', {
+    mentions: ['book'],
+    anyOf: ['controller', 'crud', 'rest', 'api', 'endpoint', 'manage', 'handle', 'http', 'request'],
+  }),
+  assertedDomain('app/controllers/api/books_controller.rb', 'BooksController', {
+    anyOf: ['book', 'catalog', 'controller', 'api', 'inventory', 'resource', 'management', 'http', 'rest'],
+    noneOf: ['user-management', 'session-management', 'authentication-only'],
+  }),
+  exactPure('app/controllers/api/books_controller.rb', 'BooksController', false),
 
-  // InventoryService
-  {
-    defKey: defKey('app/services/inventory_service.rb', 'InventoryService'),
-    key: 'purpose',
-    proseReference: 'Service for checking stock levels, reserving inventory, and finding low or out-of-stock books',
-  },
-  {
-    defKey: defKey('app/services/inventory_service.rb', 'InventoryService'),
-    key: 'domain',
-    themeReference: 'tags should reflect inventory management or stock tracking',
-  },
-  { defKey: defKey('app/services/inventory_service.rb', 'InventoryService'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/services/inventory_service.rb', 'check_stock'),
-    key: 'purpose',
-    proseReference: 'Returns a hash of stock information for a given book including stock count and low-stock flag',
-  },
-  { defKey: defKey('app/services/inventory_service.rb', 'check_stock'), key: 'pure', exactValue: 'true' },
-  {
-    defKey: defKey('app/services/inventory_service.rb', 'reserve'),
-    key: 'purpose',
-    proseReference: 'Delegates to the book model to decrement stock by the requested quantity',
-  },
-  { defKey: defKey('app/services/inventory_service.rb', 'reserve'), key: 'pure', exactValue: 'false' },
+  // ============================================================
+  // Controllers — Api::OrdersController
+  // ============================================================
+  assertedPurpose('app/controllers/api/orders_controller.rb', 'OrdersController', {
+    mentions: ['order'],
+    anyOf: [
+      'controller',
+      'rest',
+      'endpoint',
+      'checkout',
+      'service',
+      'manage',
+      'handle',
+      'http',
+      'request',
+      'api',
+      'interface',
+    ],
+  }),
+  assertedDomain('app/controllers/api/orders_controller.rb', 'OrdersController', {
+    anyOf: ['order', 'purchase', 'controller', 'api', 'commerce', 'management', 'resource', 'http', 'rest'],
+    noneOf: ['user-management', 'session-management', 'authentication-only', 'identity-management'],
+  }),
+  exactPure('app/controllers/api/orders_controller.rb', 'OrdersController', false),
+
+  // ============================================================
+  // Controllers — Api::SessionsController
+  // ============================================================
+  assertedPurpose('app/controllers/api/sessions_controller.rb', 'SessionsController', {
+    anyOf: ['session', 'login', 'logout', 'authentication', 'authenticate'],
+  }),
+  assertedDomain('app/controllers/api/sessions_controller.rb', 'SessionsController', {
+    anyOf: ['session', 'auth', 'login', 'identity'],
+    noneOf: ['catalog', 'inventory', 'book', 'cart'],
+  }),
+  exactPure('app/controllers/api/sessions_controller.rb', 'SessionsController', false),
+
+  // ============================================================
+  // Services — CheckoutService
+  // ============================================================
+  assertedPurpose('app/services/checkout_service.rb', 'CheckoutService', {
+    mentions: ['checkout'],
+    anyOf: ['order', 'service', 'orchestrate', 'stock', 'inventory'],
+  }),
+  assertedDomain('app/services/checkout_service.rb', 'CheckoutService', {
+    anyOf: ['checkout', 'order', 'service', 'business', 'commerce'],
+    noneOf: ['user-management', 'auth-only', 'session'],
+  }),
+  exactPure('app/services/checkout_service.rb', 'CheckoutService', false),
+  assertedPurpose('app/services/checkout_service.rb', 'call', {
+    anyOf: ['checkout', 'order', 'execute', 'orchestrate', 'stock', 'flow'],
+  }),
+  exactPure('app/services/checkout_service.rb', 'call', false),
+  assertedPurpose('app/services/checkout_service.rb', 'success?', {
+    anyOf: ['success', 'complete', 'error', 'check'],
+  }),
+  exactPure('app/services/checkout_service.rb', 'success?', true),
+
+  // ============================================================
+  // Services — InventoryService
+  // ============================================================
+  assertedPurpose('app/services/inventory_service.rb', 'InventoryService', {
+    mentions: ['stock'],
+    anyOf: ['inventory', 'reserve', 'check', 'low'],
+  }),
+  assertedDomain('app/services/inventory_service.rb', 'InventoryService', {
+    anyOf: ['inventory', 'stock', 'service', 'business'],
+    noneOf: ['user-management', 'auth-only', 'session'],
+  }),
+  exactPure('app/services/inventory_service.rb', 'InventoryService', false),
+  assertedPurpose('app/services/inventory_service.rb', 'check_stock', {
+    mentions: ['stock'],
+    anyOf: ['book', 'low', 'check', 'count', 'hash', 'inventory'],
+  }),
+  exactPure('app/services/inventory_service.rb', 'check_stock', true),
+  assertedPurpose('app/services/inventory_service.rb', 'reserve', {
+    anyOf: ['stock', 'decrement', 'reduce', 'reserve', 'book'],
+  }),
+  exactPure('app/services/inventory_service.rb', 'reserve', false),
 
   // ============================================================
   // Serializers
   // ============================================================
+  assertedPurpose('app/serializers/book_serializer.rb', 'BookSerializer', {
+    mentions: ['book'],
+    anyOf: ['serialize', 'json', 'hash', 'api', 'response', 'format', 'data'],
+  }),
+  assertedDomain('app/serializers/book_serializer.rb', 'BookSerializer', {
+    anyOf: ['serialization', 'serializer', 'api', 'json', 'presentation', 'book', 'catalog', 'data', 'format'],
+    noneOf: ['user-management', 'authentication-only', 'identity-management'],
+  }),
+  exactPure('app/serializers/book_serializer.rb', 'BookSerializer', false),
 
-  {
-    defKey: defKey('app/serializers/book_serializer.rb', 'BookSerializer'),
-    key: 'purpose',
-    proseReference: 'Serializes a Book model into a JSON hash for API responses including author summary',
-  },
-  {
-    defKey: defKey('app/serializers/book_serializer.rb', 'BookSerializer'),
-    key: 'domain',
-    themeReference: 'tags should reflect API serialization or data presentation for books',
-  },
-  { defKey: defKey('app/serializers/book_serializer.rb', 'BookSerializer'), key: 'pure', exactValue: 'false' },
-
-  {
-    defKey: defKey('app/serializers/order_serializer.rb', 'OrderSerializer'),
-    key: 'purpose',
-    proseReference: 'Serializes an Order model into a JSON hash with nested items using BookSerializer',
-  },
-  {
-    defKey: defKey('app/serializers/order_serializer.rb', 'OrderSerializer'),
-    key: 'domain',
-    themeReference: 'tags should reflect API serialization or data presentation for orders',
-  },
-  { defKey: defKey('app/serializers/order_serializer.rb', 'OrderSerializer'), key: 'pure', exactValue: 'false' },
+  assertedPurpose('app/serializers/order_serializer.rb', 'OrderSerializer', {
+    mentions: ['order'],
+    anyOf: ['serialize', 'json', 'hash', 'api', 'response', 'item', 'format', 'data'],
+  }),
+  assertedDomain('app/serializers/order_serializer.rb', 'OrderSerializer', {
+    anyOf: ['serialization', 'serializer', 'api', 'json', 'presentation', 'order', 'data', 'format'],
+    noneOf: ['user-management', 'authentication-only', 'identity-management'],
+  }),
+  exactPure('app/serializers/order_serializer.rb', 'OrderSerializer', false),
 
   // ============================================================
   // Mailer
   // ============================================================
-
-  {
-    defKey: defKey('app/mailers/order_mailer.rb', 'OrderMailer'),
-    key: 'purpose',
-    proseReference: 'Mailer for order-related emails: confirmation after creation and cancellation notification',
-  },
-  {
-    defKey: defKey('app/mailers/order_mailer.rb', 'OrderMailer'),
-    key: 'domain',
-    themeReference: 'tags should reflect email notifications or order communications',
-  },
-  { defKey: defKey('app/mailers/order_mailer.rb', 'OrderMailer'), key: 'pure', exactValue: 'false' },
+  assertedPurpose('app/mailers/order_mailer.rb', 'OrderMailer', {
+    mentions: ['order'],
+    anyOf: ['mail', 'email', 'notification', 'confirmation', 'cancel'],
+  }),
+  assertedDomain('app/mailers/order_mailer.rb', 'OrderMailer', {
+    anyOf: ['mail', 'email', 'notification', 'communication', 'order'],
+    noneOf: ['user-management', 'auth', 'session', 'inventory'],
+  }),
+  exactPure('app/mailers/order_mailer.rb', 'OrderMailer', false),
 
   // ============================================================
   // Job
   // ============================================================
+  assertedPurpose('app/jobs/inventory_check_job.rb', 'InventoryCheckJob', {
+    mentions: ['stock'],
+    anyOf: ['inventory', 'background', 'job', 'check', 'low', 'order'],
+  }),
+  assertedDomain('app/jobs/inventory_check_job.rb', 'InventoryCheckJob', {
+    anyOf: ['background', 'job', 'inventory', 'monitoring', 'async'],
+    noneOf: ['user-management', 'auth', 'session'],
+  }),
+  exactPure('app/jobs/inventory_check_job.rb', 'InventoryCheckJob', false),
+  assertedPurpose('app/jobs/inventory_check_job.rb', 'perform', {
+    anyOf: ['stock', 'check', 'iterate', 'order', 'item', 'low', 'notify'],
+  }),
+  exactPure('app/jobs/inventory_check_job.rb', 'perform', false),
 
-  {
-    defKey: defKey('app/jobs/inventory_check_job.rb', 'InventoryCheckJob'),
-    key: 'purpose',
-    proseReference:
-      'Background job that checks stock levels for all items in a completed order and alerts on low stock',
-  },
-  {
-    defKey: defKey('app/jobs/inventory_check_job.rb', 'InventoryCheckJob'),
-    key: 'domain',
-    themeReference: 'tags should reflect background processing or inventory monitoring',
-  },
-  { defKey: defKey('app/jobs/inventory_check_job.rb', 'InventoryCheckJob'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/jobs/inventory_check_job.rb', 'perform'),
-    key: 'purpose',
-    proseReference: 'Iterates over order items, checks stock for each book, and notifies admin of low stock',
-  },
-  { defKey: defKey('app/jobs/inventory_check_job.rb', 'perform'), key: 'pure', exactValue: 'false' },
-
-  // ============================================================
-  // Api module (wraps namespaced controllers — 4x duplicate)
-  // ============================================================
-  {
-    defKey: defKey('app/controllers/api/base_controller.rb', 'Api'),
-    key: 'purpose',
-    proseReference: 'Ruby module namespace wrapping the API controllers',
-  },
-  { defKey: defKey('app/controllers/api/base_controller.rb', 'Api'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/controllers/api/books_controller.rb', 'Api'),
-    key: 'purpose',
-    proseReference: 'Ruby module namespace wrapping the API controllers',
-  },
-  { defKey: defKey('app/controllers/api/books_controller.rb', 'Api'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/controllers/api/orders_controller.rb', 'Api'),
-    key: 'purpose',
-    proseReference: 'Ruby module namespace wrapping the API controllers',
-  },
-  { defKey: defKey('app/controllers/api/orders_controller.rb', 'Api'), key: 'pure', exactValue: 'false' },
-  {
-    defKey: defKey('app/controllers/api/sessions_controller.rb', 'Api'),
-    key: 'purpose',
-    proseReference: 'Ruby module namespace wrapping the API controllers',
-  },
-  { defKey: defKey('app/controllers/api/sessions_controller.rb', 'Api'), key: 'pure', exactValue: 'false' },
+  // PR1/1: removed the 8 Api-namespace metadata rows. The Ruby parser no longer
+  // emits namespace-only `module Api ... end` definitions because the symbols
+  // stage was mis-summarizing them as the contained controller class.
 ];

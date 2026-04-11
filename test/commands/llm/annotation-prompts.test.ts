@@ -38,6 +38,33 @@ describe('prompts (annotation)', () => {
       expect(prompt).toContain('**custom_aspect**');
       expect(prompt).toContain('A descriptive value for this aspect.');
     });
+
+    // PR1/3: identity-vs-context guidance for the domain aspect.
+    // The LLM tags symbols by consumer-context vocabulary (e.g. "task-management"
+    // for an event bus that happens to deliver task events). The guidance biases
+    // it toward identity vocabulary instead. Few-shot examples are deliberately
+    // drawn from domains NOT present in either eval fixture (weather, compression,
+    // cache-eviction) so the eval measures generalization, not memorization. See
+    // CLAUDE.md "Prompt examples must NOT leak the eval answers".
+    it('domain aspect includes identity-vs-context guidance (typescript)', () => {
+      const prompt = buildSystemPrompt(['domain'], 'typescript');
+      expect(prompt).toContain("Tag the symbol's IDENTITY (what it IS), not its CONTEXT");
+    });
+
+    it('domain aspect includes non-leaky few-shot examples', () => {
+      const prompt = buildSystemPrompt(['domain'], 'typescript');
+      // Three examples in three unrelated domains (weather, compression, cache eviction)
+      // — none of which appear in the bookstore-api or todo-api eval fixtures.
+      expect(prompt).toContain('WeatherFetcher');
+      expect(prompt).toContain('["weather", "http-client"]');
+      expect(prompt).toContain('CompressionWriter');
+      expect(prompt).toContain('LRUEvictionPolicy');
+    });
+
+    it('domain aspect identity guidance applies to ruby too', () => {
+      const prompt = buildSystemPrompt(['domain'], 'ruby');
+      expect(prompt).toContain("Tag the symbol's IDENTITY");
+    });
   });
 
   // ============================================

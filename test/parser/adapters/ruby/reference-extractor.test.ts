@@ -556,3 +556,187 @@ end`;
     expect(auditRef!.imports[0].usages[0].callsite?.receiverName).toBe('Admin::AuditService');
   });
 });
+
+// PR3: ActiveRecord association DSLs are the primary structural signal for how
+// Rails models depend on each other. Without capturing them, the symbols stage's
+// LLM has zero structured signal that `class Author` depends on `Book` (the
+// `has_many :books` line is in the source text but the LLM heavily discounts
+// unstructured source). Capturing them as constant references — and emitting
+// usages so the call-graph picks them up — populates EnhancedSymbol.dependencies.
+describe('Rails ActiveRecord associations', () => {
+  function railsKnownFiles(modelNames: string[]): { projectRoot: string; knownFiles: Set<string> } {
+    const projectRoot = '/project';
+    const knownFiles = new Set([
+      path.join(projectRoot, 'Gemfile'),
+      ...modelNames.map((n) => path.join(projectRoot, `app/models/${n}.rb`)),
+    ]);
+    return { projectRoot, knownFiles };
+  }
+
+  it('extracts has_many :books in a class body as a reference to Book', () => {
+    const code = `
+      class Author < ApplicationRecord
+        has_many :books
+      end
+    `;
+    const { projectRoot, knownFiles } = railsKnownFiles(['author', 'book', 'application_record']);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/author.rb'), knownFiles);
+
+    const bookRef = refs.find((r) => r.source === 'Book');
+    expect(bookRef).toBeDefined();
+    expect(bookRef!.resolvedPath).toBe(path.join(projectRoot, 'app/models/book.rb'));
+    expect(bookRef!.isExternal).toBe(false);
+    expect(bookRef!.imports[0].usages.length).toBeGreaterThan(0);
+  });
+
+  it('extracts belongs_to :author as a reference to Author', () => {
+    const code = `
+      class Book < ApplicationRecord
+        belongs_to :author
+      end
+    `;
+    const { projectRoot, knownFiles } = railsKnownFiles(['author', 'book', 'application_record']);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/book.rb'), knownFiles);
+
+    const authorRef = refs.find((r) => r.source === 'Author');
+    expect(authorRef).toBeDefined();
+    expect(authorRef!.resolvedPath).toBe(path.join(projectRoot, 'app/models/author.rb'));
+  });
+
+  it('extracts has_one :profile as a reference to Profile', () => {
+    const code = `
+      class User < ApplicationRecord
+        has_one :profile
+      end
+    `;
+    const { projectRoot, knownFiles } = railsKnownFiles(['user', 'profile', 'application_record']);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/user.rb'), knownFiles);
+
+    const profileRef = refs.find((r) => r.source === 'Profile');
+    expect(profileRef).toBeDefined();
+    expect(profileRef!.resolvedPath).toBe(path.join(projectRoot, 'app/models/profile.rb'));
+  });
+
+  it('extracts has_and_belongs_to_many :tags as a reference to Tag', () => {
+    const code = `
+      class Article < ApplicationRecord
+        has_and_belongs_to_many :tags
+      end
+    `;
+    const { projectRoot, knownFiles } = railsKnownFiles(['article', 'tag', 'application_record']);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/article.rb'), knownFiles);
+
+    const tagRef = refs.find((r) => r.source === 'Tag');
+    expect(tagRef).toBeDefined();
+    expect(tagRef!.resolvedPath).toBe(path.join(projectRoot, 'app/models/tag.rb'));
+  });
+
+  it('respects class_name: option override', () => {
+    const code = `
+      class Article < ApplicationRecord
+        belongs_to :writer, class_name: 'Author'
+      end
+    `;
+    const { projectRoot, knownFiles } = railsKnownFiles(['article', 'author', 'application_record']);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/article.rb'), knownFiles);
+
+    const authorRef = refs.find((r) => r.source === 'Author');
+    expect(authorRef).toBeDefined();
+    expect(authorRef!.resolvedPath).toBe(path.join(projectRoot, 'app/models/author.rb'));
+    // The :writer symbol should NOT be misresolved to a "Writer" class.
+    expect(refs.find((r) => r.source === 'Writer')).toBeUndefined();
+  });
+
+  it('handles class_name: with a namespaced value', () => {
+    const code = `
+      class Article < ApplicationRecord
+        belongs_to :writer, class_name: 'Catalog::Author'
+      end
+    `;
+    const projectRoot = '/project';
+    const knownFiles = new Set([
+      path.join(projectRoot, 'Gemfile'),
+      path.join(projectRoot, 'app/models/article.rb'),
+      path.join(projectRoot, 'app/models/catalog/author.rb'),
+    ]);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/article.rb'), knownFiles);
+
+    const authorRef = refs.find((r) => r.source === 'Catalog::Author');
+    expect(authorRef).toBeDefined();
+  });
+
+  it('handles plural irregulars (people → Person, children → Child)', () => {
+    const code = `
+      class Family < ApplicationRecord
+        has_many :people
+        has_many :children
+      end
+    `;
+    const { projectRoot, knownFiles } = railsKnownFiles(['family', 'person', 'child', 'application_record']);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/family.rb'), knownFiles);
+
+    expect(refs.find((r) => r.source === 'Person')).toBeDefined();
+    expect(refs.find((r) => r.source === 'Child')).toBeDefined();
+  });
+
+  it('handles multiple associations on one class', () => {
+    const code = `
+      class Order < ApplicationRecord
+        belongs_to :user
+        has_many :order_items
+      end
+    `;
+    const { projectRoot, knownFiles } = railsKnownFiles(['order', 'user', 'order_item', 'application_record']);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/order.rb'), knownFiles);
+
+    expect(refs.find((r) => r.source === 'User')).toBeDefined();
+    expect(refs.find((r) => r.source === 'OrderItem')).toBeDefined();
+  });
+
+  it('does NOT extract has_many calls inside method bodies', () => {
+    const code = `
+      class Author < ApplicationRecord
+        def setup_books
+          has_many :books  # Inside a method body, not class scope
+        end
+      end
+    `;
+    const { projectRoot, knownFiles } = railsKnownFiles(['author', 'book', 'application_record']);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/author.rb'), knownFiles);
+
+    // The class-body walk should NOT pick up associations inside def bodies.
+    expect(refs.find((r) => r.source === 'Book')).toBeUndefined();
+  });
+
+  it('does NOT extract has_many when arg is not a simple symbol', () => {
+    const code = `
+      class Author < ApplicationRecord
+        SOME_LIST = %i[books]
+        has_many SOME_LIST.first
+      end
+    `;
+    const { projectRoot, knownFiles } = railsKnownFiles(['author', 'book', 'application_record']);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/author.rb'), knownFiles);
+
+    // Arg is not a simple_symbol literal — we can't statically resolve, so skip.
+    expect(refs.find((r) => r.source === 'Book')).toBeUndefined();
+  });
+
+  it('emits usage entry at the has_many call site for call-graph integration', () => {
+    const code = `
+      class Author < ApplicationRecord
+        has_many :books
+      end
+    `;
+    const { projectRoot, knownFiles } = railsKnownFiles(['author', 'book', 'application_record']);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/author.rb'), knownFiles);
+
+    const bookRef = refs.find((r) => r.source === 'Book');
+    expect(bookRef).toBeDefined();
+    expect(bookRef!.imports[0].usages).toHaveLength(1);
+    // The usage row should match the line number where `has_many :books` appears (row 2 in the snippet).
+    expect(bookRef!.imports[0].usages[0].position.row).toBeGreaterThan(0);
+    expect(bookRef!.imports[0].usages[0].context).toBe('call');
+    expect(bookRef!.imports[0].usages[0].callsite?.isMethodCall).toBe(true);
+  });
+});

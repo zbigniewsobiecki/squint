@@ -42,7 +42,12 @@ describe('Ruby parsing integration tests', () => {
       expect(parsed.language).toBe('ruby');
 
       const names = parsed.definitions.map((d) => d.name);
-      expect(names).toContain('RubySimple');
+      // PR1/1: `module RubySimple { class BaseService ... }` is a namespace-only
+      // wrapper — the parser deliberately skips the RubySimple module definition
+      // (it would only confuse the symbols stage's LLM into describing BaseService
+      // as if it were the namespace). The contained class and its methods are
+      // still extracted normally via the recursive walk.
+      expect(names).not.toContain('RubySimple');
       expect(names).toContain('BaseService');
       expect(names).toContain('initialize');
       expect(names).toContain('perform');
@@ -255,6 +260,95 @@ describe('Ruby parsing integration tests', () => {
       // The controller inherits from ApplicationController — no explicit require needed in Rails
       // Check that parsing didn't throw and we got definitions
       expect(parsed.definitions.length).toBeGreaterThan(0);
+    });
+
+    // PR3: ActiveRecord association DSLs are now captured as structural references
+    // by the Ruby parser. These tests assert that each model file's `has_many` /
+    // `belongs_to` declarations resolve to the correct cross-file class references.
+    describe('PR3: ActiveRecord associations as structural references', () => {
+      function modelKnownFiles(): Set<string> {
+        return new Set([
+          path.join(rubyRailsDir, 'Gemfile'),
+          path.join(rubyRailsDir, 'app/models/application_record.rb'),
+          path.join(rubyRailsDir, 'app/models/user.rb'),
+          path.join(rubyRailsDir, 'app/models/post.rb'),
+          path.join(rubyRailsDir, 'app/models/author.rb'),
+          path.join(rubyRailsDir, 'app/models/book.rb'),
+          path.join(rubyRailsDir, 'app/models/order.rb'),
+          path.join(rubyRailsDir, 'app/models/order_item.rb'),
+        ]);
+      }
+
+      it('resolves User.has_many :posts to Post', async () => {
+        const parsed = await parseFile(path.join(rubyRailsDir, 'app/models/user.rb'), modelKnownFiles());
+        const postRef = parsed.references.find((r) => r.source === 'Post');
+        expect(postRef).toBeDefined();
+        expect(postRef!.isExternal).toBe(false);
+        expect(postRef!.resolvedPath).toBe(path.join(rubyRailsDir, 'app/models/post.rb'));
+      });
+
+      it('resolves Post.belongs_to :user to User', async () => {
+        const parsed = await parseFile(path.join(rubyRailsDir, 'app/models/post.rb'), modelKnownFiles());
+        const userRef = parsed.references.find((r) => r.source === 'User');
+        expect(userRef).toBeDefined();
+        expect(userRef!.resolvedPath).toBe(path.join(rubyRailsDir, 'app/models/user.rb'));
+      });
+
+      it('resolves Author.has_many :books to Book', async () => {
+        const parsed = await parseFile(path.join(rubyRailsDir, 'app/models/author.rb'), modelKnownFiles());
+        const bookRef = parsed.references.find((r) => r.source === 'Book');
+        expect(bookRef).toBeDefined();
+        expect(bookRef!.resolvedPath).toBe(path.join(rubyRailsDir, 'app/models/book.rb'));
+      });
+
+      it('resolves Book.belongs_to :author + has_many :order_items', async () => {
+        const parsed = await parseFile(path.join(rubyRailsDir, 'app/models/book.rb'), modelKnownFiles());
+        expect(parsed.references.find((r) => r.source === 'Author')).toBeDefined();
+        expect(parsed.references.find((r) => r.source === 'OrderItem')).toBeDefined();
+      });
+
+      it('resolves Order.belongs_to :user + has_many :order_items', async () => {
+        const parsed = await parseFile(path.join(rubyRailsDir, 'app/models/order.rb'), modelKnownFiles());
+        expect(parsed.references.find((r) => r.source === 'User')).toBeDefined();
+        expect(parsed.references.find((r) => r.source === 'OrderItem')).toBeDefined();
+      });
+
+      it('resolves OrderItem.belongs_to :order + belongs_to :book', async () => {
+        const parsed = await parseFile(path.join(rubyRailsDir, 'app/models/order_item.rb'), modelKnownFiles());
+        expect(parsed.references.find((r) => r.source === 'Order')).toBeDefined();
+        expect(parsed.references.find((r) => r.source === 'Book')).toBeDefined();
+      });
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Ruby-rails-irregular-plurals fixture (PR3)
+  // ─────────────────────────────────────────────────────────────────────────
+  describe('ruby-rails-irregular-plurals fixture', () => {
+    const irregularDir = path.join(fixtureDir, 'ruby-rails-irregular-plurals');
+
+    function irregularKnownFiles(): Set<string> {
+      return new Set([
+        path.join(irregularDir, 'Gemfile'),
+        path.join(irregularDir, 'app/models/application_record.rb'),
+        path.join(irregularDir, 'app/models/family.rb'),
+        path.join(irregularDir, 'app/models/person.rb'),
+        path.join(irregularDir, 'app/models/child.rb'),
+      ]);
+    }
+
+    it('resolves Family.has_many :people to Person', async () => {
+      const parsed = await parseFile(path.join(irregularDir, 'app/models/family.rb'), irregularKnownFiles());
+      const personRef = parsed.references.find((r) => r.source === 'Person');
+      expect(personRef).toBeDefined();
+      expect(personRef!.resolvedPath).toBe(path.join(irregularDir, 'app/models/person.rb'));
+    });
+
+    it('resolves Family.has_many :children to Child', async () => {
+      const parsed = await parseFile(path.join(irregularDir, 'app/models/family.rb'), irregularKnownFiles());
+      const childRef = parsed.references.find((r) => r.source === 'Child');
+      expect(childRef).toBeDefined();
+      expect(childRef!.resolvedPath).toBe(path.join(irregularDir, 'app/models/child.rb'));
     });
   });
 

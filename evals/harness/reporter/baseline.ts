@@ -4,6 +4,12 @@ import type { DiffReport, TableName } from '../types.js';
 
 /**
  * Per-table scoreboard within a baseline.
+ *
+ * PR2: `proseChecks` mirrors `TableDiff.proseChecks` so the persisted baseline
+ * can ratchet prose drift down across runs. The structural counters
+ * (critical/major/minor) deliberately do NOT include prose-drift kinds — those
+ * are tracked here separately so a fixture can hit drift-zero on the prose
+ * axis even when LLM noise momentarily flickers.
  */
 export interface TableScore {
   passed: boolean;
@@ -12,6 +18,7 @@ export interface TableScore {
   critical: number;
   major: number;
   minor: number;
+  proseChecks?: { passed: number; failed: number };
 }
 
 /**
@@ -38,12 +45,19 @@ export function computeBaselineFromReport(report: DiffReport): Baseline {
   const tableScores: Partial<Record<TableName, TableScore>> = {};
   for (const t of report.tables) {
     const counts = countDiffsBySeverity(t.diffs);
-    tableScores[t.table] = {
+    const score: TableScore = {
       passed: t.passed,
       expected: t.expectedCount,
       produced: t.producedCount,
       ...counts,
     };
+    // PR2: copy prose-check counters when the table tracked any. Tables
+    // without prose-bearing entries (files, definitions, imports, contracts)
+    // don't get a proseChecks field — keeps the persisted JSON minimal.
+    if (t.proseChecks) {
+      score.proseChecks = { passed: t.proseChecks.passed, failed: t.proseChecks.failed };
+    }
+    tableScores[t.table] = score;
   }
 
   return {
@@ -90,6 +104,18 @@ export function updateBaseline(filePath: string, report: DiffReport): BaselineUp
           regressions.push(`${table}: ${priorTotal} → ${nextTotal} blocking diffs`);
         } else if (nextTotal < priorTotal) {
           improvements.push(`${table}: ${priorTotal} → ${nextTotal} blocking diffs`);
+        }
+      }
+
+      // PR2: prose drift delta. Only fires when BOTH baselines have a
+      // proseChecks field (legacy baselines without it produce no delta).
+      const nextProse = nextScore.proseChecks?.failed;
+      const priorProse = priorScore.proseChecks?.failed;
+      if (nextProse != null && priorProse != null) {
+        if (nextProse > priorProse) {
+          regressions.push(`${table}: ${priorProse} → ${nextProse} prose drifts`);
+        } else if (nextProse < priorProse) {
+          improvements.push(`${table}: ${priorProse} → ${nextProse} prose drifts`);
         }
       }
     }

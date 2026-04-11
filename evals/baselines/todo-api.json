@@ -1,7 +1,7 @@
 {
   "fixture": "todo-api",
-  "lastRun": "2026-04-10T17:44:42.211Z",
-  "squintCommit": "8b7ad46",
+  "lastRun": "2026-04-11T22:14:16.669Z",
+  "squintCommit": "0338d81",
   "tableScores": {
     "files": {
       "passed": true,
@@ -33,7 +33,11 @@
       "produced": 161,
       "critical": 0,
       "major": 0,
-      "minor": 0
+      "minor": 0,
+      "proseChecks": {
+        "passed": 86,
+        "failed": 0
+      }
     },
     "relationship_annotations": {
       "passed": true,
@@ -41,7 +45,11 @@
       "produced": 69,
       "critical": 0,
       "major": 0,
-      "minor": 0
+      "minor": 0,
+      "proseChecks": {
+        "passed": 35,
+        "failed": 0
+      }
     },
     "module_cohesion": {
       "passed": true,
@@ -49,7 +57,11 @@
       "produced": 50,
       "critical": 0,
       "major": 0,
-      "minor": 0
+      "minor": 0,
+      "proseChecks": {
+        "passed": 12,
+        "failed": 0
+      }
     },
     "contracts": {
       "passed": true,
@@ -62,26 +74,38 @@
     "interaction_rubric": {
       "passed": true,
       "expected": 4,
-      "produced": 25,
+      "produced": 26,
       "critical": 0,
       "major": 0,
-      "minor": 0
+      "minor": 0,
+      "proseChecks": {
+        "passed": 4,
+        "failed": 0
+      }
     },
     "flow_rubric": {
       "passed": true,
       "expected": 2,
-      "produced": 14,
+      "produced": 16,
       "critical": 0,
       "major": 0,
-      "minor": 0
+      "minor": 0,
+      "proseChecks": {
+        "passed": 2,
+        "failed": 0
+      }
     },
     "feature_cohesion": {
       "passed": true,
       "expected": 2,
-      "produced": 4,
+      "produced": 3,
       "critical": 0,
       "major": 0,
-      "minor": 0
+      "minor": 0,
+      "proseChecks": {
+        "passed": 2,
+        "failed": 0
+      }
     }
   }
 }

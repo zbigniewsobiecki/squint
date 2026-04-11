@@ -425,6 +425,12 @@ export default class InteractionsGenerate extends BaseLlmCommand {
 
   /**
    * Upsert a single symbol-level import interaction. Returns true if persisted.
+   *
+   * PR1/4: When the symbols stage has annotated the imported symbols with a
+   * `purpose`, use the first one to build an architectural semantic instead
+   * of the literal "Imports X" placeholder. The placeholder was scoring ~0.3
+   * on the eval rubric for edges like `tasks-controller → requireAuth` where
+   * the GT expected "guards endpoints with the authentication middleware".
    */
   private upsertImportInteraction(
     db: LlmContext['db'],
@@ -438,15 +444,75 @@ export default class InteractionsGenerate extends BaseLlmCommand {
         weight: pair.weight,
         pattern,
         symbols: pair.symbols.length > 0 ? pair.symbols.slice(0, 20) : undefined,
-        semantic: pair.isTypeOnly
-          ? `Type/interface dependency (${pair.symbols.slice(0, 3).join(', ')}${pair.symbols.length > 3 ? '...' : ''})`
-          : `Imports ${pair.symbols.slice(0, 3).join(', ')}${pair.symbols.length > 3 ? ` (+${pair.symbols.length - 3} more)` : ''}`,
+        semantic: this.buildImportSemantic(db, pair),
         source: 'ast-import',
       });
       return true;
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Build a semantic description for an import-only module edge. Looks up the
+   * `purpose` of the imported symbols from definition_metadata so the result
+   * describes architectural USE (e.g. "Uses requireAuth: middleware that rejects
+   * unauthenticated requests") instead of the literal "Imports requireAuth".
+   *
+   * Falls back to the placeholder when no purposes are annotated yet (e.g. when
+   * the symbols stage hasn't run, or for type-only imports).
+   */
+  private buildImportSemantic(
+    db: LlmContext['db'],
+    pair: { toModuleId: number; symbols: string[]; isTypeOnly: boolean }
+  ): string {
+    const shownSymbols = pair.symbols.slice(0, 3);
+    const moreCount = pair.symbols.length - shownSymbols.length;
+    const moreSuffix = moreCount > 0 ? ` (+${moreCount} more)` : '';
+
+    if (pair.isTypeOnly || shownSymbols.length === 0) {
+      return pair.isTypeOnly
+        ? `Type/interface dependency (${shownSymbols.join(', ')}${moreCount > 0 ? '...' : ''})`
+        : `Imports ${shownSymbols.join(', ')}${moreSuffix}`;
+    }
+
+    // Look up purposes for the target module's symbols and pick the first that
+    // matches one of the imported names. Per-module cache avoids duplicate
+    // queries when many edges import from the same target.
+    const purposesByName = this.getImportTargetPurposes(db, pair.toModuleId);
+    const PURPOSE_CHAR_BUDGET = 100;
+    for (const symbolName of shownSymbols) {
+      const purpose = purposesByName.get(symbolName);
+      if (purpose) {
+        const truncated =
+          purpose.length > PURPOSE_CHAR_BUDGET ? `${purpose.slice(0, PURPOSE_CHAR_BUDGET - 1)}…` : purpose;
+        return `Uses ${shownSymbols.join(', ')}${moreSuffix} — ${truncated}`;
+      }
+    }
+
+    return `Imports ${shownSymbols.join(', ')}${moreSuffix}`;
+  }
+
+  /**
+   * Per-target-module cache for symbol-name → purpose lookups. Lives on the
+   * command instance for the duration of one `interactions generate` invocation;
+   * a fresh instance gets a fresh cache.
+   */
+  private importPurposeCache = new Map<number, Map<string, string>>();
+  private getImportTargetPurposes(db: LlmContext['db'], toModuleId: number): Map<string, string> {
+    const cached = this.importPurposeCache.get(toModuleId);
+    if (cached) return cached;
+
+    const members = db.modules.getSymbols(toModuleId);
+    const defIds = members.map((m) => m.id);
+    const purposes = db.metadata.getValuesByKey(defIds, 'purpose');
+    const byName = new Map<string, string>();
+    for (const m of members) {
+      const purpose = purposes.get(m.id);
+      if (purpose) byName.set(m.name, purpose);
+    }
+    this.importPurposeCache.set(toModuleId, byName);
+    return byName;
   }
 
   /**
