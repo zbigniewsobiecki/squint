@@ -33,3 +33,11 @@ npm-debug.log*
 
 # CASCADE tooling metadata
 .cascade-progress-comment-id
+
+# Eval harness — per-run artifacts and judge cache (keep .gitkeep)
+evals/results/*
+!evals/results/.gitkeep
+evals/.judge-cache.json
+evals/fixtures/*/node_modules/
+evals/fixtures/*/.squint.db
+evals/fixtures/*/dist/

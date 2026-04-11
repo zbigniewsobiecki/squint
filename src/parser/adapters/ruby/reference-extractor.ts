@@ -81,21 +81,38 @@ function findProjectRoot(filePath: string, knownFiles: Set<string>): string {
   const fsRoot = path.parse(dir).root;
 
   while (dir !== fsRoot) {
-    // Check for common Rails/Ruby project root indicators
+    // Check for common Rails/Ruby project root indicators.
+    // knownFiles only contains source files (.rb), so Gemfile/Rakefile won't
+    // be in the set. Also check for the Rails app/ directory convention by
+    // looking for any known file under dir/app/.
     if (
       knownFiles.has(path.join(dir, 'Gemfile')) ||
       knownFiles.has(path.join(dir, 'Rakefile')) ||
-      knownFiles.has(path.join(dir, 'config/application.rb'))
+      knownFiles.has(path.join(dir, 'config/application.rb')) ||
+      hasKnownFileUnder(path.join(dir, 'app'), knownFiles)
     ) {
       return dir;
     }
     const parent = path.dirname(dir);
-    // Guard against infinite loop (shouldn't happen with absolute paths but just in case)
     if (parent === dir) break;
     dir = parent;
   }
 
   return path.dirname(absoluteFilePath);
+}
+
+/** Check if any file in knownFiles starts with the given directory prefix. */
+/**
+ * Check if any file in knownFiles lives under the given directory.
+ * O(N) linear scan — acceptable for typical projects (hundreds of files).
+ * For large monorepos, a sorted array with binary search would be better.
+ */
+function hasKnownFileUnder(dirPath: string, knownFiles: Set<string>): boolean {
+  const prefix = dirPath + path.sep;
+  for (const f of knownFiles) {
+    if (f.startsWith(prefix)) return true;
+  }
+  return false;
 }
 
 /**
@@ -168,6 +185,20 @@ function getConstantText(node: SyntaxNode): string {
 }
 
 /**
+ * Count the number of arguments in a Ruby argument_list node.
+ */
+function countCallArgs(argsNode: SyntaxNode): number {
+  let count = 0;
+  for (let i = 0; i < argsNode.childCount; i++) {
+    const child = argsNode.child(i);
+    if (child && child.type !== ',' && child.type !== '(' && child.type !== ')') {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
  * Create a side-effect import symbol (for require/require_relative without destructuring).
  */
 function sideEffectImport(): ImportedSymbol[] {
@@ -209,6 +240,7 @@ export function extractRubyReferences(
   knownFiles: Set<string>
 ): FileReference[] {
   const references: FileReference[] = [];
+  const constantUsages = new Map<string, { resolvedPath: string; usages: SymbolUsage[] }>();
   const projectRoot = findProjectRoot(filePath, knownFiles);
 
   function walk(node: SyntaxNode): void {
@@ -296,6 +328,11 @@ export function extractRubyReferences(
             const resolvedPath = resolveConstantViaAutoloading(constantName, projectRoot, knownFiles);
             const isExternal = !resolvedPath;
 
+            // Mark this constant as handled so the post-walk constant-receiver
+            // loop doesn't create a duplicate reference for the same name.
+            // Use `null` resolvedPath sentinel to indicate "already emitted".
+            constantUsages.set(constantName, { resolvedPath: '', usages: [] });
+
             references.push({
               type: 'import',
               source: constantName,
@@ -311,6 +348,43 @@ export function extractRubyReferences(
           }
         }
       }
+
+      // Constant-receiver calls: BookSerializer.new(book), User.authenticate(...)
+      // In Zeitwerk apps these are implicit cross-file dependencies. Resolve the
+      // constant via Rails autoloading and collect call-site usages so the
+      // call-graph service can build proper source:'ast' interaction edges.
+      const receiverNode = node.childForFieldName('receiver');
+      if (receiverNode && (receiverNode.type === 'constant' || receiverNode.type === 'scope_resolution')) {
+        const constantName = getConstantText(receiverNode);
+
+        if (!constantUsages.has(constantName)) {
+          const resolvedPath = resolveConstantViaAutoloading(constantName, projectRoot, knownFiles);
+          if (resolvedPath) {
+            constantUsages.set(constantName, { resolvedPath, usages: [] });
+          }
+        }
+
+        const entry = constantUsages.get(constantName);
+        if (entry) {
+          const callMethodNode = node.childForFieldName('method');
+          const argsNode = node.childForFieldName('arguments');
+          const callMethodName = callMethodNode?.text ?? '';
+
+          entry.usages.push({
+            position: {
+              row: receiverNode.startPosition.row,
+              column: receiverNode.startPosition.column,
+            },
+            context: 'call',
+            callsite: {
+              argumentCount: argsNode ? countCallArgs(argsNode) : 0,
+              isMethodCall: true,
+              isConstructorCall: callMethodName === 'new',
+              receiverName: constantName,
+            },
+          });
+        }
+      }
     }
 
     // Recurse into children
@@ -321,6 +395,30 @@ export function extractRubyReferences(
   }
 
   walk(rootNode);
+
+  // Create references from collected constant-receiver data (one per constant,
+  // with all call-site usages attached for call-graph integration).
+  // Skip constants already emitted by include/extend/prepend (resolvedPath = '' sentinel).
+  for (const [constantName, { resolvedPath, usages }] of constantUsages) {
+    if (!resolvedPath) continue;
+    references.push({
+      type: 'import',
+      source: constantName,
+      resolvedPath,
+      isExternal: false,
+      isTypeOnly: false,
+      imports: [
+        {
+          name: constantName,
+          localName: constantName,
+          kind: 'named',
+          usages,
+        },
+      ],
+      position: usages[0] ? { row: usages[0].position.row, column: usages[0].position.column } : { row: 0, column: 0 },
+    });
+  }
+
   return references;
 }
 

@@ -71,42 +71,30 @@ export default class InteractionsGenerate extends BaseLlmCommand {
     // Get enriched module call graph
     const enrichedEdges = db.callGraph.getEnrichedModuleCallGraph();
 
-    if (enrichedEdges.length === 0) {
-      if (isJson) {
-        this.log(JSON.stringify({ error: 'No module call graph edges found', hint: 'Run llm modules first' }));
-      } else {
-        this.log(chalk.yellow('No module call graph edges found.'));
-        this.log(chalk.gray('Ensure modules are assigned first with `squint llm modules`'));
-      }
-      return;
-    }
+    // Tag test-internal interactions: if either module is a test module, override pattern
+    const testModuleIds = db.modules.getTestModuleIds();
 
-    // Count utility vs business edges
     const utilityCount = enrichedEdges.filter((e) => e.edgePattern === 'utility').length;
     const businessCount = enrichedEdges.filter((e) => e.edgePattern === 'business').length;
 
-    if (!isJson && verbose) {
-      this.log(chalk.gray(`Found ${enrichedEdges.length} module-to-module edges`));
-      this.log(chalk.gray(`  Business logic: ${businessCount}, Utility: ${utilityCount}`));
+    let interactions: InteractionSuggestion[] = [];
+
+    if (enrichedEdges.length > 0) {
+      if (!isJson && verbose) {
+        this.log(chalk.gray(`Found ${enrichedEdges.length} module-to-module edges`));
+        this.log(chalk.gray(`  Business logic: ${businessCount}, Utility: ${utilityCount}`));
+      }
+
+      // Step 1: Generate semantics for each edge using LLM (in batches)
+      interactions = await processBatchSemantics(enrichedEdges, batchSize, model, db, this, isJson, verbose);
+
+      tagTestInternalInteractions(interactions, testModuleIds, { command: this, isJson, verbose });
+
+      // Persist interactions
+      persistInteractions(db, interactions, verbose, isJson, dryRun, this);
+    } else if (!isJson && verbose) {
+      this.log(chalk.gray('No call-graph edges found, skipping Step 1 (LLM semantics)'));
     }
-
-    // Step 1: Generate semantics for each edge using LLM (in batches)
-    const interactions: InteractionSuggestion[] = await processBatchSemantics(
-      enrichedEdges,
-      batchSize,
-      model,
-      db,
-      this,
-      isJson,
-      verbose
-    );
-
-    // Tag test-internal interactions: if either module is a test module, override pattern
-    const testModuleIds = db.modules.getTestModuleIds();
-    tagTestInternalInteractions(interactions, testModuleIds, { command: this, isJson, verbose });
-
-    // Persist interactions
-    persistInteractions(db, interactions, verbose, isJson, dryRun, this);
 
     // Step 2: Import-based interactions (deterministic — no LLM)
     const { importBasedCount } = !dryRun
