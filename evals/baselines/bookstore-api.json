@@ -1,7 +1,7 @@
 {
   "fixture": "bookstore-api",
-  "lastRun": "2026-04-10T21:01:25.337Z",
-  "squintCommit": "8b7ad46",
+  "lastRun": "2026-04-11T10:59:17.092Z",
+  "squintCommit": "90da3d1",
   "tableScores": {
     "files": {
       "passed": true,
@@ -21,8 +21,8 @@
     },
     "imports": {
       "passed": true,
-      "expected": 0,
-      "produced": 0,
+      "expected": 15,
+      "produced": 15,
       "critical": 0,
       "major": 0,
       "minor": 0
@@ -30,7 +30,7 @@
     "definition_metadata": {
       "passed": true,
       "expected": 97,
-      "produced": 305,
+      "produced": 291,
       "critical": 0,
       "major": 0,
       "minor": 0
@@ -39,22 +39,6 @@
       "passed": true,
       "expected": 9,
       "produced": 45,
-      "critical": 0,
-      "major": 0,
-      "minor": 0
-    },
-    "module_cohesion": {
-      "passed": true,
-      "expected": 11,
-      "produced": 97,
-      "critical": 0,
-      "major": 0,
-      "minor": 0
-    },
-    "contracts": {
-      "passed": true,
-      "expected": 11,
-      "produced": 11,
       "critical": 0,
       "major": 0,
       "minor": 0

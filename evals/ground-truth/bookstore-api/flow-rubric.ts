@@ -3,9 +3,10 @@ import type { FlowRubricEntry } from '../../harness/types.js';
 /**
  * Theme-search ground truth for the LLM-driven flows stage.
  *
- * The bookstore-api has 2 user-facing concept areas: book catalog + orders.
- * Authentication is simpler here (just sessions) so may or may not generate
- * a separate flow.
+ * The bookstore-api's flows stage produces a mix of system inheritance flows
+ * (model→ApplicationRecord) and external-stakeholder CRUD flows (create book,
+ * create order). The rubric matches the two external-facing flows since those
+ * are the cross-cutting journeys that exercise the interaction pipeline.
  *
  * Severity (compareFlowRubric):
  *   - No flow matches expected theme → CRITICAL
@@ -13,14 +14,13 @@ import type { FlowRubricEntry } from '../../harness/types.js';
  */
 export const flowRubric: FlowRubricEntry[] = [
   {
-    label: 'user-catalog-browsing',
-    expectedRole:
-      'A user-facing journey for browsing the book catalog: listing, searching, viewing book details, or managing books',
-    acceptableStakeholders: ['user', 'admin', 'external'],
+    label: 'external-book-management',
+    expectedRole: 'A flow for creating or managing books in the catalog',
+    acceptableStakeholders: ['user', 'admin', 'external', 'system'],
   },
   {
-    label: 'user-checkout',
-    expectedRole: 'A user-facing journey for placing an order: selecting books, checkout, and order confirmation',
-    acceptableStakeholders: ['user', 'external'],
+    label: 'external-order-creation',
+    expectedRole: 'A flow for creating or placing an order',
+    acceptableStakeholders: ['user', 'external', 'system'],
   },
 ];

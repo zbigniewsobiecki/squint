@@ -102,18 +102,7 @@ describe('bookstore-api eval', () => {
     });
   }, 540_000);
 
-  // Iterations 6-8 are SKIPPED: squint's interactions stage requires
-  // parse-time import edges to seed module-to-module interactions. Rails
-  // Zeitwerk autoloading produces 0 imports → 0 AST interactions → 0 flows
-  // → 0 features. This is a genuine squint limitation with Zeitwerk-based
-  // codebases (no require/require_relative, no include/extend across layers).
-  // The eval surfacing this gap is itself valuable — it proves iters 1-5
-  // work for Rails and documents where the pipeline breaks down.
-  //
-  // Fix path: teach squint's interactions stage to infer cross-module edges
-  // from constant references in Ruby code (e.g., `BookSerializer.new(b)`
-  // in a controller) even without explicit import statements.
-  it.skip('iteration 6: interactions stage produces expected module-pair edges (BLOCKED: 0 imports → 0 interactions in Zeitwerk apps)', async () => {
+  it('iteration 6: interactions stage produces expected module-pair edges', async () => {
     await runIterationStep({
       fixture: BOOKSTORE,
       groundTruth: bookstoreApiGroundTruth,
@@ -135,7 +124,7 @@ describe('bookstore-api eval', () => {
     });
   }, 600_000);
 
-  it.skip('iteration 6.5: interactions-validate stage preserves the rubric (BLOCKED: same as iter 6)', async () => {
+  it('iteration 6.5: interactions-validate stage preserves the rubric', async () => {
     await runIterationStep({
       fixture: BOOKSTORE,
       groundTruth: bookstoreApiGroundTruth,
@@ -157,7 +146,7 @@ describe('bookstore-api eval', () => {
     });
   }, 600_000);
 
-  it.skip('iteration 6.6: interactions-verify stage preserves the rubric (BLOCKED: same as iter 6)', async () => {
+  it('iteration 6.6: interactions-verify stage preserves the rubric', async () => {
     await runIterationStep({
       fixture: BOOKSTORE,
       groundTruth: bookstoreApiGroundTruth,
@@ -179,7 +168,15 @@ describe('bookstore-api eval', () => {
     });
   }, 660_000);
 
-  it.skip('iteration 7: flows stage produces expected user journeys (BLOCKED: 0 interactions → 0 flows)', async () => {
+  // Iterations 7-8 are SKIPPED: the flows stage requires richer interaction
+  // semantics (from call-graph edges) to trace meaningful user journeys.
+  // The bookstore fixture's interactions are all ast-import (import-only,
+  // no call-graph context) so the LLM only generates inheritance flows,
+  // not the user-facing CRUD flows the rubric expects. Iters 1-6.6 (10
+  // iterations) cover the full pipeline through interactions-verify and
+  // are stable. Flows/features will unblock when squint's Ruby call-graph
+  // support is enhanced to track cross-file method invocations.
+  it.skip('iteration 7: flows stage produces expected user journeys (SKIPPED: import-only interactions lack call-graph context for flow tracing)', async () => {
     await runIterationStep({
       fixture: BOOKSTORE,
       groundTruth: bookstoreApiGroundTruth,
@@ -202,7 +199,7 @@ describe('bookstore-api eval', () => {
     });
   }, 720_000);
 
-  it.skip('iteration 7.5: flows-verify stage preserves the flow rubric (BLOCKED: same as iter 7)', async () => {
+  it.skip('iteration 7.5: flows-verify stage preserves the flow rubric (SKIPPED: same as iter 7)', async () => {
     await runIterationStep({
       fixture: BOOKSTORE,
       groundTruth: bookstoreApiGroundTruth,
@@ -225,7 +222,7 @@ describe('bookstore-api eval', () => {
     });
   }, 780_000);
 
-  it.skip('iteration 8: features stage groups flows into expected product features (BLOCKED: 0 flows → 0 features)', async () => {
+  it.skip('iteration 8: features stage groups flows into expected product features (SKIPPED: depends on flows)', async () => {
     await runIterationStep({
       fixture: BOOKSTORE,
       groundTruth: bookstoreApiGroundTruth,
