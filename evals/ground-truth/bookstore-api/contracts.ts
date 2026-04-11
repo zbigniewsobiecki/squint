@@ -4,8 +4,10 @@ import type { GroundTruthContract } from '../../harness/types.js';
  * Ground truth for the `contracts` and `contract_participants` tables after
  * running `squint ingest --to-stage contracts` against the bookstore-api fixture.
  *
- * The bookstore-api exposes 11 HTTP endpoints across 3 API controllers
- * (books, orders, sessions) plus the restock custom member route.
+ * The bookstore-api exposes 12 HTTP endpoints across 3 API controllers
+ * (books, orders, sessions) plus the restock custom member route. Note that
+ * Rails `resources :books, only: [..., :update, ...]` generates BOTH PUT and
+ * PATCH for the same #update action, so squint emits both contracts.
  *
  * NOTE: Rails routes are detected by the LLM contract extractor from the
  * routes.rb DSL and controller action definitions. The exact normalized
@@ -18,12 +20,14 @@ import type { GroundTruthContract } from '../../harness/types.js';
  */
 export const contracts: GroundTruthContract[] = [
   // ============================================================
-  // HTTP — Books CRUD + restock (6)
+  // HTTP — Books CRUD + restock (7)
   // ============================================================
   { protocol: 'http', normalizedKey: 'GET /books' },
   { protocol: 'http', normalizedKey: 'GET /books/{param}' },
   { protocol: 'http', normalizedKey: 'POST /books' },
   { protocol: 'http', normalizedKey: 'PUT /books/{param}' },
+  // Rails generates both PUT and PATCH for resources :update.
+  { protocol: 'http', normalizedKey: 'PATCH /books/{param}' },
   { protocol: 'http', normalizedKey: 'DELETE /books/{param}' },
   { protocol: 'http', normalizedKey: 'POST /books/{param}/restock' },
 

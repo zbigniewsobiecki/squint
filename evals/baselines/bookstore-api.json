@@ -1,7 +1,7 @@
 {
   "fixture": "bookstore-api",
-  "lastRun": "2026-04-11T12:04:05.560Z",
-  "squintCommit": "b8e0f70",
+  "lastRun": "2026-04-11T22:28:44.728Z",
+  "squintCommit": "0338d81",
   "tableScores": {
     "files": {
       "passed": true,
@@ -13,48 +13,60 @@
     },
     "definitions": {
       "passed": true,
-      "expected": 97,
-      "produced": 97,
+      "expected": 93,
+      "produced": 93,
       "critical": 0,
       "major": 0,
       "minor": 0
     },
     "imports": {
       "passed": true,
-      "expected": 15,
-      "produced": 15,
+      "expected": 25,
+      "produced": 25,
       "critical": 0,
       "major": 0,
       "minor": 0
     },
     "definition_metadata": {
       "passed": true,
-      "expected": 95,
-      "produced": 305,
+      "expected": 85,
+      "produced": 290,
       "critical": 0,
       "major": 0,
-      "minor": 0
+      "minor": 0,
+      "proseChecks": {
+        "passed": 51,
+        "failed": 0
+      }
     },
     "relationship_annotations": {
       "passed": true,
       "expected": 9,
-      "produced": 89,
+      "produced": 91,
       "critical": 0,
       "major": 0,
-      "minor": 0
+      "minor": 0,
+      "proseChecks": {
+        "passed": 9,
+        "failed": 0
+      }
     },
     "module_cohesion": {
       "passed": true,
       "expected": 11,
-      "produced": 97,
+      "produced": 93,
       "critical": 0,
       "major": 0,
-      "minor": 0
+      "minor": 0,
+      "proseChecks": {
+        "passed": 11,
+        "failed": 0
+      }
     },
     "contracts": {
       "passed": true,
-      "expected": 11,
-      "produced": 11,
+      "expected": 12,
+      "produced": 12,
       "critical": 0,
       "major": 0,
       "minor": 0
@@ -62,26 +74,14 @@
     "interaction_rubric": {
       "passed": true,
       "expected": 5,
-      "produced": 24,
+      "produced": 33,
       "critical": 0,
       "major": 0,
-      "minor": 1
-    },
-    "flow_rubric": {
-      "passed": true,
-      "expected": 2,
-      "produced": 19,
-      "critical": 0,
-      "major": 0,
-      "minor": 0
-    },
-    "feature_cohesion": {
-      "passed": true,
-      "expected": 2,
-      "produced": 5,
-      "critical": 0,
-      "major": 0,
-      "minor": 0
+      "minor": 0,
+      "proseChecks": {
+        "passed": 5,
+        "failed": 0
+      }
     }
   }
 }

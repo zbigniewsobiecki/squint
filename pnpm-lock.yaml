@@ -23,6 +23,9 @@ importers:
       llmist:
         specifier: ^15.18.1
         version: 15.19.0(ws@8.19.0)
+      pluralize:
+        specifier: ^8.0.0
+        version: 8.0.0
       tree-sitter:
         specifier: ^0.21.1
         version: 0.21.1
@@ -60,6 +63,9 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.9
+      '@types/pluralize':
+        specifier: ^0.0.33
+        version: 0.0.33
       '@vitest/coverage-v8':
         specifier: ^2.1.9
         version: 2.1.9(vitest@2.1.9(@types/node@22.19.9))
@@ -1031,6 +1037,9 @@ packages:
 
   '@types/normalize-package-data@2.4.4':
     resolution: {integrity: sha512-37i+OaWTh9qeK4LSHPsyRC7NahnGotNuZvjLSgcPzblpHB3rrCJxAOgI5gCdKm7coonsaX1Of0ILiTcnZjbfxA==}
+
+  '@types/pluralize@0.0.33':
+    resolution: {integrity: sha512-JOqsl+ZoCpP4e8TDke9W79FDcSgPAR0l6pixx2JHkhnRjvShyYiAYw2LVsnA7K08Y6DeOnaU6ujmENO4os/cYg==}
 
   '@vitest/coverage-v8@2.1.9':
     resolution: {integrity: sha512-Z2cOr0ksM00MpEfyVE8KXIYPEcBFxdbLSs56L8PO0QQMxt/6bDj45uQfxoc96v05KW3clk7vvgP0qfDit9DmfQ==}
@@ -2555,6 +2564,10 @@ packages:
     resolution: {integrity: sha512-C+VUP+8jis7EsQZIhDYmS5qlNtjv2yP4SNtjXK9AP1ZcTRlnSfuumaTnRfYZnYgUUYVIKqL0fRvmUGDV2fmp6g==}
     engines: {node: '>=4'}
 
+  pluralize@8.0.0:
+    resolution: {integrity: sha512-Nc3IT5yHzflTfbjgqWcCPpo7DaKy4FnpB0l/zCAW0Tc7jxAiuqSxHasntB3D7887LSrA93kDJ9IXovxJYxyLCA==}
+    engines: {node: '>=4'}
+
   postcss@8.5.6:
     resolution: {integrity: sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg==}
     engines: {node: ^10 || ^12 || >=14}
@@ -4007,6 +4020,8 @@ snapshots:
       undici-types: 6.21.0
 
   '@types/normalize-package-data@2.4.4': {}
+
+  '@types/pluralize@0.0.33': {}
 
   '@vitest/coverage-v8@2.1.9(vitest@2.1.9(@types/node@22.19.9))':
     dependencies:
@@ -5468,6 +5483,8 @@ snapshots:
     dependencies:
       find-up: 2.1.0
       load-json-file: 4.0.0
+
+  pluralize@8.0.0: {}
 
   postcss@8.5.6:
     dependencies:

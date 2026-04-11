@@ -43,16 +43,52 @@ Guidelines:
 - For UTILITY patterns: use generic descriptions like "Uses logging utilities", "Accesses database layer"
 - For BUSINESS patterns: be specific about the business action (e.g., "Processes incoming requests", "Validates user credentials")
 - Keep descriptions concise (under 80 chars)
-- Focus on the business purpose, not implementation details`;
+- Focus on the business purpose, not implementation details
+- **Describe the architectural USE, not the literal import statement.** If the only static evidence is an import, infer how the imported symbol is used: "guards endpoints with middleware", "delegates to the service", "validates with the schema". Never write "imports X" or "uses an import statement".`;
 
   // Build module lookup for descriptions
   const allModules = db.modules.getAll();
   const moduleMap = new Map(allModules.map((m) => [m.id, m]));
 
+  // PR1/4: For each target module, look up the called symbols' `purpose`
+  // annotations from the symbols stage so the LLM has architectural context
+  // (not just bare names + import locations). Without these, the LLM was
+  // describing edges as "imports X" instead of "guards endpoints with X".
+  // Cache per-module to avoid duplicate queries when multiple edges point at
+  // the same target module within a single batch.
+  const PURPOSE_CHAR_BUDGET = 120;
+  const purposeCache = new Map<number, Map<string, string>>();
+  const purposesForTargetModule = (toModuleId: number): Map<string, string> => {
+    const cached = purposeCache.get(toModuleId);
+    if (cached) return cached;
+
+    const members = db.modules.getSymbols(toModuleId);
+    const defIds = members.map((m) => m.id);
+    const purposes = db.metadata.getValuesByKey(defIds, 'purpose');
+    const byName = new Map<string, string>();
+    for (const m of members) {
+      const purpose = purposes.get(m.id);
+      if (purpose) {
+        const truncated =
+          purpose.length > PURPOSE_CHAR_BUDGET ? `${purpose.slice(0, PURPOSE_CHAR_BUDGET - 1)}…` : purpose;
+        byName.set(m.name, truncated);
+      }
+    }
+    purposeCache.set(toModuleId, byName);
+    return byName;
+  };
+
   // Build edge descriptions with symbol details and module context
   const edgeDescriptions = edges
     .map((e, i) => {
-      const symbolList = e.calledSymbols.map((s) => `${s.name} (${s.kind}, ${s.callCount} calls)`).join(', ');
+      const purposesByName = purposesForTargetModule(e.toModuleId);
+      const symbolList = e.calledSymbols
+        .map((s) => {
+          const purpose = purposesByName.get(s.name);
+          const purposeSuffix = purpose ? ` — purpose: "${purpose}"` : '';
+          return `${s.name} (${s.kind}, ${s.callCount} calls)${purposeSuffix}`;
+        })
+        .join(', ');
       const patternInfo = `[${e.edgePattern.toUpperCase()}]`;
       const fromMod = moduleMap.get(e.fromModuleId);
       const toMod = moduleMap.get(e.toModuleId);

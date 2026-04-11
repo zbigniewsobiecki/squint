@@ -1,6 +1,14 @@
 import type { IndexDatabase } from '../../../../src/db/database-facade.js';
-import type { GroundTruth, GroundTruthDefinitionMetadata, ProseJudgeFn, RowDiff, TableDiff } from '../../types.js';
+import type {
+  GroundTruth,
+  GroundTruthDefinitionMetadata,
+  MetadataAssertion,
+  ProseJudgeFn,
+  RowDiff,
+  TableDiff,
+} from '../../types.js';
 import { tableDiffPassed } from '../severity.js';
+import { evaluateAssertions } from './metadata-assertions.js';
 import { DEFAULT_PROSE_MIN_SIMILARITY, parseJsonStringArray } from './shared.js';
 
 interface ProducedMetadataRow {
@@ -86,6 +94,46 @@ export async function compareDefinitionMetadata(
         naturalKey: `${defKey}.${entry.key}`,
         details: `Definition '${defKey}' exists but aspect '${entry.key}' is not annotated`,
       });
+      continue;
+    }
+
+    // PR4: assertions branch — property-based grading. Routed first when
+    // present so the new shape takes precedence over the legacy strategies
+    // (`exactValue` still wins because it's the only deterministic one).
+    if (entry.exactValue === undefined && entry.assertions && entry.assertions.length > 0) {
+      const assertionResult = await evaluateAssertions(entry.assertions, actualValue, {
+        defKey,
+        aspectKey: entry.key,
+        judgeFn,
+      });
+      if (assertionResult.passed) {
+        proseChecksPassed += 1;
+      } else {
+        const failed = assertionResult.failedAssertion;
+        const sev = failed?.severity ?? 'minor';
+        if (assertionResult.proseDrift) {
+          // concept-fit failures land in the prose-drift bucket so they
+          // don't double-count into the structural minor counter.
+          proseChecksFailed += 1;
+          diffs.push({
+            kind: 'prose-drift',
+            severity: 'minor',
+            naturalKey: `${defKey}.${entry.key}`,
+            details: `assertion '${failed?.label ?? '?'}': ${assertionResult.reason ?? 'failed'}`,
+          });
+        } else {
+          // Structural assertion failure — counts toward proseChecks.failed
+          // (so the baseline ratchet sees it) but is reported as a structural
+          // mismatch with the assertion's chosen severity.
+          proseChecksFailed += 1;
+          diffs.push({
+            kind: 'mismatch',
+            severity: sev,
+            naturalKey: `${defKey}.${entry.key}`,
+            details: `assertion '${failed?.label ?? '?'}': ${assertionResult.reason ?? 'failed'}`,
+          });
+        }
+      }
       continue;
     }
 

@@ -124,6 +124,24 @@ export interface GroundTruthDefinitionMetadata {
   minTagsRequired?: number;
   /** Min similarity for prose judge (default 0.75 for proseReference, 0.6 for themeReference). */
   minSimilarity?: number;
+  /**
+   * PR4: property-based assertions. When set, the comparator routes to
+   * `evaluateAssertions` and grades the produced value as a structural
+   * fact-check rather than a paraphrase match. Coexists with the legacy
+   * fields but is mutually exclusive at the entry level — mixing
+   * `assertions` with `exactValue`/`acceptableSet`/`themeReference`/
+   * `proseReference` is rejected by the comparator.
+   *
+   * Strategy precedence: `exactValue` → `assertions` → `acceptableSet` →
+   * `themeReference` → `proseReference`.
+   *
+   * Why: prose-similarity matching forces the GT author to guess the
+   * LLM's exact phrasing, which is fragile. Assertions ask factual
+   * questions about the produced output ("does the tag list mention any
+   * of these concepts; does it ban these others") so any defensible
+   * phrasing passes and any factually wrong phrasing fails.
+   */
+  assertions?: MetadataAssertion[];
 }
 
 export interface GroundTruthRelationship {
@@ -133,6 +151,112 @@ export interface GroundTruthRelationship {
   /** Optional reference text for the prose `semantic` field. */
   semanticReference?: string;
   minSimilarity?: number;
+  /** PR4: see GroundTruthDefinitionMetadata.assertions. */
+  assertions?: MetadataAssertion[];
+}
+
+// ============================================================================
+// PR4: Property-based metadata assertions
+// ============================================================================
+
+/**
+ * A single property assertion to evaluate against a produced metadata value.
+ *
+ * Eight kinds covering the common patterns:
+ *  - tag-* kinds operate on parsed tag arrays (JSON or comma-separated)
+ *  - string-* kinds operate on raw prose values
+ *  - concept-fit is a last-resort tolerant theme judge call
+ *  - regex is an escape hatch for highly structured fields
+ *
+ * Each assertion has a stable `label` for diff reporting and an optional
+ * `severity` (default 'minor', counted as prose drift). Setting severity
+ * to 'major' promotes the failure to a hard test failure.
+ *
+ * Authoring philosophy: pair `tag-any-of` (required concepts) with
+ * `tag-none-of` (banned concepts) so the LLM has to be both relevant
+ * AND not-wrong. Use `tag-floor` to require a non-empty result.
+ */
+export type MetadataAssertion =
+  | TagAnyOfAssertion
+  | TagNoneOfAssertion
+  | TagFloorAssertion
+  | StringContainsAssertion
+  | StringForbidAssertion
+  | ConceptFitAssertion
+  | RegexAssertion;
+
+interface BaseAssertion {
+  /** Human-readable label for diff reporting. */
+  label: string;
+  /** Default 'minor' (counted as prose drift). 'major' hard-fails iteration. */
+  severity?: 'minor' | 'major';
+}
+
+/**
+ * At least one of these concepts must appear (case-insensitive substring
+ * match) in the parsed tag array. Concepts are CONCEPTS, not exact tags —
+ * `'book'` matches `['book-catalog']`, `'auth'` matches `['authentication']`.
+ */
+export interface TagAnyOfAssertion extends BaseAssertion {
+  kind: 'tag-any-of';
+  anyOf: string[];
+}
+
+/**
+ * None of these concepts may appear in the parsed tag array. Catches the
+ * Author→user-management bug class: `noneOf: ['user', 'auth', 'identity']`
+ * banishes any tag that mentions those substrings.
+ */
+export interface TagNoneOfAssertion extends BaseAssertion {
+  kind: 'tag-none-of';
+  noneOf: string[];
+}
+
+/** The parsed tag array must contain at least N entries. Default min: 1. */
+export interface TagFloorAssertion extends BaseAssertion {
+  kind: 'tag-floor';
+  min: number;
+}
+
+/**
+ * Required substring match against a prose value. Either ALL of `substrings`
+ * must appear, OR at least one of `anyOf` must appear (mutually exclusive).
+ * All matching is case-insensitive.
+ */
+export interface StringContainsAssertion extends BaseAssertion {
+  kind: 'string-contains';
+  /** ALL of these substrings must appear (and operator). */
+  substrings?: string[];
+  /** At least one of these substrings must appear (or operator). */
+  anyOf?: string[];
+}
+
+/**
+ * Forbidden substring match. Fails if ANY of `substrings` appears in the
+ * prose value (case-insensitive). Use to ban factually wrong phrases.
+ */
+export interface StringForbidAssertion extends BaseAssertion {
+  kind: 'string-forbid';
+  substrings: string[];
+}
+
+/**
+ * Last-resort tolerant theme-fit judging. Calls the LLM judge in 'theme'
+ * mode against `mustReflect`. Use ONLY when the assertion can't be
+ * expressed structurally (e.g., a one-off purpose with no broader concept).
+ */
+export interface ConceptFitAssertion extends BaseAssertion {
+  kind: 'concept-fit';
+  mustReflect: string;
+  /** Default 0.6 (same as the existing theme judge default). */
+  minSimilarity?: number;
+}
+
+/** Regex match against the produced value. Escape hatch for highly structured fields. */
+export interface RegexAssertion extends BaseAssertion {
+  kind: 'regex';
+  pattern: string;
+  flags?: string;
 }
 
 export interface GroundTruthModule {

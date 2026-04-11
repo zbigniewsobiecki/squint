@@ -8,6 +8,7 @@ import {
   parseDefKey,
 } from '../../types.js';
 import { tableDiffPassed } from '../severity.js';
+import { evaluateAssertions } from './metadata-assertions.js';
 import { DEFAULT_PROSE_MIN_SIMILARITY } from './shared.js';
 
 interface ProducedRelationshipRow {
@@ -137,6 +138,30 @@ export async function compareRelationshipAnnotations(
         naturalKey,
         details: `semantic is still '${PENDING_LLM_ANNOTATION}' — relationships annotate stage failed to replace the parse-time placeholder for this edge`,
       });
+      continue;
+    }
+
+    // PR4: assertions branch — property-based grading. Routed first when
+    // present so the new shape takes precedence over `semanticReference`.
+    if (entry.assertions && entry.assertions.length > 0) {
+      const assertionResult = await evaluateAssertions(entry.assertions, producedRow.semantic, {
+        defKey: naturalKey,
+        aspectKey: 'semantic',
+        judgeFn,
+      });
+      if (assertionResult.passed) {
+        proseChecksPassed += 1;
+      } else {
+        const failed = assertionResult.failedAssertion;
+        const sev = failed?.severity ?? 'minor';
+        proseChecksFailed += 1;
+        diffs.push({
+          kind: assertionResult.proseDrift ? 'prose-drift' : 'mismatch',
+          severity: assertionResult.proseDrift ? 'minor' : sev,
+          naturalKey,
+          details: `assertion '${failed?.label ?? '?'}': ${assertionResult.reason ?? 'failed'}`,
+        });
+      }
       continue;
     }
 

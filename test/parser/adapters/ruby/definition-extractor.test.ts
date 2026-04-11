@@ -135,4 +135,119 @@ describe('extractRubyDefinitions', () => {
     expect(definitions).toContainEqual(expect.objectContaining({ name: 'my_method', kind: 'method' }));
     expect(definitions).toContainEqual(expect.objectContaining({ name: 'NestedInMethod', kind: 'class' }));
   });
+
+  describe('namespace-only modules', () => {
+    // Background: a module whose body is purely class declarations is just a Ruby
+    // namespace wrapper (e.g. `module Api; class BooksController; end; end`). When
+    // such a module is emitted as its own definition, the symbols stage feeds the
+    // full module source — including the wrapped class — to the LLM, which then
+    // describes the class as if it were the namespace. The fix: skip the module
+    // definition entirely, but still walk into the body to extract the wrapped
+    // classes. Empty modules are KEPT (no class to mis-describe).
+
+    it('skips namespace-only module wrapping a single class', () => {
+      const code = `
+        module Api
+          class BooksController
+          end
+        end
+      `;
+      const tree = parser.parse(code);
+      const definitions = extractRubyDefinitions(tree.rootNode);
+
+      expect(definitions).not.toContainEqual(expect.objectContaining({ name: 'Api', kind: 'module' }));
+      expect(definitions).toContainEqual(expect.objectContaining({ name: 'BooksController', kind: 'class' }));
+    });
+
+    it('keeps module that has its own constant assignment', () => {
+      const code = `
+        module MyMod
+          CONST = 1
+          class X
+          end
+        end
+      `;
+      const tree = parser.parse(code);
+      const definitions = extractRubyDefinitions(tree.rootNode);
+
+      expect(definitions).toContainEqual(expect.objectContaining({ name: 'MyMod', kind: 'module' }));
+      expect(definitions).toContainEqual(expect.objectContaining({ name: 'CONST', kind: 'const' }));
+      expect(definitions).toContainEqual(expect.objectContaining({ name: 'X', kind: 'class' }));
+    });
+
+    it('keeps module that has its own singleton method', () => {
+      const code = `
+        module MyMod
+          def self.helper
+          end
+        end
+      `;
+      const tree = parser.parse(code);
+      const definitions = extractRubyDefinitions(tree.rootNode);
+
+      expect(definitions).toContainEqual(expect.objectContaining({ name: 'MyMod', kind: 'module' }));
+      expect(definitions).toContainEqual(expect.objectContaining({ name: 'helper', kind: 'method' }));
+    });
+
+    it('keeps module that has an include directive', () => {
+      const code = `
+        module MyMod
+          include Concern
+        end
+      `;
+      const tree = parser.parse(code);
+      const definitions = extractRubyDefinitions(tree.rootNode);
+
+      expect(definitions).toContainEqual(expect.objectContaining({ name: 'MyMod', kind: 'module' }));
+    });
+
+    it('skips namespace-only module wrapping multiple classes', () => {
+      const code = `
+        module MyMod
+          class A
+          end
+          class B
+          end
+        end
+      `;
+      const tree = parser.parse(code);
+      const definitions = extractRubyDefinitions(tree.rootNode);
+
+      expect(definitions).not.toContainEqual(expect.objectContaining({ name: 'MyMod', kind: 'module' }));
+      expect(definitions).toContainEqual(expect.objectContaining({ name: 'A', kind: 'class' }));
+      expect(definitions).toContainEqual(expect.objectContaining({ name: 'B', kind: 'class' }));
+    });
+
+    it('skips nested namespace-only modules recursively', () => {
+      const code = `
+        module Outer
+          module Inner
+            class C
+            end
+          end
+        end
+      `;
+      const tree = parser.parse(code);
+      const definitions = extractRubyDefinitions(tree.rootNode);
+
+      expect(definitions).not.toContainEqual(expect.objectContaining({ name: 'Outer', kind: 'module' }));
+      expect(definitions).not.toContainEqual(expect.objectContaining({ name: 'Inner', kind: 'module' }));
+      expect(definitions).toContainEqual(expect.objectContaining({ name: 'C', kind: 'class' }));
+    });
+
+    // REGRESSION-GUARD: the existing 'extracts classes and modules' test asserts
+    // that an empty `module MyModule; end` produces a definition. After the
+    // namespace-only fix, empty modules MUST still be extracted because there's
+    // no nested class to mis-describe.
+    it('keeps empty module (regression guard for the existing test)', () => {
+      const code = `
+        module Empty
+        end
+      `;
+      const tree = parser.parse(code);
+      const definitions = extractRubyDefinitions(tree.rootNode);
+
+      expect(definitions).toContainEqual(expect.objectContaining({ name: 'Empty', kind: 'module' }));
+    });
+  });
 });

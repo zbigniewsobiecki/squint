@@ -4,10 +4,12 @@ import type { GroundTruthDefinition } from '../../harness/types.js';
  * Ground truth for the `definitions` table after parsing the bookstore-api fixture.
  *
  * Calibrated against the produced DB from `squint ingest --to-stage parse`.
- * 97 definitions across 17 files (config/routes.rb produces 0 definitions).
+ * 93 definitions across 17 files (config/routes.rb produces 0 definitions).
  *
  * Key Ruby-specific observations:
- *   - `module Api` wrapper produces a module def in each controller file (4x)
+ *   - Namespace-only modules ARE NOT extracted (PR1/1: the parser deliberately
+ *     skips `module Api ... end` wrappers whose body is purely class declarations
+ *     because the symbols stage was mis-summarizing them as the contained class)
  *   - `attr_reader :foo` produces a method def named 'foo'
  *   - Class names inside `module Api ... end` are just the inner name
  *     (e.g. 'BaseController' not 'Api::BaseController')
@@ -17,16 +19,11 @@ import type { GroundTruthDefinition } from '../../harness/types.js';
  */
 export const definitions: GroundTruthDefinition[] = [
   // ============================================================
-  // app/controllers/api/base_controller.rb (6 defs)
+  // app/controllers/api/base_controller.rb (5 defs)
   // ============================================================
-  {
-    file: 'app/controllers/api/base_controller.rb',
-    name: 'Api',
-    kind: 'module',
-    isExported: true,
-    line: 1,
-    endLine: 25,
-  },
+  // PR1/1: namespace-only `module Api ... end` is no longer extracted by the
+  // Ruby parser (the symbols stage was mis-summarizing it as the contained
+  // class). The wrapped BaseController and its methods are still emitted.
   {
     file: 'app/controllers/api/base_controller.rb',
     name: 'BaseController',
@@ -70,16 +67,9 @@ export const definitions: GroundTruthDefinition[] = [
   },
 
   // ============================================================
-  // app/controllers/api/books_controller.rb (11 defs)
+  // app/controllers/api/books_controller.rb (10 defs)
   // ============================================================
-  {
-    file: 'app/controllers/api/books_controller.rb',
-    name: 'Api',
-    kind: 'module',
-    isExported: true,
-    line: 1,
-    endLine: 59,
-  },
+  // PR1/1: namespace-only `module Api ... end` is no longer extracted.
   {
     file: 'app/controllers/api/books_controller.rb',
     name: 'BooksController',
@@ -163,16 +153,9 @@ export const definitions: GroundTruthDefinition[] = [
   },
 
   // ============================================================
-  // app/controllers/api/orders_controller.rb (7 defs)
+  // app/controllers/api/orders_controller.rb (6 defs)
   // ============================================================
-  {
-    file: 'app/controllers/api/orders_controller.rb',
-    name: 'Api',
-    kind: 'module',
-    isExported: true,
-    line: 1,
-    endLine: 40,
-  },
+  // PR1/1: namespace-only `module Api ... end` is no longer extracted.
   {
     file: 'app/controllers/api/orders_controller.rb',
     name: 'OrdersController',
@@ -224,16 +207,9 @@ export const definitions: GroundTruthDefinition[] = [
   },
 
   // ============================================================
-  // app/controllers/api/sessions_controller.rb (6 defs)
+  // app/controllers/api/sessions_controller.rb (5 defs)
   // ============================================================
-  {
-    file: 'app/controllers/api/sessions_controller.rb',
-    name: 'Api',
-    kind: 'module',
-    isExported: true,
-    line: 1,
-    endLine: 33,
-  },
+  // PR1/1: namespace-only `module Api ... end` is no longer extracted.
   {
     file: 'app/controllers/api/sessions_controller.rb',
     name: 'SessionsController',

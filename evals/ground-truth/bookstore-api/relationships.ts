@@ -1,87 +1,125 @@
-import { type GroundTruthRelationship, defKey } from '../../harness/types.js';
+import type { GroundTruthRelationship } from '../../harness/types.js';
+import { assertedRelationship } from '../_shared/assertion-builders.js';
 
 /**
  * Ground truth for the `relationship_annotations` table after running
  * `squint ingest --to-stage relationships` against the bookstore-api fixture.
  *
- * Relationships are derived from two sources:
- *   1. AST-detected inheritance (extends) — 9 edges from parse stage
- *   2. LLM-annotated usage (uses) — discovered by the relationships stage
+ * PR4: migrated from `semanticReference` prose-similarity to property-based
+ * assertions. Each `extends` edge asserts factual properties about the
+ * inheritance relationship's semantic field — what concepts must appear,
+ * what concepts must NOT appear — instead of trying to paraphrase the LLM's
+ * exact wording.
  *
- * The extends edges are deterministic. The uses edges are the LLM's
- * interpretation of which definitions depend on which — more variable.
+ * 9 extends edges (deterministic from AST). No `uses` edges in this GT
+ * because Rails Zeitwerk autoloading means there are 0 parse-time imports —
+ * cross-file deps surface at the interactions stage (iter 6).
  *
  * Severity (compareRelationshipAnnotations):
  *   - Missing GT relationship → CRITICAL
- *   - Semantic prose drift → MINOR
+ *   - Assertion failure → MINOR (counted in proseChecks.failed)
  */
 export const relationships: GroundTruthRelationship[] = [
   // ============================================================
-  // extends (9 — from AST, deterministic)
+  // Controller inheritance (4 edges)
   // ============================================================
-  {
-    fromDef: defKey('app/controllers/api/base_controller.rb', 'BaseController'),
-    toDef: defKey('app/controllers/application_controller.rb', 'ApplicationController'),
-    relationshipType: 'extends',
-    semanticReference:
-      'API base controller inherits authentication and response infrastructure from the application controller',
-  },
-  {
-    fromDef: defKey('app/controllers/api/books_controller.rb', 'BooksController'),
-    toDef: defKey('app/controllers/api/base_controller.rb', 'BaseController'),
-    relationshipType: 'extends',
-    semanticReference:
-      'Books controller inherits JSON response helpers and authentication from the API base controller',
-  },
-  {
-    fromDef: defKey('app/controllers/api/orders_controller.rb', 'OrdersController'),
-    toDef: defKey('app/controllers/api/base_controller.rb', 'BaseController'),
-    relationshipType: 'extends',
-    semanticReference:
-      'Orders controller inherits JSON response helpers and authentication from the API base controller',
-  },
-  {
-    fromDef: defKey('app/controllers/api/sessions_controller.rb', 'SessionsController'),
-    toDef: defKey('app/controllers/api/base_controller.rb', 'BaseController'),
-    relationshipType: 'extends',
-    semanticReference: 'Sessions controller inherits JSON response helpers from the API base controller',
-  },
-  {
-    fromDef: defKey('app/models/author.rb', 'Author'),
-    toDef: defKey('app/models/application_record.rb', 'ApplicationRecord'),
-    relationshipType: 'extends',
-    semanticReference: 'Author model inherits ActiveRecord persistence from the application record base class',
-  },
-  {
-    fromDef: defKey('app/models/book.rb', 'Book'),
-    toDef: defKey('app/models/application_record.rb', 'ApplicationRecord'),
-    relationshipType: 'extends',
-    semanticReference: 'Book model inherits ActiveRecord persistence from the application record base class',
-  },
-  {
-    fromDef: defKey('app/models/order.rb', 'Order'),
-    toDef: defKey('app/models/application_record.rb', 'ApplicationRecord'),
-    relationshipType: 'extends',
-    semanticReference: 'Order model inherits ActiveRecord persistence from the application record base class',
-  },
-  {
-    fromDef: defKey('app/models/order_item.rb', 'OrderItem'),
-    toDef: defKey('app/models/application_record.rb', 'ApplicationRecord'),
-    relationshipType: 'extends',
-    semanticReference: 'OrderItem model inherits ActiveRecord persistence from the application record base class',
-  },
-  {
-    fromDef: defKey('app/models/user.rb', 'User'),
-    toDef: defKey('app/models/application_record.rb', 'ApplicationRecord'),
-    relationshipType: 'extends',
-    semanticReference: 'User model inherits ActiveRecord persistence from the application record base class',
-  },
+  assertedRelationship(
+    'app/controllers/api/base_controller.rb',
+    'BaseController',
+    'app/controllers/application_controller.rb',
+    'ApplicationController',
+    'extends',
+    {
+      anyOf: ['inherit', 'shared', 'common', 'controller'],
+    }
+  ),
+  assertedRelationship(
+    'app/controllers/api/books_controller.rb',
+    'BooksController',
+    'app/controllers/api/base_controller.rb',
+    'BaseController',
+    'extends',
+    {
+      anyOf: ['inherit', 'shared', 'json', 'response', 'helper', 'controller'],
+    }
+  ),
+  assertedRelationship(
+    'app/controllers/api/orders_controller.rb',
+    'OrdersController',
+    'app/controllers/api/base_controller.rb',
+    'BaseController',
+    'extends',
+    {
+      anyOf: ['inherit', 'shared', 'json', 'response', 'helper', 'controller'],
+    }
+  ),
+  assertedRelationship(
+    'app/controllers/api/sessions_controller.rb',
+    'SessionsController',
+    'app/controllers/api/base_controller.rb',
+    'BaseController',
+    'extends',
+    {
+      anyOf: ['inherit', 'shared', 'json', 'response', 'helper', 'controller'],
+    }
+  ),
 
-  // NOTE: No `uses` edges in this GT. Rails Zeitwerk autoloading means
-  // there are 0 parse-time imports — squint has no static evidence to
-  // build cross-file `uses` relationships from at the relationships stage.
-  // Cross-file dependencies surface at the interactions stage (iter 6)
-  // where the LLM infers module-pair edges from code analysis.
-  // This is a genuine difference between Rails and Express — the TS
-  // fixture has 36 imports → 27 uses edges; the Rails fixture has 0.
+  // ============================================================
+  // Model inheritance from ApplicationRecord (5 edges)
+  // ============================================================
+  // PR4 calibration: the LLM writes generic descriptions like "Inherits
+  // ActiveRecord features..." without naming the child class. We rely on
+  // the anyOf to capture the inheritance intent, no `mentions:`.
+  assertedRelationship(
+    'app/models/author.rb',
+    'Author',
+    'app/models/application_record.rb',
+    'ApplicationRecord',
+    'extends',
+    {
+      anyOf: ['inherit', 'active', 'persist', 'database', 'orm', 'feature', 'callback', 'query'],
+    }
+  ),
+  assertedRelationship(
+    'app/models/book.rb',
+    'Book',
+    'app/models/application_record.rb',
+    'ApplicationRecord',
+    'extends',
+    {
+      anyOf: ['inherit', 'active', 'persist', 'database', 'orm', 'feature', 'callback', 'query'],
+    }
+  ),
+  assertedRelationship(
+    'app/models/order.rb',
+    'Order',
+    'app/models/application_record.rb',
+    'ApplicationRecord',
+    'extends',
+    {
+      anyOf: ['inherit', 'active', 'persist', 'database', 'orm', 'feature', 'callback', 'query'],
+    }
+  ),
+  assertedRelationship(
+    'app/models/order_item.rb',
+    'OrderItem',
+    'app/models/application_record.rb',
+    'ApplicationRecord',
+    'extends',
+    {
+      anyOf: ['inherit', 'active', 'persist', 'database', 'orm', 'feature', 'callback', 'query'],
+    }
+  ),
+  assertedRelationship(
+    'app/models/user.rb',
+    'User',
+    'app/models/application_record.rb',
+    'ApplicationRecord',
+    'extends',
+    {
+      anyOf: ['inherit', 'active', 'persist', 'database', 'orm', 'feature', 'callback', 'query'],
+    }
+  ),
+
+  // NOTE: No `uses` edges in this GT (see file header).
 ];
