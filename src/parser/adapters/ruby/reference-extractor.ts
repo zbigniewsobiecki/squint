@@ -81,21 +81,33 @@ function findProjectRoot(filePath: string, knownFiles: Set<string>): string {
   const fsRoot = path.parse(dir).root;
 
   while (dir !== fsRoot) {
-    // Check for common Rails/Ruby project root indicators
+    // Check for common Rails/Ruby project root indicators.
+    // knownFiles only contains source files (.rb), so Gemfile/Rakefile won't
+    // be in the set. Also check for the Rails app/ directory convention by
+    // looking for any known file under dir/app/.
     if (
       knownFiles.has(path.join(dir, 'Gemfile')) ||
       knownFiles.has(path.join(dir, 'Rakefile')) ||
-      knownFiles.has(path.join(dir, 'config/application.rb'))
+      knownFiles.has(path.join(dir, 'config/application.rb')) ||
+      hasKnownFileUnder(path.join(dir, 'app'), knownFiles)
     ) {
       return dir;
     }
     const parent = path.dirname(dir);
-    // Guard against infinite loop (shouldn't happen with absolute paths but just in case)
     if (parent === dir) break;
     dir = parent;
   }
 
   return path.dirname(absoluteFilePath);
+}
+
+/** Check if any file in knownFiles starts with the given directory prefix. */
+function hasKnownFileUnder(dirPath: string, knownFiles: Set<string>): boolean {
+  const prefix = dirPath + path.sep;
+  for (const f of knownFiles) {
+    if (f.startsWith(prefix)) return true;
+  }
+  return false;
 }
 
 /**
@@ -209,6 +221,7 @@ export function extractRubyReferences(
   knownFiles: Set<string>
 ): FileReference[] {
   const references: FileReference[] = [];
+  const seenConstants = new Set<string>();
   const projectRoot = findProjectRoot(filePath, knownFiles);
 
   function walk(node: SyntaxNode): void {
@@ -306,6 +319,32 @@ export function extractRubyReferences(
               position: {
                 row: node.startPosition.row,
                 column: node.startPosition.column,
+              },
+            });
+          }
+        }
+      }
+
+      // Constant-receiver calls: BookSerializer.new(book), User.authenticate(...)
+      // In Zeitwerk apps these are implicit cross-file dependencies. Resolve the
+      // constant via Rails autoloading and emit a synthetic import reference.
+      const receiverNode = node.childForFieldName('receiver');
+      if (receiverNode && (receiverNode.type === 'constant' || receiverNode.type === 'scope_resolution')) {
+        const constantName = getConstantText(receiverNode);
+        if (!seenConstants.has(constantName)) {
+          const resolvedPath = resolveConstantViaAutoloading(constantName, projectRoot, knownFiles);
+          if (resolvedPath) {
+            seenConstants.add(constantName);
+            references.push({
+              type: 'import',
+              source: constantName,
+              resolvedPath,
+              isExternal: false,
+              isTypeOnly: false,
+              imports: moduleRefImport(constantName),
+              position: {
+                row: receiverNode.startPosition.row,
+                column: receiverNode.startPosition.column,
               },
             });
           }

@@ -397,3 +397,102 @@ describe('resolveRubyImportPath', () => {
     expect(result).toBeNull();
   });
 });
+
+describe('constant-receiver references (Zeitwerk implicit imports)', () => {
+  it('detects BookSerializer.new(book) as a reference to the serializer file', () => {
+    const code = `
+class BooksController < BaseController
+  def index
+    books = Book.all
+    render json: books.map { |b| BookSerializer.new(b).as_json }
+  end
+end`;
+    const projectRoot = '/project';
+    const knownFiles = new Set([
+      path.join(projectRoot, 'Gemfile'),
+      path.join(projectRoot, 'app/controllers/books_controller.rb'),
+      path.join(projectRoot, 'app/serializers/book_serializer.rb'),
+      path.join(projectRoot, 'app/models/book.rb'),
+    ]);
+    const refs = extractRubyReferences(
+      parse(code),
+      path.join(projectRoot, 'app/controllers/books_controller.rb'),
+      knownFiles
+    );
+
+    const bookSerializerRef = refs.find((r) => r.source === 'BookSerializer');
+    expect(bookSerializerRef).toBeDefined();
+    expect(bookSerializerRef!.resolvedPath).toBe(path.join(projectRoot, 'app/serializers/book_serializer.rb'));
+    expect(bookSerializerRef!.isExternal).toBe(false);
+    expect(bookSerializerRef!.type).toBe('import');
+
+    const bookRef = refs.find((r) => r.source === 'Book');
+    expect(bookRef).toBeDefined();
+    expect(bookRef!.resolvedPath).toBe(path.join(projectRoot, 'app/models/book.rb'));
+  });
+
+  it('handles class method calls: User.authenticate(...)', () => {
+    const code = `
+class SessionsController
+  def create
+    user = User.authenticate(params[:email], params[:password])
+  end
+end`;
+    const projectRoot = '/project';
+    const knownFiles = new Set([
+      path.join(projectRoot, 'Gemfile'),
+      path.join(projectRoot, 'app/controllers/sessions_controller.rb'),
+      path.join(projectRoot, 'app/models/user.rb'),
+    ]);
+    const refs = extractRubyReferences(
+      parse(code),
+      path.join(projectRoot, 'app/controllers/sessions_controller.rb'),
+      knownFiles
+    );
+
+    const userRef = refs.find((r) => r.source === 'User');
+    expect(userRef).toBeDefined();
+    expect(userRef!.resolvedPath).toBe(path.join(projectRoot, 'app/models/user.rb'));
+  });
+
+  it('deduplicates constant references within the same file', () => {
+    const code = `
+class OrdersController
+  def index
+    render json: orders.map { |o| OrderSerializer.new(o).as_json }
+  end
+  def show
+    render json: OrderSerializer.new(@order).as_json
+  end
+end`;
+    const projectRoot = '/project';
+    const knownFiles = new Set([
+      path.join(projectRoot, 'Gemfile'),
+      path.join(projectRoot, 'app/controllers/orders_controller.rb'),
+      path.join(projectRoot, 'app/serializers/order_serializer.rb'),
+    ]);
+    const refs = extractRubyReferences(
+      parse(code),
+      path.join(projectRoot, 'app/controllers/orders_controller.rb'),
+      knownFiles
+    );
+
+    const orderSerializerRefs = refs.filter((r) => r.source === 'OrderSerializer');
+    expect(orderSerializerRefs).toHaveLength(1);
+  });
+
+  it('ignores unresolvable constants (framework classes, external gems)', () => {
+    const code = `
+class User < ApplicationRecord
+  has_secure_password
+  validates :email, presence: true
+end`;
+    const projectRoot = '/project';
+    const knownFiles = new Set([path.join(projectRoot, 'Gemfile'), path.join(projectRoot, 'app/models/user.rb')]);
+    const refs = extractRubyReferences(parse(code), path.join(projectRoot, 'app/models/user.rb'), knownFiles);
+
+    // No resolved constant-receiver imports (ApplicationRecord is in the extends clause, not a call receiver)
+    const resolvedImports = refs.filter((r) => !r.isExternal && r.type === 'import');
+    expect(resolvedImports).toHaveLength(0);
+  });
+});
